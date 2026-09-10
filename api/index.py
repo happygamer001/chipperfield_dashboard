@@ -28,7 +28,7 @@ from functools import wraps
 
 import requests
 import dropbox
-from flask import Flask, request, jsonify, session
+from flask import Flask, request, jsonify, session, send_from_directory
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from dropbox_pdf_utils import (  # noqa: E402
@@ -46,6 +46,31 @@ app = Flask(__name__)
 # but sessions are only truly secure once FLASK_SECRET_KEY is set in Vercel.
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-insecure-key-change-me-in-vercel")
 app.permanent_session_lifetime = datetime.timedelta(days=14)
+
+# Repo root — where index.html and dashboard.html live, one level up from /api.
+_REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
+
+
+# ==========================================
+# Static pages — served directly by Flask, since Vercel's current Python
+# runtime routes all traffic through this app rather than serving these
+# as separate static files.
+# ==========================================
+
+@app.route("/")
+def root_page():
+    return send_from_directory(_REPO_ROOT, "index.html")
+
+
+@app.route("/index.html")
+def admin_page():
+    return send_from_directory(_REPO_ROOT, "index.html")
+
+
+@app.route("/dashboard.html")
+def dashboard_page():
+    return send_from_directory(_REPO_ROOT, "dashboard.html")
+
 
 DASHBOARD_STATE_PATH = os.environ.get(
     "DASHBOARD_STATE_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/published.json"
