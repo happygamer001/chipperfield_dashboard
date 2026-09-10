@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chipperfield Admin — Review Queue</title>
+<style>
+  :root {
+    --green: #97E45D;
+    --green-dark: #4d7a2f;
+    --ink: #1c1f1a;
+    --ink-soft: #5b5f56;
+    --line: #e2e3dc;
+    --surface: #ffffff;
+    --page: #f6f7f3;
+    --danger-bg: #fde8e8;
+    --danger-text: #a02020;
+    --warn-bg: #fdf3d8;
+    --warn-text: #8a6300;
+    --ok-bg: #e6f4e0;
+    --ok-text: #2f6b1f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--page);
+    color: var(--ink);
+  }
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .icon {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: var(--green); display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 17px; color: #000;
+  }
+  .brand h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .brand .sub { font-size: 12px; color: var(--ink-soft); }
+  .header-actions { display: flex; align-items: center; gap: 16px; }
+  .bell { position: relative; font-size: 20px; cursor: default; }
+  .bell .badge {
+    position: absolute; top: -6px; right: -8px; background: var(--danger-text);
+    color: #fff; font-size: 10px; min-width: 16px; height: 16px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center; padding: 0 3px;
+  }
+  button.primary {
+    background: var(--green-dark); color: #fff; border: none; padding: 9px 16px;
+    border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  button.primary:hover { background: #3d6425; }
+  button.ghost {
+    background: transparent; border: 1px solid var(--line); padding: 6px 12px;
+    border-radius: 6px; font-size: 12px; cursor: pointer; color: var(--ink);
+  }
+  button.ghost:hover { background: var(--page); }
+  main { max-width: 960px; margin: 0 auto; padding: 24px; }
+
+  .filters {
+    display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px;
+  }
+  .filter-chip {
+    border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px;
+    font-size: 12px; cursor: pointer; background: #fff; color: var(--ink-soft);
+    user-select: none;
+  }
+  .filter-chip.active { background: var(--green); border-color: var(--green-dark); color: #1c1f1a; font-weight: 600; }
+  .search-box {
+    flex: 1; min-width: 180px; padding: 7px 10px; border: 1px solid var(--line);
+    border-radius: 6px; font-size: 13px;
+  }
+
+  .queue-header {
+    display: flex; justify-content: space-between; align-items: baseline; margin: 24px 0 10px;
+  }
+  .queue-header h2 { font-size: 14px; margin: 0; font-weight: 600; }
+  .queue-header span { font-size: 12px; color: var(--ink-soft); }
+
+  .item {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    margin-bottom: 10px; overflow: hidden;
+  }
+  .item-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; cursor: pointer;
+  }
+  .item-row:hover { background: #fafaf7; }
+  .item-title { font-size: 14px; font-weight: 600; margin: 0; }
+  .item-sub { font-size: 12px; color: var(--ink-soft); margin: 2px 0 0; }
+  .tag {
+    font-size: 11px; padding: 3px 9px; border-radius: 5px; font-weight: 600; white-space: nowrap;
+  }
+  .tag.source-notion { background: #eef0ea; color: #4a4f42; }
+  .tag.source-excel { background: #e4f0e8; color: #2f6b45; }
+  .tag.escalated { background: var(--danger-bg); color: var(--danger-text); }
+  .tag.warn { background: var(--warn-bg); color: var(--warn-text); }
+  .tag.ok { background: var(--ok-bg); color: var(--ok-text); }
+
+  .item-detail {
+    border-top: 1px solid var(--line); padding: 14px 16px; display: none; background: #fcfcfa;
+  }
+  .item.open .item-detail { display: block; }
+  .field-label { font-size: 11px; color: var(--ink-soft); margin: 0 0 4px; font-weight: 600; }
+  textarea, select, input[type=text] {
+    width: 100%; font-size: 13px; padding: 8px; border: 1px solid var(--line);
+    border-radius: 6px; font-family: inherit; margin-bottom: 10px;
+  }
+  textarea { min-height: 50px; resize: vertical; }
+  .row-2 { display: flex; gap: 8px; }
+  .row-2 > * { flex: 1; }
+  .actions { display: flex; gap: 8px; margin-top: 4px; }
+  .actions button { flex: 1; padding: 8px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .btn-hold { background: #fff; border: 1px solid var(--line); }
+  .btn-approve { background: var(--green); border: 1px solid var(--green-dark); font-weight: 600; }
+
+  .empty { text-align: center; padding: 40px 0; color: var(--ink-soft); font-size: 13px; }
+
+  .source-note {
+    font-size: 11px; color: var(--ink-soft); background: #fff; border: 1px dashed var(--line);
+    border-radius: 6px; padding: 8px 10px; margin-top: 24px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="icon">C</div>
+    <div>
+      <h1>Chipperfield admin</h1>
+      <div class="sub" id="last-published">Last published: —</div>
+    </div>
+  </div>
+  <div class="header-actions">
+    <div class="bell">🔔<span class="badge" id="bell-count">0</span></div>
+    <button class="primary" id="publish-btn">Publish to dashboard</button>
+  </div>
+</header>
+
+<main>
+  <div class="filters" id="filters">
+    <input class="search-box" id="search" type="text" placeholder="Search job number or title…">
+    <!-- source chips injected by JS -->
+  </div>
+
+  <div class="queue-header">
+    <h2>Review queue</h2>
+    <span id="queue-count">0 items</span>
+  </div>
+  <div id="queue"></div>
+
+  <div class="source-note">
+    This is a working scaffold with sample data shaped like your real Notion schemas
+    (Current Jobs, Work Orders / Service Request, Purchase Orders, Daily Job Log Master)
+    plus a placeholder Fab Shop Excel row. Swap the <code>ITEMS</code> array for live
+    reads from the Notion API and Microsoft Graph (Excel/SharePoint) — everything else
+    (filtering, review, approve/hold, publish count) already works against this shape.
+  </div>
+
+  <div class="queue-header">
+    <h2>Audit log</h2>
+    <span>(<span id="audit-count">0</span> actions this session)</span>
+  </div>
+  <div id="audit-log" style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:4px 14px;"></div>
+</main>
+
+<script>
+// ---- Mock data shaped like the real schemas we pulled from Notion ----
+const ITEMS = [
+  {
+    id: "wo-471",
+    type: "workorder",
+    source: "notion-workorders",
+    sourceLabel: "Notion · Work Orders",
+    job: "J471",
+    woNumber: "WO-471",
+    name: "Tyler McCoy — bin repair, equipment down",
+    dateCreated: "Sep 3, 2026",
+    title: "Equipment down, awaiting part",
+    subtitle: "Work Status: Escalated · Service Priority: Urgent",
+    tagClass: "escalated",
+    tagText: "Escalated",
+    summary: "Equipment down, awaiting part. No ETA yet.",
+    dailyLogs: [
+      { crew: "Field crew A", date: "Sep 6", hours: 6 },
+      { crew: "Field crew A", date: "Sep 7", hours: 5 }
+    ],
+    status: "pending"
+  },
+  {
+    id: "wo-pending",
+    type: "workorder",
+    source: "notion-workorders",
+    sourceLabel: "Notion · Work Orders",
+    job: "J512",
+    woNumber: null,
+    name: "Grain leg install — journeyman dispatched",
+    dateCreated: null,
+    title: "No work order number assigned yet",
+    subtitle: "Daily logs exist under J512, WO# not created at dispatch",
+    tagClass: "warn",
+    tagText: "No WO#",
+    summary: "",
+    dailyLogs: [
+      { crew: "Ortiz crew", date: "Sep 8", hours: 8 }
+    ],
+    status: "pending"
+  },
+  {
+    id: "job-412",
+    type: "currentjob",
+    source: "notion-currentjobs",
+    sourceLabel: "Notion · Current Jobs",
+    job: "J412",
+    title: "Auger trough set",
+    subtitle: "Hours Used: 64 · Hours budget: 60",
+    tagClass: "warn",
+    tagText: "Over budget",
+    hoursBudgeted: 60,
+    hoursUsed: 64,
+    hoursThisPeriod: 12,
+    status: "pending"
+  },
+  {
+    id: "conflict-889",
+    type: "conflict",
+    source: "excel-fabshop",
+    sourceLabel: "Fab Shop Excel + Notion",
+    job: "J889",
+    title: "Status mismatch between sources",
+    subtitle: "Excel says on track, Notion Work Status says Escalated",
+    tagClass: "escalated",
+    tagText: "Conflict",
+    sourceA: { label: "Excel · Fab Shop Tracker", status: "On track", detail: "18 of 30 hrs used" },
+    sourceB: { label: "Notion · Work Orders", status: "Escalated", detail: "Marked escalated Sep 7, no note why" },
+    status: "pending"
+  },
+  {
+    id: "orphan-po",
+    type: "orphan",
+    source: "notion-po",
+    sourceLabel: "Notion · Purchase Orders",
+    job: null,
+    title: "PO #2244 has no job number",
+    subtitle: "Vendor: Sukup Manufacturing · Status: Not Delivered",
+    tagClass: "warn",
+    tagText: "Unmatched",
+    status: "pending"
+  },
+  {
+    id: "po-2201",
+    type: "general",
+    source: "notion-po",
+    sourceLabel: "Notion · Purchase Orders",
+    job: "J398",
+    title: "PO #2201 — Sukup Manufacturing",
+    subtitle: "Status: Missing Parts",
+    tagClass: "warn",
+    tagText: "Missing parts",
+    summary: "Vendor confirms parts ship Thursday.",
+    status: "pending"
+  },
+  {
+    id: "fab-889",
+    type: "general",
+    source: "excel-fabshop",
+    sourceLabel: "Excel · Fab Shop Tracker",
+    job: "J889",
+    title: "Weaver 70' floor warranty",
+    subtitle: "Hours budgeted: 30 · Hours used: 18",
+    tagClass: "ok",
+    tagText: "On track",
+    summary: "",
+    status: "pending"
+  }
+];
+
+const SOURCES = [
+  { id: "notion-workorders", label: "Work Orders", lastSynced: "6 min ago" },
+  { id: "notion-currentjobs", label: "Current Jobs", lastSynced: "6 min ago" },
+  { id: "notion-po", label: "Purchase Orders", lastSynced: "6 min ago" },
+  { id: "dropbox-dailylog", label: "Daily Job Log (Dropbox)", lastSynced: "not yet synced" },
+  { id: "excel-fabshop", label: "Fab Shop Excel", lastSynced: "3 days ago" }
+];
+
+const FLAG_OPTIONS = [
+  "No flag",
+  "Flag Jacque — Accounting",
+  "Flag Craig — Project Management",
+  "Flag Craig — Operations",
+  "Flag Craig — Sales",
+  "Flag Jess — General Admin",
+  "Flag Jerron — Fab Shop"
+];
+
+let activeSources = new Set(SOURCES.map(s => s.id));
+let searchTerm = "";
+let openItemId = null;
+let approvedCount = 0;
+const AUDIT_LOG = [];
+
+function logAudit(action, item, extra) {
+  AUDIT_LOG.unshift({
+    time: fmtNow(),
+    action: action,
+    itemId: item.id,
+    job: item.job || "(unmatched)",
+    title: item.title,
+    detail: extra || ""
+  });
+  renderAuditLog();
+}
+
+function renderAuditLog() {
+  const panel = document.getElementById("audit-log");
+  if (!panel) return;
+  document.getElementById("audit-count").textContent = AUDIT_LOG.length;
+  if (AUDIT_LOG.length === 0) {
+    panel.innerHTML = '<div class="empty" style="padding:16px 0;">No actions logged yet this session.</div>';
+    return;
+  }
+  panel.innerHTML = AUDIT_LOG.slice(0, 8).map(e => `
+    <div style="font-size:12px;padding:8px 0;border-bottom:1px solid var(--line);">
+      <strong>${e.action}</strong> — ${e.job} ${e.title} <span style="color:var(--ink-soft);">· ${e.time}</span>
+      ${e.detail ? `<div style="color:var(--ink-soft);">${e.detail}</div>` : ""}
+    </div>
+  `).join("");
+}
+
+function fmtNow() {
+  return new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function renderFilters() {
+  const container = document.getElementById("filters");
+  container.querySelectorAll(".filter-chip-wrap").forEach(el => el.remove());
+  SOURCES.forEach(s => {
+    const wrap = document.createElement("div");
+    wrap.className = "filter-chip-wrap";
+    wrap.style.textAlign = "center";
+
+    const chip = document.createElement("div");
+    chip.className = "filter-chip" + (activeSources.has(s.id) ? " active" : "");
+    chip.textContent = s.label;
+    chip.onclick = () => {
+      if (activeSources.has(s.id)) activeSources.delete(s.id);
+      else activeSources.add(s.id);
+      renderFilters();
+      renderQueue();
+    };
+
+    const stale = document.createElement("div");
+    const isStale = s.lastSynced.includes("day") || s.lastSynced.includes("failed") || s.lastSynced.includes("not yet");
+    stale.style.fontSize = "10px";
+    stale.style.marginTop = "3px";
+    stale.style.color = isStale ? "var(--danger-text)" : "var(--ink-soft)";
+    stale.textContent = "synced " + s.lastSynced;
+
+    wrap.appendChild(chip);
+    wrap.appendChild(stale);
+    container.appendChild(wrap);
+  });
+}
+
+function renderQueue() {
+  const queue = document.getElementById("queue");
+  queue.innerHTML = "";
+
+  const filtered = ITEMS.filter(item => {
+    if (item.status !== "pending") return false;
+    if (!activeSources.has(item.source)) return false;
+    if (searchTerm) {
+      const hay = ((item.job || "") + " " + item.title).toLowerCase();
+      if (!hay.includes(searchTerm.toLowerCase())) return false;
+    }
+    return true;
+  });
+
+  document.getElementById("queue-count").textContent = filtered.length + " item" + (filtered.length === 1 ? "" : "s");
+
+  if (filtered.length === 0) {
+    queue.innerHTML = '<div class="empty">Nothing waiting on you. Adjust the source filters or check back later.</div>';
+    return;
+  }
+
+  filtered.forEach(item => {
+    const div = document.createElement("div");
+    div.className = "item" + (openItemId === item.id ? " open" : "");
+
+    const flagOptionsHtml = FLAG_OPTIONS.map(f => `<option>${f}</option>`).join("");
+
+    const flagNotesBlock = `
+        <div class="row-2">
+          <div>
+            <p class="field-label">Flag with instructions</p>
+            <select data-role="flag">${flagOptionsHtml}</select>
+          </div>
+          <div>
+            <p class="field-label">Instruction</p>
+            <input type="text" data-role="instruction" placeholder="What should they do?">
+          </div>
+        </div>
+        <p class="field-label">Notes (visible to Calvin, he can reply)</p>
+        <textarea data-role="notes" placeholder="Add context…"></textarea>`;
+
+    const actionsBlock = `
+        <div class="actions">
+          <button class="btn-hold" data-action="hold" data-id="${item.id}">Hold</button>
+          <button class="btn-approve" data-action="approve" data-id="${item.id}">Approve</button>
+        </div>`;
+
+    let detailHtml = "";
+
+    if (item.type === "workorder") {
+      const logsRows = item.dailyLogs.map(l =>
+        `<tr><td>${l.crew}</td><td>${l.date}</td><td>${l.hours} hrs</td></tr>`
+      ).join("");
+
+      const woHeaderRow = item.woNumber
+        ? `<p class="field-label">Work order</p>
+           <div class="row-2">
+             <div><p class="field-label">WO #</p><input type="text" value="${item.woNumber}" readonly></div>
+             <div><p class="field-label">Date created</p><input type="text" value="${item.dateCreated}" readonly></div>
+           </div>`
+        : `<p class="field-label">No work order # yet — assign one now</p>
+           <div class="row-2">
+             <div><input type="text" data-role="wo-assign-number" placeholder="e.g. WO-512"></div>
+             <button class="ghost" data-action="assign-wo" data-id="${item.id}" style="flex:0 0 auto;">Assign</button>
+           </div>`;
+
+      detailHtml = `
+        ${woHeaderRow}
+        <p class="field-label">Notion page name</p>
+        <input type="text" value="${item.name}" readonly>
+        <p class="field-label">Associated daily job logs (matched by ${item.job})</p>
+        <table style="width:100%;font-size:12px;border-collapse:collapse;margin-bottom:10px;">
+          <tr style="color:var(--ink-soft);text-align:left;"><th>Crew</th><th>Date</th><th>Hours</th></tr>
+          ${logsRows}
+        </table>
+        ${flagNotesBlock}
+        ${actionsBlock}
+      `;
+    } else if (item.type === "currentjob") {
+      const remaining = item.hoursBudgeted - item.hoursUsed;
+      const remainingColor = remaining < 0 ? "var(--danger-text)" : "var(--ink)";
+      detailHtml = `
+        <p class="field-label">Hours breakdown (budget tracked in Excel)</p>
+        <div class="row-2" style="margin-bottom:10px;">
+          <div style="background:#fff;border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;">
+            <div style="font-size:11px;color:var(--ink-soft);">Worked this period</div>
+            <div style="font-size:17px;font-weight:600;">${item.hoursThisPeriod} hrs</div>
+          </div>
+          <div style="background:#fff;border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;">
+            <div style="font-size:11px;color:var(--ink-soft);">Total used / budget</div>
+            <div style="font-size:17px;font-weight:600;">${item.hoursUsed} / ${item.hoursBudgeted}</div>
+          </div>
+          <div style="background:#fff;border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;">
+            <div style="font-size:11px;color:var(--ink-soft);">Remaining</div>
+            <div style="font-size:17px;font-weight:600;color:${remainingColor};">${remaining} hrs</div>
+          </div>
+        </div>
+        ${flagNotesBlock}
+        ${actionsBlock}
+      `;
+    } else if (item.type === "conflict") {
+      detailHtml = `
+        <p class="field-label">Two sources disagree — pick what Calvin should see</p>
+        <div class="row-2" style="margin-bottom:10px;">
+          <label style="background:#fff;border:1px solid var(--line);border-radius:6px;padding:10px;cursor:pointer;display:block;">
+            <input type="radio" name="conflict-${item.id}" value="A" checked style="margin-right:6px;">
+            <strong style="font-size:12px;">${item.sourceA.label}</strong>
+            <div style="font-size:12px;margin-top:4px;">${item.sourceA.status} — ${item.sourceA.detail}</div>
+          </label>
+          <label style="background:#fff;border:1px solid var(--line);border-radius:6px;padding:10px;cursor:pointer;display:block;">
+            <input type="radio" name="conflict-${item.id}" value="B" style="margin-right:6px;">
+            <strong style="font-size:12px;">${item.sourceB.label}</strong>
+            <div style="font-size:12px;margin-top:4px;">${item.sourceB.status} — ${item.sourceB.detail}</div>
+          </label>
+        </div>
+        <p class="field-label">Summary shown to Calvin</p>
+        <textarea data-role="summary" placeholder="Explain the resolution…"></textarea>
+        ${flagNotesBlock}
+        ${actionsBlock}
+      `;
+    } else if (item.type === "orphan") {
+      detailHtml = `
+        <p class="field-label">This record has no matching job number — assign one to bring it into the pipeline</p>
+        <div class="row-2">
+          <div><input type="text" data-role="orphan-assign-job" placeholder="e.g. J522"></div>
+          <button class="ghost" data-action="assign-job" data-id="${item.id}" style="flex:0 0 auto;">Assign job #</button>
+        </div>
+      `;
+    } else {
+      const dbxLine = item.dropboxPdfPath
+        ? `<p class="field-label">Source file</p><input type="text" value="${item.dropboxPdfPath}" readonly>`
+        : "";
+      detailHtml = `
+        <p class="field-label">Summary shown to Calvin</p>
+        <textarea data-role="summary">${item.summary}</textarea>
+        ${dbxLine}
+        ${flagNotesBlock}
+        ${actionsBlock}
+      `;
+    }
+
+    div.innerHTML = `
+      <div class="item-row" data-id="${item.id}">
+        <div>
+          <p class="item-title">${item.job ? item.job + " · " : ""}${item.title}</p>
+          <p class="item-sub">${item.sourceLabel} — ${item.subtitle}</p>
+        </div>
+        <span class="tag ${item.tagClass}">${item.tagText}</span>
+      </div>
+      <div class="item-detail">${detailHtml}</div>
+    `;
+
+    queue.appendChild(div);
+  });
+
+  queue.querySelectorAll(".item-row").forEach(row => {
+    row.addEventListener("click", () => {
+      const id = row.getAttribute("data-id");
+      openItemId = openItemId === id ? null : id;
+      renderQueue();
+    });
+  });
+
+  queue.querySelectorAll("[data-action]").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute("data-id");
+      const action = btn.getAttribute("data-action");
+      const item = ITEMS.find(i => i.id === id);
+      if (action === "approve") {
+        item.status = "approved";
+        approvedCount++;
+        updateBell();
+        logAudit("Approved", item);
+        openItemId = null;
+      } else if (action === "hold") {
+        item.status = "held";
+        logAudit("Held", item);
+        openItemId = null;
+      } else if (action === "assign-wo") {
+        const input = document.querySelector(`[data-role="wo-assign-number"]`);
+        const val = input ? input.value.trim() : "";
+        if (!val) { alert("Enter a work order number first."); return; }
+        item.woNumber = val;
+        item.dateCreated = fmtNow();
+        item.tagClass = "ok";
+        item.tagText = "WO# assigned";
+        item.title = "Work order number assigned";
+        logAudit("Assigned WO#", item, "Set to " + val);
+      } else if (action === "assign-job") {
+        const input = document.querySelector(`[data-role="orphan-assign-job"]`);
+        const val = input ? input.value.trim() : "";
+        if (!val) { alert("Enter a job number first."); return; }
+        item.job = val;
+        item.type = "general";
+        item.summary = "";
+        item.tagClass = "ok";
+        item.tagText = "Matched";
+        logAudit("Matched to job", item, "Assigned " + val);
+      }
+      renderQueue();
+    });
+  });
+}
+
+function updateBell() {
+  const pendingCount = ITEMS.filter(i => i.status === "pending").length;
+  document.getElementById("bell-count").textContent = pendingCount;
+}
+
+document.getElementById("search").addEventListener("input", (e) => {
+  searchTerm = e.target.value;
+  renderQueue();
+});
+
+document.getElementById("publish-btn").addEventListener("click", () => {
+  if (approvedCount === 0) {
+    alert("Nothing approved yet — approve at least one item before publishing.");
+    return;
+  }
+  document.getElementById("last-published").textContent = "Last published: " + fmtNow();
+  alert(approvedCount + " item(s) published to Calvin's dashboard.");
+  approvedCount = 0;
+});
+
+function findSource(id) {
+  return SOURCES.find(s => s.id === id);
+}
+
+async function loadDailyLogsFromDropbox() {
+  const source = findSource("dropbox-dailylog");
+  try {
+    const res = await fetch("/api/recent-logs?days=5");
+    if (!res.ok) throw new Error("API returned " + res.status);
+    const data = await res.json();
+
+    data.logs.forEach(log => {
+      const hasJob = !!log.job_or_wo;
+      const safeId = ("dbxlog-" + log.date + "-" + log.name).replace(/[^a-zA-Z0-9]/g, "_");
+
+      // Skip if we've already loaded this one (e.g. a manual refresh)
+      if (ITEMS.some(i => i.id === safeId)) return;
+
+      ITEMS.push({
+        id: safeId,
+        type: hasJob ? "general" : "orphan",
+        source: "dropbox-dailylog",
+        sourceLabel: "Dropbox · Daily Job Log",
+        job: log.job_or_wo || null,
+        title: hasJob ? `${log.name} — daily log` : `${log.name} — daily log, no job/WO# found`,
+        subtitle: `Date: ${log.date} · Photos: ${log.photo_count}`,
+        tagClass: hasJob ? "ok" : "warn",
+        tagText: hasJob ? "On track" : "Unmatched",
+        summary: "",
+        dropboxPdfPath: log.dropbox_pdf_path,
+        status: "pending"
+      });
+    });
+
+    if (source) source.lastSynced = "just now";
+  } catch (err) {
+    console.error("Failed to load daily logs from Dropbox:", err);
+    if (source) source.lastSynced = "sync failed";
+  }
+
+  renderFilters();
+  renderQueue();
+  updateBell();
+}
+
+renderFilters();
+renderQueue();
+updateBell();
+renderAuditLog();
+loadDailyLogsFromDropbox();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/upload-daily-logs",
+      "schedule": "0 12 * * *"
+    }
+  ],
+  "functions": {
+    "api/upload-daily-logs.py": {
+      "maxDuration": 60
+    },
+    "api/recent-logs.py": {
+      "maxDuration": 30
+    }
+  }
+}
