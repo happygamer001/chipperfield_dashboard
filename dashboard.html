@@ -46,10 +46,41 @@
   .note-form input[type=text] { flex: 1; }
   .note-form button { font-size: 12px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--green-dark); background: var(--green); cursor: pointer; font-weight: 600; }
   .empty { text-align: center; padding: 60px 0; color: var(--ink-soft); font-size: 13px; }
+
+  #login-screen {
+    max-width: 340px; margin: 120px auto; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 12px; padding: 28px; text-align: center;
+  }
+  #login-screen .icon {
+    width: 44px; height: 44px; border-radius: 10px; background: var(--green);
+    display: flex; align-items: center; justify-content: center; font-weight: 700;
+    font-size: 22px; color: #000; margin: 0 auto 14px;
+  }
+  #login-screen h2 { font-size: 16px; margin: 0 0 16px; }
+  #login-screen input {
+    width: 100%; font-size: 13px; padding: 9px; border: 1px solid var(--line);
+    border-radius: 6px; margin-bottom: 8px; box-sizing: border-box;
+  }
+  #login-screen button {
+    width: 100%; background: var(--green-dark); color: #fff; border: none;
+    padding: 10px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; margin-top: 4px;
+  }
+  #login-error { color: var(--danger-text); font-size: 12px; margin-top: 8px; min-height: 16px; }
+  .logout-link { font-size: 12px; color: var(--ink-soft); cursor: pointer; text-decoration: underline; }
 </style>
 </head>
 <body>
 
+<div id="login-screen" style="display:none;">
+  <div class="icon">C</div>
+  <h2>Chipperfield Dashboard</h2>
+  <input type="text" id="login-username" placeholder="Username" autocomplete="username">
+  <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+  <button id="login-btn">Log in</button>
+  <div id="login-error"></div>
+</div>
+
+<div id="app-content" style="display:none;">
 <header>
   <div class="brand">
     <div class="icon">C</div>
@@ -58,11 +89,13 @@
       <div class="sub" id="last-published">Loading…</div>
     </div>
   </div>
+  <span class="logout-link" id="logout-btn">Log out</span>
 </header>
 
 <main id="main">
   <div class="empty">Loading dashboard…</div>
 </main>
+</div>
 
 <script>
 const FLAG_OPTIONS = [
@@ -173,7 +206,69 @@ function render() {
   });
 }
 
-loadDashboard();
+function showApp() {
+  document.getElementById("login-screen").style.display = "none";
+  document.getElementById("app-content").style.display = "block";
+  loadDashboard();
+}
+
+function showLogin(message) {
+  document.getElementById("app-content").style.display = "none";
+  document.getElementById("login-screen").style.display = "block";
+  document.getElementById("login-error").textContent = message || "";
+}
+
+async function checkSession() {
+  try {
+    const res = await fetch("/api/session");
+    const data = await res.json();
+    if (data.logged_in && data.role === "calvin") {
+      showApp();
+    } else {
+      showLogin();
+    }
+  } catch (err) {
+    showLogin("Could not reach the server. Try refreshing.");
+  }
+}
+
+document.getElementById("login-btn").addEventListener("click", async () => {
+  const username = document.getElementById("login-username").value.trim();
+  const password = document.getElementById("login-password").value;
+  const errEl = document.getElementById("login-error");
+  errEl.textContent = "";
+
+  try {
+    const res = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (data.status !== "ok") {
+      errEl.textContent = data.message || "Login failed";
+      return;
+    }
+    if (data.role !== "calvin") {
+      errEl.textContent = "This login isn't authorized for this page.";
+      return;
+    }
+    showApp();
+  } catch (err) {
+    errEl.textContent = "Could not reach the server.";
+  }
+});
+
+document.getElementById("login-password").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("login-btn").click();
+});
+
+document.getElementById("logout-btn").addEventListener("click", async () => {
+  await fetch("/api/logout", { method: "POST" });
+  showLogin();
+});
+
+checkSession();
 </script>
 
 </body>

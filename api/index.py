@@ -24,10 +24,11 @@ import hmac
 import hashlib
 import base64
 import datetime
+from functools import wraps
 
 import requests
 import dropbox
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, session
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from dropbox_pdf_utils import (  # noqa: E402
@@ -38,12 +39,77 @@ from dropbox_pdf_utils import (  # noqa: E402
     DAYS_TO_SHOW_DEFAULT,
 )
 from daily_log_uploader import run_gmail_djl_uploader  # noqa: E402
+import notion_utils  # noqa: E402
 
 app = Flask(__name__)
+# Falls back to a fixed dev key so the app doesn't crash if this isn't set yet —
+# but sessions are only truly secure once FLASK_SECRET_KEY is set in Vercel.
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-insecure-key-change-me-in-vercel")
+app.permanent_session_lifetime = datetime.timedelta(days=14)
 
 DASHBOARD_STATE_PATH = os.environ.get(
     "DASHBOARD_STATE_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/published.json"
 )
+
+NOTION_BATCH_REPORTS_DB_ID = os.environ.get(
+    "NOTION_BATCH_REPORTS_DB_ID", "348304a3-86dc-43df-b7b6-e7316b65f1e5"
+)
+NOTION_GRAVEL_SALES_DB_ID = os.environ.get(
+    "NOTION_GRAVEL_SALES_DB_ID", "82d0c995-bc76-4f0f-927a-2e38ab6c564c"
+)
+
+
+# ==========================================
+# AUTH — two accounts: admin (you) and calvin
+# ==========================================
+
+def require_role(*allowed_roles):
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            role = session.get("role")
+            if role not in allowed_roles:
+                return jsonify({"status": "error", "message": "Not logged in or not authorized"}), 401
+            return fn(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+@app.route("/api/login", methods=["POST"])
+def login():
+    body = request.get_json(force=True) or {}
+    username = (body.get("username") or "").strip()
+    password = body.get("password") or ""
+
+    admin_user = os.environ.get("ADMIN_USERNAME")
+    admin_pass = os.environ.get("ADMIN_PASSWORD")
+    calvin_user = os.environ.get("CALVIN_USERNAME")
+    calvin_pass = os.environ.get("CALVIN_PASSWORD")
+
+    role = None
+    if admin_user and admin_pass and username == admin_user and hmac.compare_digest(password, admin_pass):
+        role = "admin"
+    elif calvin_user and calvin_pass and username == calvin_user and hmac.compare_digest(password, calvin_pass):
+        role = "calvin"
+
+    if not role:
+        return jsonify({"status": "error", "message": "Invalid username or password"}), 401
+
+    session.permanent = True
+    session["role"] = role
+    session["user"] = username
+    return jsonify({"status": "ok", "role": role})
+
+
+@app.route("/api/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/session", methods=["GET"])
+def get_session():
+    return jsonify({"logged_in": "role" in session, "role": session.get("role")})
 
 
 # ==========================================
@@ -51,6 +117,7 @@ DASHBOARD_STATE_PATH = os.environ.get(
 # ==========================================
 
 @app.route("/api/recent-logs", methods=["GET"])
+@require_role("admin")
 def recent_logs():
     try:
         days = int(request.args.get("days", DAYS_TO_SHOW_DEFAULT))
@@ -182,6 +249,7 @@ def typeform_webhook():
 # ==========================================
 
 @app.route("/api/upload-daily-logs", methods=["GET"])
+@require_role("admin")
 def upload_daily_logs():
     try:
         summary = run_gmail_djl_uploader()
@@ -211,6 +279,7 @@ def _write_published_state(dbx, state):
 
 
 @app.route("/api/publish", methods=["POST"])
+@require_role("admin")
 def publish():
     try:
         body = request.get_json(force=True)
@@ -235,6 +304,7 @@ def publish():
 
 
 @app.route("/api/published", methods=["GET"])
+@require_role("admin", "calvin")
 def published():
     try:
         dbx = get_dropbox_client()
@@ -245,9 +315,12 @@ def published():
 
 
 @app.route("/api/add-note", methods=["POST"])
+@require_role("admin", "calvin")
 def add_note():
     """
-    Body: { item_id, author ("calvin" or "admin"), text, type ("note" or "flag"), category (optional, for flags) }
+    Body: { item_id, text, type ("note" or "flag"), category (optional, for flags) }
+    Author is taken from the logged-in session, not the request body, so a
+    note can't be spoofed as coming from the other person.
     Appends to the item's notes list and re-saves. Used by both Calvin's
     dashboard (notes + flags) and the admin page (replies to Calvin's notes).
     """
@@ -265,7 +338,7 @@ def add_note():
             return jsonify({"status": "error", "message": "item not found in published state"}), 404
 
         target.setdefault("notes", []).append({
-            "author": body.get("author", "calvin"),
+            "author": session.get("role"),
             "text": body.get("text", ""),
             "type": body.get("type", "note"),
             "category": body.get("category"),
@@ -274,5 +347,79 @@ def add_note():
 
         _write_published_state(dbx, state)
         return jsonify({"status": "ok", "item": target})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# Notion sources — MCI Batch Reports & Gravel Sales
+# ==========================================
+
+@app.route("/api/notion/batch-reports", methods=["GET"])
+@require_role("admin")
+def notion_batch_reports():
+    try:
+        pages = notion_utils.query_database(NOTION_BATCH_REPORTS_DB_ID)
+        items = []
+        for page in pages:
+            props = page.get("properties", {})
+            name = notion_utils.prop_text(props, "Name") or "Batch report"
+            report_date = notion_utils.prop_date(props, "Report Date") or notion_utils.prop_date(props, "Date")
+            issues = notion_utils.prop_text(props, "Issues Presented")
+            yards = notion_utils.prop_number(props, "Total Yards Out")
+            trips = notion_utils.prop_number(props, "Trips Out")
+            submitted_by = notion_utils.prop_text(props, "Submitted By")
+
+            has_issue = bool(issues)
+            items.append({
+                "id": "notion-batch-" + page["id"],
+                "type": "general",
+                "source": "notion-batch-reports",
+                "sourceLabel": "Notion · Daily Batch Reports",
+                "job": None,
+                "title": name,
+                "subtitle": f"{report_date or 'No date'} · {yards or 0} yds · {trips or 0} trips" + (f" · by {submitted_by}" if submitted_by else ""),
+                "tagClass": "warn" if has_issue else "ok",
+                "tagText": "Issue reported" if has_issue else "On track",
+                "summary": issues or "",
+                "status": "pending",
+            })
+        return jsonify({"count": len(items), "items": items})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/notion/gravel-sales", methods=["GET"])
+@require_role("admin")
+def notion_gravel_sales():
+    try:
+        pages = notion_utils.query_database(NOTION_GRAVEL_SALES_DB_ID)
+        items = []
+        for page in pages:
+            props = page.get("properties", {})
+            sale_id = notion_utils.prop_text(props, "Sale ID") or "Sale"
+            customer = notion_utils.prop_text(props, "Customer Name")
+            material = notion_utils.prop_select(props, "Material")
+            qty = notion_utils.prop_number(props, "Quantity (Tons)")
+            total = notion_utils.prop_number(props, "Total Amount")
+            status = notion_utils.prop_select(props, "Status")
+            invoiced = notion_utils.prop_checkbox(props, "Invoiced")
+            notes = notion_utils.prop_text(props, "Notes")
+
+            incomplete = (status == "Incomplete")
+            items.append({
+                "id": "notion-gravel-" + page["id"],
+                "type": "general",
+                "source": "notion-gravel-sales",
+                "sourceLabel": "Notion · Gravel Sales",
+                "job": None,
+                "title": f"{sale_id}" + (f" — {customer}" if customer else ""),
+                "subtitle": f"{material or 'Material?'} · {qty or 0} tons · ${total or 0:,.0f}" + ("" if invoiced else " · not invoiced"),
+                "tagClass": "warn" if incomplete else "ok",
+                "tagText": status or "Unknown",
+                "summary": notes or "",
+                "status": "pending",
+            })
+        return jsonify({"count": len(items), "items": items})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
