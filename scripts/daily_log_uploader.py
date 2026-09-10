@@ -36,12 +36,12 @@ def _require_env(name):
     return value
 
 IMAP_SERVER = os.environ.get("IMAP_SERVER", "imap.gmail.com")
-EMAIL_USER = _require_env("EMAIL_USER")
-EMAIL_PASS = _require_env("EMAIL_PASS")
-
-DROPBOX_APP_KEY = _require_env("DROPBOX_APP_KEY")
-DROPBOX_APP_SECRET = _require_env("DROPBOX_APP_SECRET")
-DROPBOX_REFRESH_TOKEN = _require_env("DROPBOX_REFRESH_TOKEN")
+# EMAIL_USER / EMAIL_PASS / Dropbox secrets are intentionally NOT read here.
+# This module gets imported by api/index.py alongside routes that don't need
+# email credentials at all (the Typeform webhook, the recent-logs lookup) —
+# if we required them at import time, a single missing env var would crash
+# every route in the app, not just this one. They're read lazily inside
+# run_gmail_djl_uploader() instead, only when this specific feature runs.
 
 DROPBOX_BASE_FOLDER = os.environ.get(
     "DROPBOX_BASE_FOLDER", "/Chipperfield Ag/Chipperfield/Daily Job Logs"
@@ -63,10 +63,15 @@ def _get_search_since_date():
 # ==========================================
 
 def get_dropbox_client():
+    # Reads secrets lazily, at call time — see note above.
+    dropbox_app_key = _require_env("DROPBOX_APP_KEY")
+    dropbox_app_secret = _require_env("DROPBOX_APP_SECRET")
+    dropbox_refresh_token = _require_env("DROPBOX_REFRESH_TOKEN")
+
     dbx_team = dropbox.DropboxTeam(
-        oauth2_refresh_token=DROPBOX_REFRESH_TOKEN,
-        app_key=DROPBOX_APP_KEY,
-        app_secret=DROPBOX_APP_SECRET,
+        oauth2_refresh_token=dropbox_refresh_token,
+        app_key=dropbox_app_key,
+        app_secret=dropbox_app_secret,
         timeout=300.0,
     )
     team_members = dbx_team.team_members_list().members
@@ -226,13 +231,16 @@ def extract_photo_urls_from_html(html_content):
 # ==========================================
 
 def run_gmail_djl_uploader():
+    email_user = _require_env("EMAIL_USER")
+    email_pass = _require_env("EMAIL_PASS")
+
     search_since_date = _get_search_since_date()
     print(f"\n--- Scanning Gmail Inbox for Logs and Attached Photos since {search_since_date} ---")
 
     dbx = get_dropbox_client()
 
     mail = imaplib.IMAP4_SSL(IMAP_SERVER, 993)
-    mail.login(EMAIL_USER, EMAIL_PASS)
+    mail.login(email_user, email_pass)
     mail.select("inbox")
 
     search_query = f'(SINCE "{search_since_date}")'
