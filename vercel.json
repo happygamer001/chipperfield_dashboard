@@ -1,11 +1,8 @@
 {
-  "crons": [
-    {
-      "path": "/api/upload-daily-logs",
-      "schedule": "0 12 * * *"
-    }
-  ],
   "functions": {
+    "api/typeform-webhook.py": {
+      "maxDuration": 30
+    },
     "api/upload-daily-logs.py": {
       "maxDuration": 60
     },
