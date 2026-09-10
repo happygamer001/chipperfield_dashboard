@@ -206,9 +206,20 @@
       <option value="date">Sort: Date</option>
       <option value="type">Sort: Type</option>
       <option value="status">Sort: Status</option>
+      <option value="customer">Sort: Customer</option>
     </select>
     <!-- source chips injected by JS -->
   </div>
+
+  <div class="queue-header">
+    <h2>Customer order lookup</h2>
+    <span>Searches all Gravel Sales history, not just the review queue</span>
+  </div>
+  <div class="filters" style="margin-bottom:20px;">
+    <input class="search-box" id="customer-search-input" type="text" placeholder="Customer name…">
+    <button class="primary" id="customer-search-btn" style="flex:0 0 auto;">Search</button>
+  </div>
+  <div id="customer-results"></div>
 
   <div class="queue-header">
     <h2>Review queue</h2>
@@ -443,6 +454,7 @@ function sortItems(items) {
     else if (sortBy === "date") { av = a.dateCreated || "\uffff"; bv = b.dateCreated || "\uffff"; }
     else if (sortBy === "type") { av = a.type || ""; bv = b.type || ""; }
     else if (sortBy === "status") { av = a.tagText || ""; bv = b.tagText || ""; }
+    else if (sortBy === "customer") { av = a.customer || "\uffff"; bv = b.customer || "\uffff"; }
     return String(av).localeCompare(String(bv));
   });
 }
@@ -689,6 +701,44 @@ document.getElementById("search").addEventListener("input", (e) => {
 document.getElementById("sort-select").addEventListener("change", (e) => {
   sortBy = e.target.value;
   renderQueue();
+});
+
+async function runCustomerSearch() {
+  const q = document.getElementById("customer-search-input").value.trim();
+  const resultsEl = document.getElementById("customer-results");
+  if (!q) { resultsEl.innerHTML = ""; return; }
+
+  resultsEl.innerHTML = '<div class="empty">Searching…</div>';
+  try {
+    const res = await fetch("/api/notion/customer-search?q=" + encodeURIComponent(q));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Search failed");
+
+    if (data.results.length === 0) {
+      resultsEl.innerHTML = '<div class="empty">No orders found for "' + q + '".</div>';
+      return;
+    }
+
+    resultsEl.innerHTML = data.results.map(r => `
+      <div class="item">
+        <div class="item-row" style="cursor:default;">
+          <div>
+            <p class="item-title">${r.sale_id || 'Sale'} — ${r.customer || 'Unknown customer'}</p>
+            <p class="item-sub">${r.sale_date || 'No date'} · ${r.material || '—'} · ${r.quantity_tons || 0} tons · $${(r.total_amount || 0).toLocaleString()}</p>
+          </div>
+          <span class="tag ${r.status === 'Incomplete' ? 'warn' : 'ok'}">${r.status || 'Unknown'}${r.invoiced ? '' : ' · not invoiced'}</span>
+        </div>
+        ${r.notes ? `<div style="padding:0 16px 14px;font-size:13px;color:var(--ink-soft);">${r.notes}</div>` : ''}
+      </div>
+    `).join("");
+  } catch (err) {
+    resultsEl.innerHTML = '<div class="empty">Search failed: ' + err.message + '</div>';
+  }
+}
+
+document.getElementById("customer-search-btn").addEventListener("click", runCustomerSearch);
+document.getElementById("customer-search-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") runCustomerSearch();
 });
 
 function applyTheme(theme) {

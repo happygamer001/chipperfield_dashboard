@@ -431,6 +431,7 @@ def notion_gravel_sales():
                 "source": "notion-gravel-sales",
                 "sourceLabel": "Notion · Gravel Sales",
                 "job": None,
+                "customer": customer,
                 "title": f"{sale_id}" + (f" — {customer}" if customer else ""),
                 "subtitle": f"{material or 'Material?'} · {qty or 0} tons · ${total or 0:,.0f}" + ("" if invoiced else " · not invoiced"),
                 "tagClass": "warn" if incomplete else "ok",
@@ -439,5 +440,46 @@ def notion_gravel_sales():
                 "status": "pending",
             })
         return jsonify({"count": len(items), "items": items})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# Customer order lookup — searches ALL Gravel Sales history, not just
+# what's currently sitting in the review queue. Available to both roles.
+# ==========================================
+
+@app.route("/api/notion/customer-search", methods=["GET"])
+@require_role("admin", "calvin")
+def customer_search():
+    query = (request.args.get("q") or "").strip()
+    if not query:
+        return jsonify({"status": "error", "message": "Provide a customer name with ?q="}), 400
+
+    try:
+        filter_obj = {
+            "property": "Customer Name",
+            "rich_text": {"contains": query},
+        }
+        pages = notion_utils.query_database(NOTION_GRAVEL_SALES_DB_ID, page_size=50, filter_obj=filter_obj)
+
+        results = []
+        for page in pages:
+            props = page.get("properties", {})
+            results.append({
+                "sale_id": notion_utils.prop_text(props, "Sale ID"),
+                "customer": notion_utils.prop_text(props, "Customer Name"),
+                "material": notion_utils.prop_select(props, "Material"),
+                "quantity_tons": notion_utils.prop_number(props, "Quantity (Tons)"),
+                "total_amount": notion_utils.prop_number(props, "Total Amount"),
+                "sale_date": notion_utils.prop_date(props, "Sale Date"),
+                "status": notion_utils.prop_select(props, "Status"),
+                "invoiced": notion_utils.prop_checkbox(props, "Invoiced"),
+                "delivery_address": notion_utils.prop_text(props, "Delivery Address"),
+                "notes": notion_utils.prop_text(props, "Notes"),
+            })
+
+        results.sort(key=lambda r: r.get("sale_date") or "", reverse=True)
+        return jsonify({"count": len(results), "results": results})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

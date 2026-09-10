@@ -46,6 +46,11 @@
   .note-form input[type=text] { flex: 1; }
   .note-form button { font-size: 12px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--green-dark); background: var(--green); cursor: pointer; font-weight: 600; }
   .empty { text-align: center; padding: 60px 0; color: var(--ink-soft); font-size: 13px; }
+  .section-heading { font-size: 15px; font-weight: 600; margin: 28px 0 4px; }
+  .section-sub { font-size: 12px; color: var(--ink-soft); margin: 0 0 12px; }
+  .lookup-bar { display: flex; gap: 8px; margin-bottom: 16px; }
+  .lookup-bar input { flex: 1; font-size: 13px; padding: 9px; border: 1px solid var(--line); border-radius: 6px; }
+  .lookup-bar button { font-size: 13px; padding: 9px 16px; border-radius: 6px; border: 1px solid var(--green-dark); background: var(--green); font-weight: 600; cursor: pointer; }
 
   #login-screen {
     max-width: 340px; margin: 120px auto; background: var(--surface);
@@ -95,6 +100,16 @@
 
 <main id="main">
   <div class="empty">Loading dashboard…</div>
+</main>
+
+<main style="padding-top:0;">
+  <p class="section-heading">Customer order lookup</p>
+  <p class="section-sub">Search all past Gravel Sales orders — not just what's currently on this dashboard.</p>
+  <div class="lookup-bar">
+    <input type="text" id="customer-search-input" placeholder="Customer name…">
+    <button id="customer-search-btn">Search</button>
+  </div>
+  <div id="customer-results"></div>
 </main>
 </div>
 
@@ -232,6 +247,44 @@ async function checkSession() {
     showLogin("Could not reach the server. Try refreshing.");
   }
 }
+
+async function runCustomerSearch() {
+  const q = document.getElementById("customer-search-input").value.trim();
+  const resultsEl = document.getElementById("customer-results");
+  if (!q) { resultsEl.innerHTML = ""; return; }
+
+  resultsEl.innerHTML = '<div class="empty">Searching…</div>';
+  try {
+    const res = await fetch("/api/notion/customer-search?q=" + encodeURIComponent(q));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Search failed");
+
+    if (data.results.length === 0) {
+      resultsEl.innerHTML = '<div class="empty">No orders found for "' + q + '".</div>';
+      return;
+    }
+
+    resultsEl.innerHTML = data.results.map(r => `
+      <div class="item">
+        <div class="item-top">
+          <div>
+            <p class="item-title">${r.sale_id || 'Sale'} — ${r.customer || 'Unknown customer'}</p>
+            <p class="item-sub">${r.sale_date || 'No date'} · ${r.material || '—'} · ${r.quantity_tons || 0} tons · $${(r.total_amount || 0).toLocaleString()}</p>
+          </div>
+          <span class="tag ${r.status === 'Incomplete' ? 'warn' : 'ok'}">${r.status || 'Unknown'}${r.invoiced ? '' : ' · not invoiced'}</span>
+        </div>
+        ${r.notes ? `<p class="summary">${r.notes}</p>` : ''}
+      </div>
+    `).join("");
+  } catch (err) {
+    resultsEl.innerHTML = '<div class="empty">Search failed: ' + err.message + '</div>';
+  }
+}
+
+document.getElementById("customer-search-btn").addEventListener("click", runCustomerSearch);
+document.getElementById("customer-search-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") runCustomerSearch();
+});
 
 document.getElementById("login-btn").addEventListener("click", async () => {
   const role = document.getElementById("login-role").value;

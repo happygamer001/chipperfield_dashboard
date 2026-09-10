@@ -28,10 +28,14 @@ def _headers():
     }
 
 
-def query_database(database_id, page_size=50):
-    """Returns the list of page objects from a database (single page of results, no pagination yet)."""
+def query_database(database_id, page_size=50, filter_obj=None):
+    """Returns the list of page objects from a database (single page of results, no pagination yet).
+    Pass filter_obj to apply a Notion filter, e.g. a "contains" search on a text property."""
     url = f"{NOTION_BASE_URL}/databases/{database_id}/query"
-    resp = requests.post(url, headers=_headers(), json={"page_size": page_size}, timeout=20)
+    body = {"page_size": page_size}
+    if filter_obj:
+        body["filter"] = filter_obj
+    resp = requests.post(url, headers=_headers(), json=body, timeout=20)
     resp.raise_for_status()
     return resp.json().get("results", [])
 
