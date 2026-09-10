@@ -141,7 +141,7 @@
     font-size: 22px; color: #000; margin: 0 auto 14px;
   }
   #login-screen h2 { font-size: 16px; margin: 0 0 16px; }
-  #login-screen input {
+  #login-screen input, #login-screen select {
     width: 100%; font-size: 13px; padding: 9px; border: 1px solid var(--line);
     border-radius: 6px; margin-bottom: 8px; box-sizing: border-box;
   }
@@ -157,9 +157,10 @@
 <div id="login-screen" style="display:none;">
   <div class="icon">C</div>
   <h2>Chipperfield Admin</h2>
-  <input type="text" id="login-username" placeholder="Username" autocomplete="username">
-  <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
-  <button id="login-btn">Log in</button>
+  <select id="login-role">
+    <option value="admin">Admin (Chicken)</option>
+  </select>
+  <button id="login-btn">Continue</button>
   <div id="login-error"></div>
 </div>
 
@@ -786,8 +787,7 @@ async function checkSession() {
 }
 
 document.getElementById("login-btn").addEventListener("click", async () => {
-  const username = document.getElementById("login-username").value.trim();
-  const password = document.getElementById("login-password").value;
+  const role = document.getElementById("login-role").value;
   const errEl = document.getElementById("login-error");
   errEl.textContent = "";
 
@@ -795,25 +795,17 @@ document.getElementById("login-btn").addEventListener("click", async () => {
     const res = await fetch("/api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password })
+      body: JSON.stringify({ role })
     });
     const data = await res.json();
     if (data.status !== "ok") {
-      errEl.textContent = data.message || "Login failed";
-      return;
-    }
-    if (data.role !== "admin") {
-      errEl.textContent = "This login isn't authorized for the admin page.";
+      errEl.textContent = data.message || "Could not continue";
       return;
     }
     showApp();
   } catch (err) {
     errEl.textContent = "Could not reach the server.";
   }
-});
-
-document.getElementById("login-password").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") document.getElementById("login-btn").click();
 });
 
 document.getElementById("logout-btn").addEventListener("click", async () => {

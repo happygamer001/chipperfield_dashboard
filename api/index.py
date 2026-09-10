@@ -102,27 +102,20 @@ def require_role(*allowed_roles):
 
 @app.route("/api/login", methods=["POST"])
 def login():
+    """
+    No credentials — just a role picker. Body: { role: "admin" | "calvin" }.
+    This is intentionally not real authentication: anyone with the link can
+    pick either role. Fine for now since these URLs aren't shared publicly,
+    but worth adding real credentials later if that changes.
+    """
     body = request.get_json(force=True) or {}
-    username = (body.get("username") or "").strip()
-    password = body.get("password") or ""
+    role = body.get("role")
 
-    admin_user = os.environ.get("ADMIN_USERNAME")
-    admin_pass = os.environ.get("ADMIN_PASSWORD")
-    calvin_user = os.environ.get("CALVIN_USERNAME")
-    calvin_pass = os.environ.get("CALVIN_PASSWORD")
-
-    role = None
-    if admin_user and admin_pass and username == admin_user and hmac.compare_digest(password, admin_pass):
-        role = "admin"
-    elif calvin_user and calvin_pass and username == calvin_user and hmac.compare_digest(password, calvin_pass):
-        role = "calvin"
-
-    if not role:
-        return jsonify({"status": "error", "message": "Invalid username or password"}), 401
+    if role not in ("admin", "calvin"):
+        return jsonify({"status": "error", "message": "Invalid role"}), 400
 
     session.permanent = True
     session["role"] = role
-    session["user"] = username
     return jsonify({"status": "ok", "role": role})
 
 
