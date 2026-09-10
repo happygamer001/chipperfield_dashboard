@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -20,12 +20,28 @@
     --ok-bg: #e6f4e0;
     --ok-text: #2f6b1f;
   }
+  [data-theme="dark"] {
+    --green: #97E45D;
+    --green-dark: #7cc447;
+    --ink: #eef0ea;
+    --ink-soft: #a3a89c;
+    --line: #333831;
+    --surface: #1c1f1a;
+    --page: #121410;
+    --danger-bg: #3a1a1a;
+    --danger-text: #ff8a8a;
+    --warn-bg: #3a3113;
+    --warn-text: #ffce5c;
+    --ok-bg: #1c3016;
+    --ok-text: #8fe07a;
+  }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
     background: var(--page);
     color: var(--ink);
+    font-size: 15px;
   }
   header {
     background: var(--surface);
@@ -44,8 +60,8 @@
     background: var(--green); display: flex; align-items: center; justify-content: center;
     font-weight: 700; font-size: 17px; color: #000;
   }
-  .brand h1 { font-size: 16px; margin: 0; font-weight: 600; }
-  .brand .sub { font-size: 12px; color: var(--ink-soft); }
+  .brand h1 { font-size: 19px; margin: 0; font-weight: 600; }
+  .brand .sub { font-size: 13px; color: var(--ink-soft); }
   .header-actions { display: flex; align-items: center; gap: 16px; }
   .bell { position: relative; font-size: 20px; cursor: default; }
   .bell .badge {
@@ -71,7 +87,7 @@
   }
   .filter-chip {
     border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px;
-    font-size: 12px; cursor: pointer; background: #fff; color: var(--ink-soft);
+    font-size: 12px; cursor: pointer; background: var(--surface); color: var(--ink-soft);
     user-select: none;
   }
   .filter-chip.active { background: var(--green); border-color: var(--green-dark); color: #1c1f1a; font-weight: 600; }
@@ -83,7 +99,7 @@
   .queue-header {
     display: flex; justify-content: space-between; align-items: baseline; margin: 24px 0 10px;
   }
-  .queue-header h2 { font-size: 14px; margin: 0; font-weight: 600; }
+  .queue-header h2 { font-size: 16px; margin: 0; font-weight: 600; }
   .queue-header span { font-size: 12px; color: var(--ink-soft); }
 
   .item {
@@ -94,9 +110,9 @@
     display: flex; justify-content: space-between; align-items: center;
     padding: 12px 16px; cursor: pointer;
   }
-  .item-row:hover { background: #fafaf7; }
-  .item-title { font-size: 14px; font-weight: 600; margin: 0; }
-  .item-sub { font-size: 12px; color: var(--ink-soft); margin: 2px 0 0; }
+  .item-row:hover { background: var(--page); }
+  .item-title { font-size: 16px; font-weight: 600; margin: 0; }
+  .item-sub { font-size: 13px; color: var(--ink-soft); margin: 2px 0 0; }
   .tag {
     font-size: 11px; padding: 3px 9px; border-radius: 5px; font-weight: 600; white-space: nowrap;
   }
@@ -107,10 +123,10 @@
   .tag.ok { background: var(--ok-bg); color: var(--ok-text); }
 
   .item-detail {
-    border-top: 1px solid var(--line); padding: 14px 16px; display: none; background: #fcfcfa;
+    border-top: 1px solid var(--line); padding: 14px 16px; display: none; background: var(--page);
   }
   .item.open .item-detail { display: block; }
-  .field-label { font-size: 11px; color: var(--ink-soft); margin: 0 0 4px; font-weight: 600; }
+  .field-label { font-size: 12px; color: var(--ink-soft); margin: 0 0 4px; font-weight: 600; }
   textarea, select, input[type=text] {
     width: 100%; font-size: 13px; padding: 8px; border: 1px solid var(--line);
     border-radius: 6px; font-family: inherit; margin-bottom: 10px;
@@ -120,13 +136,13 @@
   .row-2 > * { flex: 1; }
   .actions { display: flex; gap: 8px; margin-top: 4px; }
   .actions button { flex: 1; padding: 8px; border-radius: 6px; font-size: 13px; cursor: pointer; }
-  .btn-hold { background: #fff; border: 1px solid var(--line); }
+  .btn-hold { background: var(--surface); border: 1px solid var(--line); }
   .btn-approve { background: var(--green); border: 1px solid var(--green-dark); font-weight: 600; }
 
   .empty { text-align: center; padding: 40px 0; color: var(--ink-soft); font-size: 13px; }
 
   .source-note {
-    font-size: 11px; color: var(--ink-soft); background: #fff; border: 1px dashed var(--line);
+    font-size: 11px; color: var(--ink-soft); background: var(--surface); border: 1px dashed var(--line);
     border-radius: 6px; padding: 8px 10px; margin-top: 24px;
   }
 
@@ -174,6 +190,7 @@
     </div>
   </div>
   <div class="header-actions">
+    <button class="ghost" id="theme-toggle">🌙 Dark mode</button>
     <div class="bell">🔔<span class="badge" id="bell-count">0</span></div>
     <button class="primary" id="publish-btn">Publish to dashboard</button>
     <button class="ghost" id="logout-btn">Log out</button>
@@ -183,6 +200,13 @@
 <main>
   <div class="filters" id="filters">
     <input class="search-box" id="search" type="text" placeholder="Search job number or title…">
+    <select class="search-box" id="sort-select" style="flex:0 0 160px;">
+      <option value="none">Sort: default</option>
+      <option value="name">Sort: Name</option>
+      <option value="date">Sort: Date</option>
+      <option value="type">Sort: Type</option>
+      <option value="status">Sort: Status</option>
+    </select>
     <!-- source chips injected by JS -->
   </div>
 
@@ -341,6 +365,7 @@ const FLAG_OPTIONS = [
 
 let activeSources = new Set(SOURCES.map(s => s.id));
 let searchTerm = "";
+let sortBy = "none";
 let openItemId = null;
 let approvedCount = 0;
 const AUDIT_LOG = [];
@@ -408,6 +433,20 @@ function renderFilters() {
   });
 }
 
+// Sorts in place. "date" uses dateCreated where available (mainly Work
+// Orders); items without one sort to the end rather than throwing off order.
+function sortItems(items) {
+  if (sortBy === "none") return;
+  items.sort((a, b) => {
+    let av, bv;
+    if (sortBy === "name") { av = a.title || ""; bv = b.title || ""; }
+    else if (sortBy === "date") { av = a.dateCreated || "\uffff"; bv = b.dateCreated || "\uffff"; }
+    else if (sortBy === "type") { av = a.type || ""; bv = b.type || ""; }
+    else if (sortBy === "status") { av = a.tagText || ""; bv = b.tagText || ""; }
+    return String(av).localeCompare(String(bv));
+  });
+}
+
 function renderQueue() {
   const queue = document.getElementById("queue");
   queue.innerHTML = "";
@@ -421,6 +460,8 @@ function renderQueue() {
     }
     return true;
   });
+
+  sortItems(filtered);
 
   document.getElementById("queue-count").textContent = filtered.length + " item" + (filtered.length === 1 ? "" : "s");
 
@@ -492,15 +533,15 @@ function renderQueue() {
       detailHtml = `
         <p class="field-label">Hours breakdown (budget tracked in Excel)</p>
         <div class="row-2" style="margin-bottom:10px;">
-          <div style="background:#fff;border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;">
+          <div style="background:var(--page);border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;">
             <div style="font-size:11px;color:var(--ink-soft);">Worked this period</div>
             <div style="font-size:17px;font-weight:600;">${item.hoursThisPeriod} hrs</div>
           </div>
-          <div style="background:#fff;border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;">
+          <div style="background:var(--page);border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;">
             <div style="font-size:11px;color:var(--ink-soft);">Total used / budget</div>
             <div style="font-size:17px;font-weight:600;">${item.hoursUsed} / ${item.hoursBudgeted}</div>
           </div>
-          <div style="background:#fff;border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;">
+          <div style="background:var(--page);border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;">
             <div style="font-size:11px;color:var(--ink-soft);">Remaining</div>
             <div style="font-size:17px;font-weight:600;color:${remainingColor};">${remaining} hrs</div>
           </div>
@@ -512,12 +553,12 @@ function renderQueue() {
       detailHtml = `
         <p class="field-label">Two sources disagree — pick what Calvin should see</p>
         <div class="row-2" style="margin-bottom:10px;">
-          <label style="background:#fff;border:1px solid var(--line);border-radius:6px;padding:10px;cursor:pointer;display:block;">
+          <label style="background:var(--page);border:1px solid var(--line);border-radius:6px;padding:10px;cursor:pointer;display:block;">
             <input type="radio" name="conflict-${item.id}" value="A" checked style="margin-right:6px;">
             <strong style="font-size:12px;">${item.sourceA.label}</strong>
             <div style="font-size:12px;margin-top:4px;">${item.sourceA.status} — ${item.sourceA.detail}</div>
           </label>
-          <label style="background:#fff;border:1px solid var(--line);border-radius:6px;padding:10px;cursor:pointer;display:block;">
+          <label style="background:var(--page);border:1px solid var(--line);border-radius:6px;padding:10px;cursor:pointer;display:block;">
             <input type="radio" name="conflict-${item.id}" value="B" style="margin-right:6px;">
             <strong style="font-size:12px;">${item.sourceB.label}</strong>
             <div style="font-size:12px;margin-top:4px;">${item.sourceB.status} — ${item.sourceB.detail}</div>
@@ -644,6 +685,24 @@ document.getElementById("search").addEventListener("input", (e) => {
   searchTerm = e.target.value;
   renderQueue();
 });
+
+document.getElementById("sort-select").addEventListener("change", (e) => {
+  sortBy = e.target.value;
+  renderQueue();
+});
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  document.getElementById("theme-toggle").textContent = theme === "dark" ? "☀️ Light mode" : "🌙 Dark mode";
+  localStorage.setItem("chipperfield-theme", theme);
+}
+
+document.getElementById("theme-toggle").addEventListener("click", () => {
+  const current = document.documentElement.getAttribute("data-theme");
+  applyTheme(current === "dark" ? "light" : "dark");
+});
+
+applyTheme(localStorage.getItem("chipperfield-theme") || "light");
 
 document.getElementById("publish-btn").addEventListener("click", async () => {
   const approvedItems = ITEMS.filter(i => i.status === "approved");
