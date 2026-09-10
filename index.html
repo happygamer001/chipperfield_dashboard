@@ -542,6 +542,28 @@ function renderQueue() {
       const action = btn.getAttribute("data-action");
       const item = ITEMS.find(i => i.id === id);
       if (action === "approve") {
+        const card = btn.closest(".item");
+        const summaryEl = card.querySelector('[data-role="summary"]');
+        const flagEl = card.querySelector('[data-role="flag"]');
+        const instructionEl = card.querySelector('[data-role="instruction"]');
+        const notesEl = card.querySelector('[data-role="notes"]');
+        const conflictChoice = card.querySelector('input[type="radio"]:checked');
+
+        if (summaryEl) item.summary = summaryEl.value;
+        if (flagEl && flagEl.value !== "No flag") item.adminFlag = flagEl.value;
+        if (instructionEl && instructionEl.value) item.adminInstruction = instructionEl.value;
+
+        item.notes = item.notes || [];
+        if (notesEl && notesEl.value.trim()) {
+          item.notes.push({ author: "admin", text: notesEl.value.trim(), type: "note", created_at: new Date().toISOString() });
+        }
+        if (item.adminFlag && item.adminInstruction) {
+          item.notes.push({ author: "admin", text: item.adminInstruction, type: "flag", category: item.adminFlag, created_at: new Date().toISOString() });
+        }
+        if (item.type === "conflict" && conflictChoice) {
+          item.resolvedSource = conflictChoice.value === "A" ? item.sourceA.label : item.sourceB.label;
+        }
+
         item.status = "approved";
         approvedCount++;
         updateBell();
@@ -587,14 +609,37 @@ document.getElementById("search").addEventListener("input", (e) => {
   renderQueue();
 });
 
-document.getElementById("publish-btn").addEventListener("click", () => {
-  if (approvedCount === 0) {
+document.getElementById("publish-btn").addEventListener("click", async () => {
+  const approvedItems = ITEMS.filter(i => i.status === "approved");
+  if (approvedItems.length === 0) {
     alert("Nothing approved yet — approve at least one item before publishing.");
     return;
   }
-  document.getElementById("last-published").textContent = "Last published: " + fmtNow();
-  alert(approvedCount + " item(s) published to Calvin's dashboard.");
-  approvedCount = 0;
+
+  const btn = document.getElementById("publish-btn");
+  btn.disabled = true;
+  btn.textContent = "Publishing…";
+
+  try {
+    const res = await fetch("/api/publish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: approvedItems })
+    });
+    const data = await res.json();
+    if (data.status !== "ok") throw new Error(data.message || "Publish failed");
+
+    document.getElementById("last-published").textContent = "Last published: " + fmtNow();
+    approvedItems.forEach(i => { i.status = "published"; });
+    approvedCount = 0;
+    alert(data.count + " item(s) published to Calvin's dashboard.");
+    renderQueue();
+  } catch (err) {
+    alert("Publish failed: " + err.message + "\n\nCheck that Dropbox environment variables are set in Vercel.");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Publish to dashboard";
+  }
 });
 
 function findSource(id) {

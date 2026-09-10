@@ -3,12 +3,15 @@ Single Python entrypoint for Vercel.
 
 As of mid-2026, Vercel's Python runtime expects one entrypoint app (Flask,
 FastAPI, Django, etc.) rather than treating every file in /api as its own
-function. This file is that entrypoint — it's a small Flask app with three
-routes, one per feature:
+function. This file is that entrypoint — it's a small Flask app with routes
+for each feature:
 
   GET  /api/recent-logs         -> last N days of Daily Job Logs from Dropbox
   GET/POST /api/typeform-webhook -> real-time Typeform submission receiver
   GET  /api/upload-daily-logs   -> legacy/backup: manually re-run the Gmail scan
+  POST /api/publish             -> admin publishes approved items to Calvin's dashboard
+  GET  /api/published           -> Calvin's dashboard reads the latest published state
+  POST /api/add-note            -> notes and flags from either side, appended in place
 
 See vercel.json for the rewrite rule that routes /api/* here.
 """
@@ -20,8 +23,10 @@ import json
 import hmac
 import hashlib
 import base64
+import datetime
 
 import requests
+import dropbox
 from flask import Flask, request, jsonify
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "scripts"))
@@ -35,6 +40,10 @@ from dropbox_pdf_utils import (  # noqa: E402
 from daily_log_uploader import run_gmail_djl_uploader  # noqa: E402
 
 app = Flask(__name__)
+
+DASHBOARD_STATE_PATH = os.environ.get(
+    "DASHBOARD_STATE_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/published.json"
+)
 
 
 # ==========================================
@@ -177,5 +186,93 @@ def upload_daily_logs():
     try:
         summary = run_gmail_djl_uploader()
         return jsonify({"status": "ok", "summary": summary})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# Dashboard storage (Dropbox-backed — no separate database needed)
+# ==========================================
+
+def _read_published_state(dbx):
+    try:
+        _, res = dbx.files_download(DASHBOARD_STATE_PATH)
+        return json.loads(res.content)
+    except dropbox.exceptions.ApiError:
+        return {"published_at": None, "items": []}
+
+
+def _write_published_state(dbx, state):
+    dbx.files_upload(
+        json.dumps(state, indent=2).encode("utf-8"),
+        DASHBOARD_STATE_PATH,
+        mode=dropbox.files.WriteMode.overwrite,
+    )
+
+
+@app.route("/api/publish", methods=["POST"])
+def publish():
+    try:
+        body = request.get_json(force=True)
+        new_items = body.get("items", [])
+
+        dbx = get_dropbox_client()
+        state = _read_published_state(dbx)
+
+        existing_by_id = {i["id"]: i for i in state.get("items", [])}
+        for item in new_items:
+            item.setdefault("notes", [])
+            existing_by_id[item["id"]] = item  # replace or add
+
+        state = {
+            "published_at": datetime.datetime.utcnow().isoformat() + "Z",
+            "items": list(existing_by_id.values()),
+        }
+        _write_published_state(dbx, state)
+        return jsonify({"status": "ok", "published_at": state["published_at"], "count": len(new_items)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/published", methods=["GET"])
+def published():
+    try:
+        dbx = get_dropbox_client()
+        state = _read_published_state(dbx)
+        return jsonify(state)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/add-note", methods=["POST"])
+def add_note():
+    """
+    Body: { item_id, author ("calvin" or "admin"), text, type ("note" or "flag"), category (optional, for flags) }
+    Appends to the item's notes list and re-saves. Used by both Calvin's
+    dashboard (notes + flags) and the admin page (replies to Calvin's notes).
+    """
+    try:
+        body = request.get_json(force=True)
+        item_id = body.get("item_id")
+        if not item_id:
+            return jsonify({"status": "error", "message": "item_id is required"}), 400
+
+        dbx = get_dropbox_client()
+        state = _read_published_state(dbx)
+
+        target = next((i for i in state.get("items", []) if i["id"] == item_id), None)
+        if not target:
+            return jsonify({"status": "error", "message": "item not found in published state"}), 404
+
+        target.setdefault("notes", []).append({
+            "author": body.get("author", "calvin"),
+            "text": body.get("text", ""),
+            "type": body.get("type", "note"),
+            "category": body.get("category"),
+            "created_at": datetime.datetime.utcnow().isoformat() + "Z",
+        })
+
+        _write_published_state(dbx, state)
+        return jsonify({"status": "ok", "item": target})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

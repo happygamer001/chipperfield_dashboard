@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chipperfield — Dashboard</title>
+<style>
+  :root {
+    --green: #97E45D;
+    --green-dark: #4d7a2f;
+    --ink: #1c1f1a;
+    --ink-soft: #5b5f56;
+    --line: #e2e3dc;
+    --surface: #ffffff;
+    --page: #f6f7f3;
+    --danger-bg: #fde8e8;
+    --danger-text: #a02020;
+    --warn-bg: #fdf3d8;
+    --warn-text: #8a6300;
+    --ok-bg: #e6f4e0;
+    --ok-text: #2f6b1f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--page); color: var(--ink); }
+  header { background: var(--surface); border-bottom: 1px solid var(--line); padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .icon { width: 32px; height: 32px; border-radius: 8px; background: var(--green); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; color: #000; }
+  .brand h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .brand .sub { font-size: 12px; color: var(--ink-soft); }
+  main { max-width: 720px; margin: 0 auto; padding: 24px; }
+  .item { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; padding: 14px 16px; }
+  .item-title { font-size: 14px; font-weight: 600; margin: 0; }
+  .item-sub { font-size: 12px; color: var(--ink-soft); margin: 3px 0 0; }
+  .tag { font-size: 11px; padding: 3px 9px; border-radius: 5px; font-weight: 600; white-space: nowrap; }
+  .tag.escalated { background: var(--danger-bg); color: var(--danger-text); }
+  .tag.warn { background: var(--warn-bg); color: var(--warn-text); }
+  .tag.ok { background: var(--ok-bg); color: var(--ok-text); }
+  .item-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .summary { font-size: 13px; margin: 10px 0 0; }
+  .notes { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+  .note { font-size: 12px; padding: 6px 0; }
+  .note .who { font-weight: 600; }
+  .note.flag { background: #fff7e6; border-radius: 6px; padding: 6px 8px; }
+  .note-form { display: flex; gap: 6px; margin-top: 8px; }
+  .note-form input, .note-form select { font-size: 12px; padding: 6px; border: 1px solid var(--line); border-radius: 6px; }
+  .note-form input[type=text] { flex: 1; }
+  .note-form button { font-size: 12px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--green-dark); background: var(--green); cursor: pointer; font-weight: 600; }
+  .empty { text-align: center; padding: 60px 0; color: var(--ink-soft); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="icon">C</div>
+    <div>
+      <h1>Chipperfield</h1>
+      <div class="sub" id="last-published">Loading…</div>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <div class="empty">Loading dashboard…</div>
+</main>
+
+<script>
+const FLAG_OPTIONS = [
+  "Jacque — Accounting",
+  "Craig — Project Management",
+  "Craig — Operations",
+  "Craig — Sales",
+  "Jess — General Admin",
+  "Jerron — Fab Shop"
+];
+
+let STATE = { published_at: null, items: [] };
+
+async function loadDashboard() {
+  try {
+    const res = await fetch("/api/published");
+    STATE = await res.json();
+    render();
+  } catch (err) {
+    document.getElementById("main").innerHTML = '<div class="empty">Could not load the dashboard. Try refreshing in a moment.</div>';
+  }
+}
+
+function fmtTimestamp(iso) {
+  if (!iso) return "Never published yet";
+  return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function render() {
+  document.getElementById("last-published").textContent = "Last updated: " + fmtTimestamp(STATE.published_at);
+
+  const main = document.getElementById("main");
+  if (!STATE.items || STATE.items.length === 0) {
+    main.innerHTML = '<div class="empty">Nothing published yet.</div>';
+    return;
+  }
+
+  const flagOptionsHtml = FLAG_OPTIONS.map(f => `<option value="${f}">${f}</option>`).join("");
+
+  main.innerHTML = STATE.items.map(item => {
+    const notesHtml = (item.notes || []).map(n => {
+      const who = n.author === "calvin" ? "Calvin" : "Admin";
+      if (n.type === "flag") {
+        return `<div class="note flag"><span class="who">${who} flagged ${n.category || ""}:</span> ${n.text}</div>`;
+      }
+      return `<div class="note"><span class="who">${who}:</span> ${n.text}</div>`;
+    }).join("");
+
+    return `
+      <div class="item" data-id="${item.id}">
+        <div class="item-top">
+          <div>
+            <p class="item-title">${item.job ? item.job + " · " : ""}${item.title}</p>
+            <p class="item-sub">${item.sourceLabel || ""} — ${item.subtitle || ""}</p>
+          </div>
+          <span class="tag ${item.tagClass || 'ok'}">${item.tagText || ''}</span>
+        </div>
+        ${item.summary ? `<p class="summary">${item.summary}</p>` : ""}
+        <div class="notes">
+          ${notesHtml || '<div class="note" style="color:var(--ink-soft);">No notes yet.</div>'}
+          <div class="note-form">
+            <input type="text" placeholder="Add a note…" data-role="note-text">
+            <select data-role="note-category">
+              <option value="">Note (no flag)</option>
+              ${flagOptionsHtml}
+            </select>
+            <button data-action="submit-note" data-id="${item.id}">Send</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  main.querySelectorAll('[data-action="submit-note"]').forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const card = btn.closest(".item");
+      const textEl = card.querySelector('[data-role="note-text"]');
+      const catEl = card.querySelector('[data-role="note-category"]');
+      const text = textEl.value.trim();
+      if (!text) return;
+
+      const category = catEl.value || null;
+      const payload = {
+        item_id: btn.getAttribute("data-id"),
+        author: "calvin",
+        text: text,
+        type: category ? "flag" : "note",
+        category: category
+      };
+
+      btn.disabled = true;
+      btn.textContent = "Sending…";
+      try {
+        const res = await fetch("/api/add-note", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.status !== "ok") throw new Error(data.message || "Failed to send");
+        await loadDashboard();
+      } catch (err) {
+        alert("Could not send: " + err.message);
+        btn.disabled = false;
+        btn.textContent = "Send";
+      }
+    });
+  });
+}
+
+loadDashboard();
+</script>
+
+</body>
+</html>
