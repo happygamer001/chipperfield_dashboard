@@ -82,6 +82,14 @@ NOTION_BATCH_REPORTS_DB_ID = os.environ.get(
 NOTION_GRAVEL_SALES_DB_ID = os.environ.get(
     "NOTION_GRAVEL_SALES_DB_ID", "82d0c995-bc76-4f0f-927a-2e38ab6c564c"
 )
+NOTION_PURCHASE_ORDERS_DB_ID = os.environ.get(
+    "NOTION_PURCHASE_ORDERS_DB_ID", "d9d315d7-9c68-41a2-a3ae-c752a0876ae1"
+)
+# Work Orders lives inside a multi-source database. This is the ID of the
+# specific "Service Request" data source within it (see notion_utils.query_data_source).
+NOTION_WORKORDERS_DATASOURCE_ID = os.environ.get(
+    "NOTION_WORKORDERS_DATASOURCE_ID", "52e9dbff-b6db-4374-a77b-31b86c8ce5eb"
+)
 
 
 # ==========================================
@@ -481,5 +489,129 @@ def customer_search():
 
         results.sort(key=lambda r: r.get("sale_date") or "", reverse=True)
         return jsonify({"count": len(results), "results": results})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# Work order lookup — search by Reporting Contact.
+# NOTE: Work Orders (Service Request) lives inside a Notion multi-source
+# database, which needs the newer data-sources API endpoint. This has not
+# been tested against the live API from this environment — if it errors,
+# check the response message and we can adjust the endpoint/version.
+# ==========================================
+
+@app.route("/api/notion/workorder-search", methods=["GET"])
+@require_role("admin", "calvin")
+def workorder_search():
+    query = (request.args.get("q") or "").strip()
+    if not query:
+        return jsonify({"status": "error", "message": "Provide a contact/customer name with ?q="}), 400
+
+    try:
+        filter_obj = {
+            "property": "Reporting Contact",
+            "rich_text": {"contains": query},
+        }
+        pages = notion_utils.query_data_source(NOTION_WORKORDERS_DATASOURCE_ID, page_size=50, filter_obj=filter_obj)
+
+        results = []
+        for page in pages:
+            props = page.get("properties", {})
+            results.append({
+                "wo_number": notion_utils.prop_number(props, "WO #"),
+                "job_number": notion_utils.prop_number(props, "Job #"),
+                "reporting_contact": notion_utils.prop_text(props, "Reporting Contact"),
+                "work_status": notion_utils.prop_select(props, "Work Status"),
+                "service_priority": notion_utils.prop_select(props, "Service Priority"),
+                "date": notion_utils.prop_date(props, "Date"),
+                "description_of_work": notion_utils.prop_text(props, "Description of Work"),
+                "customer_complaint": notion_utils.prop_text(props, "Customer Complaint"),
+            })
+
+        results.sort(key=lambda r: r.get("date") or "", reverse=True)
+        return jsonify({"count": len(results), "results": results})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# Vendor lookup — search Purchase Orders by vendor, with Ordered->Delivered
+# lead time computed per order and a year-over-year trend summary, so Calvin
+# can see whether deliveries are taking longer than in previous years.
+#
+# NOTE: Vendor is a Notion "select" field, not free text, so the API can't
+# do a partial-match filter on it server-side. This pulls the full PO
+# history (paginated) and matches vendor names client-side instead —
+# works well at this database's size, but would need a real query filter
+# if the PO list grows very large.
+# ==========================================
+
+def _parse_date(d):
+    if not d:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(d.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+@app.route("/api/notion/vendor-search", methods=["GET"])
+@require_role("admin", "calvin")
+def vendor_search():
+    query = (request.args.get("q") or "").strip().lower()
+    if not query:
+        return jsonify({"status": "error", "message": "Provide a vendor name with ?q="}), 400
+
+    try:
+        all_pages = notion_utils.query_database_all(NOTION_PURCHASE_ORDERS_DB_ID)
+
+        results = []
+        for page in all_pages:
+            props = page.get("properties", {})
+            vendor = notion_utils.prop_select(props, "Vendor") or ""
+            if query not in vendor.lower():
+                continue
+
+            ordered = notion_utils.prop_date(props, "Ordered")
+            delivered = notion_utils.prop_date(props, "Delivered")
+
+            lead_time_days = None
+            ordered_d = _parse_date(ordered)
+            delivered_d = _parse_date(delivered)
+            if ordered_d and delivered_d:
+                lead_time_days = (delivered_d - ordered_d).days
+
+            results.append({
+                "po_number": notion_utils.prop_text(props, "PO #"),
+                "job_number": notion_utils.prop_number(props, "Job #"),
+                "vendor": vendor,
+                "amount": notion_utils.prop_number(props, "Amount"),
+                "status": notion_utils.prop_status(props, "Status"),
+                "ordered": ordered,
+                "scheduled": notion_utils.prop_date(props, "Scheduled"),
+                "delivered": delivered,
+                "lead_time_days": lead_time_days,
+                "invoiced": notion_utils.prop_checkbox(props, "Invoiced"),
+                "description": notion_utils.prop_text(props, "Description"),
+            })
+
+        results.sort(key=lambda r: r.get("ordered") or "", reverse=True)
+
+        # Year-over-year average lead time, for spotting a "deliveries are
+        # taking longer" trend. Only counts orders with both dates present.
+        by_year = {}
+        for r in results:
+            if r["lead_time_days"] is None or not r["ordered"]:
+                continue
+            year = r["ordered"][:4]
+            by_year.setdefault(year, []).append(r["lead_time_days"])
+
+        yearly_trend = [
+            {"year": year, "avg_lead_time_days": round(sum(days) / len(days), 1), "count": len(days)}
+            for year, days in sorted(by_year.items())
+        ]
+
+        return jsonify({"count": len(results), "results": results, "yearly_trend": yearly_trend})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

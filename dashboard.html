@@ -110,6 +110,23 @@
     <button id="customer-search-btn">Search</button>
   </div>
   <div id="customer-results"></div>
+
+  <p class="section-heading">Work order lookup</p>
+  <p class="section-sub">Search by reporting contact/customer name.</p>
+  <div class="lookup-bar">
+    <input type="text" id="wo-search-input" placeholder="Contact name…">
+    <button id="wo-search-btn">Search</button>
+  </div>
+  <div id="wo-results"></div>
+
+  <p class="section-heading">Vendor lookup</p>
+  <p class="section-sub">See historical purchases by vendor, including delivery time trends.</p>
+  <div class="lookup-bar">
+    <input type="text" id="vendor-search-input" placeholder="Vendor name…">
+    <button id="vendor-search-btn">Search</button>
+  </div>
+  <div id="vendor-trend"></div>
+  <div id="vendor-results"></div>
 </main>
 </div>
 
@@ -284,6 +301,100 @@ async function runCustomerSearch() {
 document.getElementById("customer-search-btn").addEventListener("click", runCustomerSearch);
 document.getElementById("customer-search-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") runCustomerSearch();
+});
+
+async function runWorkOrderSearch() {
+  const q = document.getElementById("wo-search-input").value.trim();
+  const resultsEl = document.getElementById("wo-results");
+  if (!q) { resultsEl.innerHTML = ""; return; }
+
+  resultsEl.innerHTML = '<div class="empty">Searching…</div>';
+  try {
+    const res = await fetch("/api/notion/workorder-search?q=" + encodeURIComponent(q));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Search failed");
+
+    if (data.results.length === 0) {
+      resultsEl.innerHTML = '<div class="empty">No work orders found for "' + q + '".</div>';
+      return;
+    }
+
+    resultsEl.innerHTML = data.results.map(r => `
+      <div class="item">
+        <div class="item-top">
+          <div>
+            <p class="item-title">WO ${r.wo_number || '—'} · Job ${r.job_number || '—'} — ${r.reporting_contact || 'Unknown contact'}</p>
+            <p class="item-sub">${r.date || 'No date'} · ${r.service_priority || '—'}</p>
+          </div>
+          <span class="tag ${r.work_status === 'Escalated' ? 'escalated' : 'ok'}">${r.work_status || 'Unknown'}</span>
+        </div>
+        ${r.description_of_work ? `<p class="summary">${r.description_of_work}</p>` : ''}
+      </div>
+    `).join("");
+  } catch (err) {
+    resultsEl.innerHTML = '<div class="empty">Search failed: ' + err.message + '</div>';
+  }
+}
+
+document.getElementById("wo-search-btn").addEventListener("click", runWorkOrderSearch);
+document.getElementById("wo-search-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") runWorkOrderSearch();
+});
+
+async function runVendorSearch() {
+  const q = document.getElementById("vendor-search-input").value.trim();
+  const resultsEl = document.getElementById("vendor-results");
+  const trendEl = document.getElementById("vendor-trend");
+  if (!q) { resultsEl.innerHTML = ""; trendEl.innerHTML = ""; return; }
+
+  resultsEl.innerHTML = '<div class="empty">Searching…</div>';
+  trendEl.innerHTML = "";
+  try {
+    const res = await fetch("/api/notion/vendor-search?q=" + encodeURIComponent(q));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Search failed");
+
+    if (data.results.length === 0) {
+      resultsEl.innerHTML = '<div class="empty">No purchase orders found for "' + q + '".</div>';
+      return;
+    }
+
+    if (data.yearly_trend && data.yearly_trend.length > 1) {
+      trendEl.innerHTML = `
+        <div class="item">
+          <p style="font-weight:600;font-size:13px;margin:0 0 8px;">Average delivery lead time by year</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            ${data.yearly_trend.map(y => `
+              <div style="background:var(--page);border:1px solid var(--line);border-radius:6px;padding:8px 12px;text-align:center;">
+                <div style="font-size:11px;color:var(--ink-soft);">${y.year} (${y.count} orders)</div>
+                <div style="font-size:17px;font-weight:600;">${y.avg_lead_time_days} days</div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      `;
+    }
+
+    resultsEl.innerHTML = data.results.map(r => `
+      <div class="item">
+        <div class="item-top">
+          <div>
+            <p class="item-title">${r.po_number || 'PO'} · Job ${r.job_number || '—'} — ${r.vendor}</p>
+            <p class="item-sub">Ordered: ${r.ordered || '—'} · Delivered: ${r.delivered || '—'}${r.lead_time_days !== null ? ' · ' + r.lead_time_days + ' day lead time' : ''} · $${(r.amount || 0).toLocaleString()}</p>
+          </div>
+          <span class="tag ${r.status === 'Delivered' ? 'ok' : 'warn'}">${r.status || 'Unknown'}${r.invoiced ? '' : ' · not invoiced'}</span>
+        </div>
+        ${r.description ? `<p class="summary">${r.description}</p>` : ''}
+      </div>
+    `).join("");
+  } catch (err) {
+    resultsEl.innerHTML = '<div class="empty">Search failed: ' + err.message + '</div>';
+  }
+}
+
+document.getElementById("vendor-search-btn").addEventListener("click", runVendorSearch);
+document.getElementById("vendor-search-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") runVendorSearch();
 });
 
 document.getElementById("login-btn").addEventListener("click", async () => {
