@@ -1,13 +1,10 @@
 {
   "functions": {
-    "api/typeform-webhook.py": {
-      "maxDuration": 30
-    },
-    "api/upload-daily-logs.py": {
+    "api/index.py": {
       "maxDuration": 60
-    },
-    "api/recent-logs.py": {
-      "maxDuration": 30
     }
-  }
+  },
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/index" }
+  ]
 }

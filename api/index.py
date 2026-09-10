@@ -1,47 +1,64 @@
 """
-Typeform webhook receiver.
+Single Python entrypoint for Vercel.
 
-Typeform POSTs here the instant someone submits a Daily Job Log.
-No email, no inbox, no waiting for a scheduled scan.
+As of mid-2026, Vercel's Python runtime expects one entrypoint app (Flask,
+FastAPI, Django, etc.) rather than treating every file in /api as its own
+function. This file is that entrypoint — it's a small Flask app with three
+routes, one per feature:
 
-SETUP REQUIRED IN TYPEFORM (see deployment instructions):
-  - Webhook URL: https://<your-vercel-domain>/api/typeform-webhook
-  - Secret: set the same value as the TYPEFORM_WEBHOOK_SECRET env var in Vercel
+  GET  /api/recent-logs         -> last N days of Daily Job Logs from Dropbox
+  GET/POST /api/typeform-webhook -> real-time Typeform submission receiver
+  GET  /api/upload-daily-logs   -> legacy/backup: manually re-run the Gmail scan
 
-FIELD MATCHING:
-  This looks for field titles containing "name", "job" or "work order", and
-  "date" to identify those answers, and treats any file-upload answer as a
-  photo. Everything else gets included in the PDF body text.
-  Since exact field titles depend on your actual Typeform form, double-check
-  the FIELD MATCHING section below against your form's real field titles
-  after the first test submission (see deployment instructions, step 6).
+See vercel.json for the rewrite rule that routes /api/* here.
 """
 
-from http.server import BaseHTTPRequestHandler
-import json
+import os
+import sys
 import re
+import json
 import hmac
 import hashlib
 import base64
-import datetime
-import sys
-import os
+
 import requests
+from flask import Flask, request, jsonify
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from dropbox_pdf_utils import (  # noqa: E402
     get_dropbox_client,
     format_date_for_jacque,
     upload_pdf_and_photos,
-    require_env,
+    get_recent_daily_logs,
+    DAYS_TO_SHOW_DEFAULT,
 )
+from daily_log_uploader import run_gmail_djl_uploader  # noqa: E402
 
+app = Flask(__name__)
+
+
+# ==========================================
+# /api/recent-logs
+# ==========================================
+
+@app.route("/api/recent-logs", methods=["GET"])
+def recent_logs():
+    try:
+        days = int(request.args.get("days", DAYS_TO_SHOW_DEFAULT))
+        logs = get_recent_daily_logs(days=days)
+        return jsonify({"days": days, "count": len(logs), "logs": logs})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# /api/typeform-webhook
+# ==========================================
 
 def verify_signature(raw_body, signature_header):
     secret = os.environ.get("TYPEFORM_WEBHOOK_SECRET")
     if not secret:
-        # No secret configured — allow through, but this should be set in production.
-        return True
+        return True  # no secret configured — should be set in production
     if not signature_header or not signature_header.startswith("sha256="):
         return False
     expected = base64.b64encode(
@@ -52,7 +69,6 @@ def verify_signature(raw_body, signature_header):
 
 
 def find_answer(answers, keywords):
-    """Return the first answer whose field title contains any of the keywords."""
     for ans in answers:
         title = (ans.get("field", {}).get("title") or "").lower()
         if any(kw in title for kw in keywords):
@@ -64,7 +80,7 @@ def answer_text(ans):
     if ans is None:
         return None
     t = ans.get("type")
-    if t == "text" or t == "choice":
+    if t in ("text", "choice"):
         return ans.get("text") or (ans.get("choice") or {}).get("label")
     if t == "number":
         return str(ans.get("number"))
@@ -105,7 +121,6 @@ def process_submission(payload):
     raw_date = answer_text(date_ans) or submitted_at[:10] or ""
     log_date = format_date_for_jacque(raw_date)
 
-    # Build PDF body text from every text/number/choice answer, labeled by field title
     body_lines = []
     photo_bytes_list = []
     for ans in answers:
@@ -135,35 +150,32 @@ def process_submission(payload):
     return summary
 
 
-class handler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        content_length = int(self.headers.get("Content-Length", 0))
-        raw_body = self.rfile.read(content_length) if content_length else b""
+@app.route("/api/typeform-webhook", methods=["GET", "POST"])
+def typeform_webhook():
+    if request.method == "GET":
+        return jsonify({"status": "ok", "message": "Typeform webhook endpoint is live. POST only."})
 
-        signature = self.headers.get("Typeform-Signature")
-        if not verify_signature(raw_body, signature):
-            self.send_response(401)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({"status": "error", "message": "Invalid signature"}).encode())
-            return
+    raw_body = request.get_data()
+    signature = request.headers.get("Typeform-Signature")
+    if not verify_signature(raw_body, signature):
+        return jsonify({"status": "error", "message": "Invalid signature"}), 401
 
-        try:
-            payload = json.loads(raw_body.decode("utf-8"))
-            summary = process_submission(payload)
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({"status": "ok", "summary": summary}).encode())
-        except Exception as e:
-            self.send_response(500)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode())
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+        summary = process_submission(payload)
+        return jsonify({"status": "ok", "summary": summary})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-    def do_GET(self):
-        # Simple health check so you can confirm the endpoint is live in a browser.
-        self.send_response(200)
-        self.send_header('Content-type', 'application/json')
-        self.end_headers()
-        self.wfile.write(json.dumps({"status": "ok", "message": "Typeform webhook endpoint is live. POST only."}).encode())
+
+# ==========================================
+# /api/upload-daily-logs (legacy/backup manual trigger)
+# ==========================================
+
+@app.route("/api/upload-daily-logs", methods=["GET"])
+def upload_daily_logs():
+    try:
+        summary = run_gmail_djl_uploader()
+        return jsonify({"status": "ok", "summary": summary})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500

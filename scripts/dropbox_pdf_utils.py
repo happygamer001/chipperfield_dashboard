@@ -11,6 +11,7 @@ Used by:
 import os
 import re
 import io
+import datetime
 import dropbox
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
@@ -110,7 +111,6 @@ def generate_pdf_from_text(title, text_content):
 
 
 def build_filenames(log_date_yymmdd, log_name, job_wo):
-    """Returns (pdf_filename, photo_filename_fn) following the shared naming convention."""
     parts = [log_date_yymmdd, log_name]
     if job_wo:
         parts.append(job_wo)
@@ -155,3 +155,77 @@ def upload_pdf_and_photos(dbx, log_date_yymmdd, log_name, job_wo, pdf_text_conte
         existing_files.add(filename)
 
     return summary
+
+
+# ==========================================
+# RECENT LOGS LOOKUP (for the admin dashboard's "last N days" view)
+# ==========================================
+
+DAYS_TO_SHOW_DEFAULT = 5
+
+# Matches "YYMMDD | Name | JobOrWO[ | ImageN].ext"
+_FILENAME_PATTERN = re.compile(
+    r'^(?P<date>\d{6}|No_Date)\s*\|\s*(?P<name>[^|]+?)\s*(?:\|\s*(?P<jobwo>[^|]+?))?(?:\s*\|\s*Image\d+)?\.(?P<ext>\w+)$'
+)
+
+
+def _yymmdd_to_date(yymmdd):
+    if yymmdd == "No_Date" or len(yymmdd) != 6:
+        return None
+    try:
+        return datetime.date(2000 + int(yymmdd[0:2]), int(yymmdd[2:4]), int(yymmdd[4:6]))
+    except ValueError:
+        return None
+
+
+def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
+    dbx = get_dropbox_client()
+
+    today = datetime.date.today()
+    window_start = today - datetime.timedelta(days=days - 1)
+    years_to_check = sorted({window_start.year, today.year})
+
+    entries_by_key = {}
+
+    for year in years_to_check:
+        folder_path = f"{DROPBOX_BASE_FOLDER}/{year}"
+        try:
+            res = dbx.files_list_folder(folder_path)
+            all_entries = list(res.entries)
+            while res.has_more:
+                res = dbx.files_list_folder_continue(res.cursor)
+                all_entries.extend(res.entries)
+        except Exception:
+            continue
+
+        for entry in all_entries:
+            match = _FILENAME_PATTERN.match(entry.name)
+            if not match:
+                continue
+
+            log_date = _yymmdd_to_date(match.group("date"))
+            if not log_date or log_date < window_start or log_date > today:
+                continue
+
+            name = match.group("name").strip()
+            job_wo = (match.group("jobwo") or "").strip()
+            ext = match.group("ext").lower()
+
+            key = (match.group("date"), name, job_wo)
+            if key not in entries_by_key:
+                entries_by_key[key] = {
+                    "date": log_date.isoformat(),
+                    "name": name,
+                    "job_or_wo": job_wo or None,
+                    "dropbox_pdf_path": None,
+                    "photo_count": 0,
+                }
+
+            if ext == "pdf":
+                entries_by_key[key]["dropbox_pdf_path"] = entry.path_display
+            elif ext in ("jpeg", "jpg", "png", "heic", "webp"):
+                entries_by_key[key]["photo_count"] += 1
+
+    results = list(entries_by_key.values())
+    results.sort(key=lambda r: r["date"], reverse=True)
+    return results
