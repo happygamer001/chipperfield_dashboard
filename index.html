@@ -625,10 +625,14 @@ function renderQueue() {
       const dbxLine = item.dropboxPdfPath
         ? `<p class="field-label">Source file</p><input type="text" value="${item.dropboxPdfPath}" readonly>`
         : "";
+      const notionLine = item.notionUrl
+        ? `<p style="margin:0 0 10px;"><a href="${item.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>`
+        : "";
       detailHtml = `
         <p class="field-label">Summary shown to Calvin</p>
         <textarea data-role="summary">${item.summary}</textarea>
         ${dbxLine}
+        ${notionLine}
         ${flagNotesBlock}
         ${actionsBlock}
       `;
@@ -761,6 +765,7 @@ async function runCustomerSearch() {
           <span class="tag ${r.status === 'Incomplete' ? 'warn' : 'ok'}">${r.status || 'Unknown'}${r.invoiced ? '' : ' · not invoiced'}</span>
         </div>
         ${r.notes ? `<div style="padding:0 16px 14px;font-size:13px;color:var(--ink-soft);">${r.notes}</div>` : ''}
+        ${r.notion_url ? `<div style="padding:0 16px 14px;"><a href="${r.notion_url}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></div>` : ''}
       </div>
     `).join("");
   } catch (err) {
@@ -799,6 +804,7 @@ async function runWorkOrderSearch() {
           <span class="tag ${r.work_status === 'Escalated' ? 'escalated' : 'ok'}">${r.work_status || 'Unknown'}</span>
         </div>
         ${r.description_of_work ? `<div style="padding:0 16px 14px;font-size:13px;color:var(--ink-soft);">${r.description_of_work}</div>` : ''}
+        ${r.notion_url ? `<div style="padding:0 16px 14px;"><a href="${r.notion_url}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></div>` : ''}
       </div>
     `).join("");
   } catch (err) {
@@ -855,6 +861,7 @@ async function runVendorSearch() {
           <span class="tag ${r.status === 'Delivered' ? 'ok' : 'warn'}">${r.status || 'Unknown'}${r.invoiced ? '' : ' · not invoiced'}</span>
         </div>
         ${r.description ? `<div style="padding:0 16px 14px;font-size:13px;color:var(--ink-soft);">${r.description}</div>` : ''}
+        ${r.notion_url ? `<div style="padding:0 16px 14px;"><a href="${r.notion_url}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></div>` : ''}
       </div>
     `).join("");
   } catch (err) {

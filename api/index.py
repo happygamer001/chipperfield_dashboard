@@ -413,6 +413,7 @@ def notion_batch_reports():
             has_issue = bool(issues)
             items.append({
                 "id": "notion-batch-" + page["id"],
+                "notionUrl": page.get("url"),
                 "type": "general",
                 "source": "notion-batch-reports",
                 "sourceLabel": "Notion · Daily Batch Reports",
@@ -449,6 +450,7 @@ def notion_gravel_sales():
             incomplete = (status == "Incomplete")
             items.append({
                 "id": "notion-gravel-" + page["id"],
+                "notionUrl": page.get("url"),
                 "type": "general",
                 "source": "notion-gravel-sales",
                 "sourceLabel": "Notion · Gravel Sales",
@@ -490,6 +492,7 @@ def customer_search():
             props = page.get("properties", {})
             results.append({
                 "sale_id": notion_utils.prop_text(props, "Sale ID"),
+                "notion_url": page.get("url"),
                 "customer": notion_utils.prop_text(props, "Customer Name"),
                 "material": notion_utils.prop_select(props, "Material"),
                 "quantity_tons": notion_utils.prop_number(props, "Quantity (Tons)"),
@@ -534,6 +537,7 @@ def workorder_search():
             props = page.get("properties", {})
             results.append({
                 "wo_number": notion_utils.prop_number(props, "WO #"),
+                "notion_url": page.get("url"),
                 "job_number": notion_utils.prop_number(props, "Job #"),
                 "reporting_contact": notion_utils.prop_text(props, "Reporting Contact"),
                 "work_status": notion_utils.prop_select(props, "Work Status"),
@@ -598,6 +602,7 @@ def vendor_search():
 
             results.append({
                 "po_number": notion_utils.prop_text(props, "PO #"),
+                "notion_url": page.get("url"),
                 "job_number": notion_utils.prop_number(props, "Job #"),
                 "vendor": vendor,
                 "amount": notion_utils.prop_number(props, "Amount"),
@@ -792,6 +797,7 @@ def notion_mgmt_log():
 
             items.append({
                 "id": "notion-mgmtlog-" + page["id"],
+                "notionUrl": page.get("url"),
                 "type": "general",
                 "source": "notion-mgmt-log",
                 "sourceLabel": "Notion · Daily Management Log",
@@ -824,6 +830,7 @@ def notion_current_jobs():
             props = page.get("properties", {})
             items.append({
                 "job_number": notion_utils.prop_text(props, "Job #"),
+                "notion_url": page.get("url"),
                 "name": notion_utils.prop_text(props, "Name"),
                 "job_status": notion_utils.prop_select(props, "Job Status"),
                 "stage": notion_utils.prop_select(props, "Stage"),

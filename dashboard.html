@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -20,6 +20,21 @@
     --ok-bg: #e6f4e0;
     --ok-text: #2f6b1f;
   }
+  [data-theme="dark"] {
+    --green: #97E45D;
+    --green-dark: #7cc447;
+    --ink: #eef0ea;
+    --ink-soft: #a3a89c;
+    --line: #333831;
+    --surface: #1c1f1a;
+    --page: #121410;
+    --danger-bg: #3a1a1a;
+    --danger-text: #ff8a8a;
+    --warn-bg: #3a3113;
+    --warn-text: #ffce5c;
+    --ok-bg: #1c3016;
+    --ok-text: #8fe07a;
+  }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--page); color: var(--ink); }
   header { background: var(--surface); border-bottom: 1px solid var(--line); padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; }
@@ -27,6 +42,7 @@
   .brand .icon { width: 32px; height: 32px; border-radius: 8px; background: var(--green); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; color: #000; }
   .brand h1 { font-size: 16px; margin: 0; font-weight: 600; }
   .brand .sub { font-size: 12px; color: var(--ink-soft); }
+  .header-actions { display: flex; align-items: center; gap: 14px; }
   main { max-width: 720px; margin: 0 auto; padding: 24px; }
   .item { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; padding: 14px 16px; }
   .item-title { font-size: 14px; font-weight: 600; margin: 0; }
@@ -95,7 +111,10 @@
       <div class="sub" id="last-published">Loading…</div>
     </div>
   </div>
-  <span class="logout-link" id="logout-btn">Log out</span>
+  <div class="header-actions">
+    <span class="logout-link" id="theme-toggle">🌙 Dark mode</span>
+    <span class="logout-link" id="logout-btn">Log out</span>
+  </div>
 </header>
 
 <main style="padding-bottom:0;">
@@ -201,6 +220,7 @@ function render() {
           <span class="tag ${item.tagClass || 'ok'}">${item.tagText || ''}</span>
         </div>
         ${item.summary ? `<p class="summary">${item.summary}</p>` : ""}
+        ${item.notionUrl ? `<p style="margin:6px 0 0;"><a href="${item.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ""}
         <div class="notes">
           ${notesHtml || '<div class="note" style="color:var(--ink-soft);">No notes yet.</div>'}
           <div class="note-form">
@@ -308,6 +328,7 @@ async function runCustomerSearch() {
           <span class="tag ${r.status === 'Incomplete' ? 'warn' : 'ok'}">${r.status || 'Unknown'}${r.invoiced ? '' : ' · not invoiced'}</span>
         </div>
         ${r.notes ? `<p class="summary">${r.notes}</p>` : ''}
+        ${r.notion_url ? `<p style="margin:6px 0 0;"><a href="${r.notion_url}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
       </div>
     `).join("");
   } catch (err) {
@@ -346,6 +367,7 @@ async function runWorkOrderSearch() {
           <span class="tag ${r.work_status === 'Escalated' ? 'escalated' : 'ok'}">${r.work_status || 'Unknown'}</span>
         </div>
         ${r.description_of_work ? `<p class="summary">${r.description_of_work}</p>` : ''}
+        ${r.notion_url ? `<p style="margin:6px 0 0;"><a href="${r.notion_url}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
       </div>
     `).join("");
   } catch (err) {
@@ -402,6 +424,7 @@ async function runVendorSearch() {
           <span class="tag ${r.status === 'Delivered' ? 'ok' : 'warn'}">${r.status || 'Unknown'}${r.invoiced ? '' : ' · not invoiced'}</span>
         </div>
         ${r.description ? `<p class="summary">${r.description}</p>` : ''}
+        ${r.notion_url ? `<p style="margin:6px 0 0;"><a href="${r.notion_url}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
       </div>
     `).join("");
   } catch (err) {
@@ -463,12 +486,12 @@ async function loadDailyReports() {
 
     const mgmtItems = (mgmtData.items || []).map(i => ({
       title: i.title, subtitle: i.subtitle, summary: i.summary,
-      tagClass: i.tagClass, tagText: i.tagText, kind: "Management log"
+      tagClass: i.tagClass, tagText: i.tagText, kind: "Management log", notionUrl: i.notionUrl
     }));
     const jobLogItems = (logsData.logs || []).map(l => ({
       title: `${l.name} — daily log`,
       subtitle: `${l.date} · ${l.job_or_wo || 'No job #'} · ${l.photo_count} photo(s)`,
-      summary: "", tagClass: "ok", tagText: "Job log", kind: "Job log"
+      summary: "", tagClass: "ok", tagText: "Job log", kind: "Job log", notionUrl: null
     }));
 
     const all = [...mgmtItems, ...jobLogItems];
@@ -487,6 +510,7 @@ async function loadDailyReports() {
           <span class="tag ${r.tagClass}">${r.tagText}</span>
         </div>
         ${r.summary ? `<p class="summary" style="white-space:pre-line;">${r.summary}</p>` : ''}
+        ${r.notionUrl ? `<p style="margin:6px 0 0;"><a href="${r.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
       </div>
     `).join("");
   } catch (err) {
@@ -521,6 +545,7 @@ async function loadCurrentJobs() {
           </div>
           ${j.status_note ? `<p class="summary">${j.status_note}</p>` : ''}
           ${j.next_action ? `<p class="summary" style="color:var(--ink-soft);">Next: ${j.next_action}</p>` : ''}
+          ${j.notion_url ? `<p style="margin:6px 0 0;"><a href="${j.notion_url}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
         </div>
       `;
     }).join("");
@@ -565,6 +590,19 @@ document.getElementById("logout-btn").addEventListener("click", async () => {
   await fetch("/api/logout", { method: "POST" });
   showLogin();
 });
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  document.getElementById("theme-toggle").textContent = theme === "dark" ? "☀️ Light mode" : "🌙 Dark mode";
+  localStorage.setItem("chipperfield-theme", theme);
+}
+
+document.getElementById("theme-toggle").addEventListener("click", () => {
+  const current = document.documentElement.getAttribute("data-theme");
+  applyTheme(current === "dark" ? "light" : "dark");
+});
+
+applyTheme(localStorage.getItem("chipperfield-theme") || "light");
 
 checkSession();
 </script>
