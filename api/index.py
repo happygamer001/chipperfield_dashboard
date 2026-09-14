@@ -98,6 +98,12 @@ NOTION_WORKORDERS_DATASOURCE_ID = os.environ.get(
 NOTION_MGMT_LOG_DB_ID = os.environ.get(
     "NOTION_MGMT_LOG_DB_ID", "39c4562c-e56f-8005-b0dd-c9d80bb378da"
 )
+# Current Jobs is an inline database within a page (not a standalone
+# top-level database), so it uses the newer data-sources endpoint like
+# Work Orders does.
+NOTION_CURRENT_JOBS_DATASOURCE_ID = os.environ.get(
+    "NOTION_CURRENT_JOBS_DATASOURCE_ID", "92caa4f5-2f8f-4d5b-9c6f-c1b937685d4f"
+)
 
 
 # ==========================================
@@ -151,7 +157,7 @@ def get_session():
 # ==========================================
 
 @app.route("/api/recent-logs", methods=["GET"])
-@require_role("admin")
+@require_role("admin", "calvin")
 def recent_logs():
     try:
         days = int(request.args.get("days", DAYS_TO_SHOW_DEFAULT))
@@ -755,7 +761,7 @@ def fabshop_revenue():
 # ==========================================
 
 @app.route("/api/notion/mgmt-log", methods=["GET"])
-@require_role("admin")
+@require_role("admin", "calvin")
 def notion_mgmt_log():
     try:
         pages = notion_utils.query_database(NOTION_MGMT_LOG_DB_ID, page_size=30)
@@ -797,6 +803,46 @@ def notion_mgmt_log():
                 "summary": "\n".join(lines),
                 "status": "pending",
             })
+        return jsonify({"count": len(items), "items": items})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# Current Jobs — the same data reviewed in Monday morning meetings.
+# NOTE: like Work Orders, this is an inline database and uses the newer
+# data-sources endpoint. Please test and report back if it errors.
+# ==========================================
+
+@app.route("/api/notion/current-jobs", methods=["GET"])
+@require_role("admin", "calvin")
+def notion_current_jobs():
+    try:
+        pages = notion_utils.query_data_source(NOTION_CURRENT_JOBS_DATASOURCE_ID, page_size=100)
+        items = []
+        for page in pages:
+            props = page.get("properties", {})
+            items.append({
+                "job_number": notion_utils.prop_text(props, "Job #"),
+                "name": notion_utils.prop_text(props, "Name"),
+                "job_status": notion_utils.prop_select(props, "Job Status"),
+                "stage": notion_utils.prop_select(props, "Stage"),
+                "priority": notion_utils.prop_select(props, "Priority"),
+                "project_manager": notion_utils.prop_select(props, "Project Manager"),
+                "hours_budget": notion_utils.prop_number(props, "Hours budget"),
+                "hours_used": notion_utils.prop_number(props, "Hours Used"),
+                "total_budget": notion_utils.prop_number(props, "Total Budget"),
+                "contract": notion_utils.prop_number(props, "Contract"),
+                "next_action": notion_utils.prop_text(props, "Next Action"),
+                "pm_next_action": notion_utils.prop_text(props, "PM Next Action"),
+                "status_note": notion_utils.prop_text(props, "Status Note"),
+                "calvin_review": notion_utils.prop_checkbox(props, "Calvin Review"),
+            })
+
+        # Active-feeling jobs first: anything not Won/Lost/Cancelled/Complete-ish
+        closed_statuses = {"Won", "Lost", "Cancelled", "Complete", "Expired"}
+        items.sort(key=lambda i: (i["job_status"] in closed_statuses if i["job_status"] else False, i["job_number"] or ""))
+
         return jsonify({"count": len(items), "items": items})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

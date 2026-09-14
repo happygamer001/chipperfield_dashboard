@@ -98,7 +98,21 @@
   <span class="logout-link" id="logout-btn">Log out</span>
 </header>
 
-<main id="main">
+<main style="padding-bottom:0;">
+  <p class="section-heading" style="margin-top:0;">Daily reports</p>
+  <p class="section-sub">Management log and job logs from the crew, most recent first.</p>
+  <div id="daily-reports-display"></div>
+
+  <p class="section-heading">Current Jobs</p>
+  <p class="section-sub">The same list reviewed in Monday morning meetings.</p>
+  <div id="current-jobs-display"></div>
+
+  <p class="section-heading">Fab Shop revenue</p>
+  <p class="section-sub" id="fabshop-status">Loading…</p>
+  <div id="fabshop-revenue-display"></div>
+</main>
+
+<main id="main" style="padding-top:0;">
   <div class="empty">Loading dashboard…</div>
 </main>
 
@@ -127,10 +141,6 @@
   </div>
   <div id="vendor-trend"></div>
   <div id="vendor-results"></div>
-
-  <p class="section-heading">Fab Shop revenue</p>
-  <p class="section-sub" id="fabshop-status">Loading…</p>
-  <div id="fabshop-revenue-display"></div>
 </main>
 </div>
 
@@ -248,6 +258,8 @@ function showApp() {
   document.getElementById("app-content").style.display = "block";
   loadDashboard();
   loadFabshopRevenue();
+  loadDailyReports();
+  loadCurrentJobs();
 }
 
 function showLogin(message) {
@@ -435,6 +447,86 @@ function renderFabshopRevenue(data) {
       </div>
     `).join("")}
   `;
+}
+
+async function loadDailyReports() {
+  const displayEl = document.getElementById("daily-reports-display");
+  displayEl.innerHTML = '<div class="empty">Loading…</div>';
+
+  try {
+    const [mgmtRes, logsRes] = await Promise.all([
+      fetch("/api/notion/mgmt-log"),
+      fetch("/api/recent-logs?days=5")
+    ]);
+    const mgmtData = await mgmtRes.json();
+    const logsData = await logsRes.json();
+
+    const mgmtItems = (mgmtData.items || []).map(i => ({
+      title: i.title, subtitle: i.subtitle, summary: i.summary,
+      tagClass: i.tagClass, tagText: i.tagText, kind: "Management log"
+    }));
+    const jobLogItems = (logsData.logs || []).map(l => ({
+      title: `${l.name} — daily log`,
+      subtitle: `${l.date} · ${l.job_or_wo || 'No job #'} · ${l.photo_count} photo(s)`,
+      summary: "", tagClass: "ok", tagText: "Job log", kind: "Job log"
+    }));
+
+    const all = [...mgmtItems, ...jobLogItems];
+    if (all.length === 0) {
+      displayEl.innerHTML = '<div class="empty">No daily reports yet.</div>';
+      return;
+    }
+
+    displayEl.innerHTML = all.map(r => `
+      <div class="item">
+        <div class="item-top">
+          <div>
+            <p class="item-title">${r.title}</p>
+            <p class="item-sub">${r.kind} · ${r.subtitle}</p>
+          </div>
+          <span class="tag ${r.tagClass}">${r.tagText}</span>
+        </div>
+        ${r.summary ? `<p class="summary" style="white-space:pre-line;">${r.summary}</p>` : ''}
+      </div>
+    `).join("");
+  } catch (err) {
+    displayEl.innerHTML = '<div class="empty">Could not load daily reports.</div>';
+  }
+}
+
+async function loadCurrentJobs() {
+  const displayEl = document.getElementById("current-jobs-display");
+  displayEl.innerHTML = '<div class="empty">Loading…</div>';
+
+  try {
+    const res = await fetch("/api/notion/current-jobs");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Failed to load");
+
+    if (data.items.length === 0) {
+      displayEl.innerHTML = '<div class="empty">No current jobs found.</div>';
+      return;
+    }
+
+    displayEl.innerHTML = data.items.map(j => {
+      const pctUsed = j.hours_budget ? Math.round((j.hours_used / j.hours_budget) * 100) : null;
+      return `
+        <div class="item">
+          <div class="item-top">
+            <div>
+              <p class="item-title">${j.job_number ? j.job_number + ' · ' : ''}${j.name || 'Untitled job'}</p>
+              <p class="item-sub">${j.stage || '—'} · PM: ${j.project_manager || '—'}${pctUsed !== null ? ' · ' + j.hours_used + '/' + j.hours_budget + ' hrs (' + pctUsed + '%)' : ''}</p>
+            </div>
+            <span class="tag ${j.priority === 'Urgent' ? 'escalated' : 'ok'}">${j.job_status || 'Unknown'}</span>
+          </div>
+          ${j.status_note ? `<p class="summary">${j.status_note}</p>` : ''}
+          ${j.next_action ? `<p class="summary" style="color:var(--ink-soft);">Next: ${j.next_action}</p>` : ''}
+        </div>
+      `;
+    }).join("");
+  } catch (err) {
+    displayEl.innerHTML = '<div class="empty">Could not load current jobs: ' + err.message + '</div>';
+  }
 }
 
 async function loadFabshopRevenue() {
