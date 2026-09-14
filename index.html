@@ -212,35 +212,39 @@
   </div>
 
   <div class="queue-header">
-    <h2>Customer order lookup</h2>
-    <span>Searches all Gravel Sales history, not just the review queue</span>
+    <h2>Lookups</h2>
+    <span>Browse full historical data by category</span>
   </div>
-  <div class="filters" style="margin-bottom:20px;">
-    <input class="search-box" id="customer-search-input" type="text" placeholder="Customer name…">
-    <button class="primary" id="customer-search-btn" style="flex:0 0 auto;">Search</button>
+  <div class="filters" id="lookup-tabs" style="margin-bottom:20px;">
+    <div class="filter-chip active" data-tab="customer">Customer Orders</div>
+    <div class="filter-chip" data-tab="workorder">Work Orders</div>
+    <div class="filter-chip" data-tab="vendor">Vendors</div>
   </div>
-  <div id="customer-results"></div>
 
-  <div class="queue-header">
-    <h2>Work order lookup</h2>
-    <span>Search by reporting contact/customer name</span>
+  <div id="tab-customer" class="lookup-tab-panel">
+    <div class="filters" style="margin-bottom:20px;">
+      <input class="search-box" id="customer-search-input" type="text" placeholder="Filter by customer name (leave blank to see everything)…">
+      <button class="primary" id="customer-search-btn" style="flex:0 0 auto;">Search</button>
+    </div>
+    <div id="customer-results"></div>
   </div>
-  <div class="filters" style="margin-bottom:20px;">
-    <input class="search-box" id="wo-search-input" type="text" placeholder="Contact name…">
-    <button class="primary" id="wo-search-btn" style="flex:0 0 auto;">Search</button>
-  </div>
-  <div id="wo-results"></div>
 
-  <div class="queue-header">
-    <h2>Vendor lookup</h2>
-    <span>Search Purchase Orders by vendor — includes delivery time trend</span>
+  <div id="tab-workorder" class="lookup-tab-panel" style="display:none;">
+    <div class="filters" style="margin-bottom:20px;">
+      <input class="search-box" id="wo-search-input" type="text" placeholder="Filter by contact name (leave blank to see everything)…">
+      <button class="primary" id="wo-search-btn" style="flex:0 0 auto;">Search</button>
+    </div>
+    <div id="wo-results"></div>
   </div>
-  <div class="filters" style="margin-bottom:20px;">
-    <input class="search-box" id="vendor-search-input" type="text" placeholder="Vendor name…">
-    <button class="primary" id="vendor-search-btn" style="flex:0 0 auto;">Search</button>
+
+  <div id="tab-vendor" class="lookup-tab-panel" style="display:none;">
+    <div class="filters" style="margin-bottom:20px;">
+      <input class="search-box" id="vendor-search-input" type="text" placeholder="Filter by vendor name (leave blank to see everything)…">
+      <button class="primary" id="vendor-search-btn" style="flex:0 0 auto;">Search</button>
+    </div>
+    <div id="vendor-trend"></div>
+    <div id="vendor-results"></div>
   </div>
-  <div id="vendor-trend"></div>
-  <div id="vendor-results"></div>
 
   <div class="queue-header">
     <h2>Fab Shop revenue</h2>
@@ -742,7 +746,6 @@ document.getElementById("sort-select").addEventListener("change", (e) => {
 async function runCustomerSearch() {
   const q = document.getElementById("customer-search-input").value.trim();
   const resultsEl = document.getElementById("customer-results");
-  if (!q) { resultsEl.innerHTML = ""; return; }
 
   resultsEl.innerHTML = '<div class="empty">Searching…</div>';
   try {
@@ -751,7 +754,7 @@ async function runCustomerSearch() {
     if (!res.ok) throw new Error(data.message || "Search failed");
 
     if (data.results.length === 0) {
-      resultsEl.innerHTML = '<div class="empty">No orders found for "' + q + '".</div>';
+      resultsEl.innerHTML = '<div class="empty">No orders found' + (q ? ' for "' + q + '"' : '') + '.</div>';
       return;
     }
 
@@ -781,7 +784,6 @@ document.getElementById("customer-search-input").addEventListener("keydown", (e)
 async function runWorkOrderSearch() {
   const q = document.getElementById("wo-search-input").value.trim();
   const resultsEl = document.getElementById("wo-results");
-  if (!q) { resultsEl.innerHTML = ""; return; }
 
   resultsEl.innerHTML = '<div class="empty">Searching…</div>';
   try {
@@ -790,7 +792,7 @@ async function runWorkOrderSearch() {
     if (!res.ok) throw new Error(data.message || "Search failed");
 
     if (data.results.length === 0) {
-      resultsEl.innerHTML = '<div class="empty">No work orders found for "' + q + '".</div>';
+      resultsEl.innerHTML = '<div class="empty">No work orders found' + (q ? ' for "' + q + '"' : '') + '.</div>';
       return;
     }
 
@@ -821,7 +823,6 @@ async function runVendorSearch() {
   const q = document.getElementById("vendor-search-input").value.trim();
   const resultsEl = document.getElementById("vendor-results");
   const trendEl = document.getElementById("vendor-trend");
-  if (!q) { resultsEl.innerHTML = ""; trendEl.innerHTML = ""; return; }
 
   resultsEl.innerHTML = '<div class="empty">Searching…</div>';
   trendEl.innerHTML = "";
@@ -831,7 +832,7 @@ async function runVendorSearch() {
     if (!res.ok) throw new Error(data.message || "Search failed");
 
     if (data.results.length === 0) {
-      resultsEl.innerHTML = '<div class="empty">No purchase orders found for "' + q + '".</div>';
+      resultsEl.innerHTML = '<div class="empty">No purchase orders found' + (q ? ' for "' + q + '"' : '') + '.</div>';
       return;
     }
 
@@ -1067,7 +1068,24 @@ function loadAllLiveSources() {
   loadNotionSource("notion-gravel-sales", "/api/notion/gravel-sales");
   loadNotionSource("notion-mgmt-log", "/api/notion/mgmt-log");
   loadFabshopRevenue();
+  showLookupTab("customer");
 }
+
+function showLookupTab(tab) {
+  ["customer", "workorder", "vendor"].forEach(t => {
+    document.getElementById("tab-" + t).style.display = (t === tab) ? "block" : "none";
+  });
+  document.querySelectorAll("#lookup-tabs .filter-chip").forEach(el => {
+    el.classList.toggle("active", el.getAttribute("data-tab") === tab);
+  });
+  if (tab === "customer") runCustomerSearch();
+  else if (tab === "workorder") runWorkOrderSearch();
+  else if (tab === "vendor") runVendorSearch();
+}
+
+document.querySelectorAll("#lookup-tabs .filter-chip").forEach(el => {
+  el.addEventListener("click", () => showLookupTab(el.getAttribute("data-tab")));
+});
 
 // ==========================================
 // LOGIN GATING

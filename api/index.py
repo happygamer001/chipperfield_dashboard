@@ -477,15 +477,13 @@ def notion_gravel_sales():
 @require_role("admin", "calvin")
 def customer_search():
     query = (request.args.get("q") or "").strip()
-    if not query:
-        return jsonify({"status": "error", "message": "Provide a customer name with ?q="}), 400
 
     try:
         filter_obj = {
             "property": "Customer Name",
             "rich_text": {"contains": query},
-        }
-        pages = notion_utils.query_database(NOTION_GRAVEL_SALES_DB_ID, page_size=50, filter_obj=filter_obj)
+        } if query else None
+        pages = notion_utils.query_database(NOTION_GRAVEL_SALES_DB_ID, page_size=100, filter_obj=filter_obj)
 
         results = []
         for page in pages:
@@ -522,15 +520,13 @@ def customer_search():
 @require_role("admin", "calvin")
 def workorder_search():
     query = (request.args.get("q") or "").strip()
-    if not query:
-        return jsonify({"status": "error", "message": "Provide a contact/customer name with ?q="}), 400
 
     try:
         filter_obj = {
             "property": "Reporting Contact",
             "rich_text": {"contains": query},
-        }
-        pages = notion_utils.query_data_source(NOTION_WORKORDERS_DATASOURCE_ID, page_size=50, filter_obj=filter_obj)
+        } if query else None
+        pages = notion_utils.query_data_source(NOTION_WORKORDERS_DATASOURCE_ID, page_size=100, filter_obj=filter_obj)
 
         results = []
         for page in pages:
@@ -578,8 +574,6 @@ def _parse_date(d):
 @require_role("admin", "calvin")
 def vendor_search():
     query = (request.args.get("q") or "").strip().lower()
-    if not query:
-        return jsonify({"status": "error", "message": "Provide a vendor name with ?q="}), 400
 
     try:
         all_pages = notion_utils.query_database_all(NOTION_PURCHASE_ORDERS_DB_ID)
@@ -588,7 +582,7 @@ def vendor_search():
         for page in all_pages:
             props = page.get("properties", {})
             vendor = notion_utils.prop_select(props, "Vendor") or ""
-            if query not in vendor.lower():
+            if query and query not in vendor.lower():
                 continue
 
             ordered = notion_utils.prop_date(props, "Ordered")

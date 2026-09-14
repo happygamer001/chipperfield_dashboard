@@ -67,6 +67,12 @@
   .lookup-bar { display: flex; gap: 8px; margin-bottom: 16px; }
   .lookup-bar input { flex: 1; font-size: 13px; padding: 9px; border: 1px solid var(--line); border-radius: 6px; }
   .lookup-bar button { font-size: 13px; padding: 9px 16px; border-radius: 6px; border: 1px solid var(--green-dark); background: var(--green); font-weight: 600; cursor: pointer; }
+  .lookup-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .lookup-tab {
+    border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px;
+    font-size: 13px; cursor: pointer; background: var(--surface); color: var(--ink-soft); font-weight: 600;
+  }
+  .lookup-tab.active { background: var(--green); border-color: var(--green-dark); color: #1c1f1a; }
 
   #login-screen {
     max-width: 340px; margin: 120px auto; background: var(--surface);
@@ -136,30 +142,38 @@
 </main>
 
 <main style="padding-top:0;">
-  <p class="section-heading">Customer order lookup</p>
-  <p class="section-sub">Search all past Gravel Sales orders — not just what's currently on this dashboard.</p>
-  <div class="lookup-bar">
-    <input type="text" id="customer-search-input" placeholder="Customer name…">
-    <button id="customer-search-btn">Search</button>
+  <p class="section-heading" style="margin-top:0;">Lookups</p>
+  <p class="section-sub">Browse full historical data by category.</p>
+  <div class="lookup-tabs" id="lookup-tabs">
+    <div class="lookup-tab active" data-tab="customer">Customer Orders</div>
+    <div class="lookup-tab" data-tab="workorder">Work Orders</div>
+    <div class="lookup-tab" data-tab="vendor">Vendors</div>
   </div>
-  <div id="customer-results"></div>
 
-  <p class="section-heading">Work order lookup</p>
-  <p class="section-sub">Search by reporting contact/customer name.</p>
-  <div class="lookup-bar">
-    <input type="text" id="wo-search-input" placeholder="Contact name…">
-    <button id="wo-search-btn">Search</button>
+  <div id="tab-customer">
+    <div class="lookup-bar">
+      <input type="text" id="customer-search-input" placeholder="Filter by customer name (leave blank to see everything)…">
+      <button id="customer-search-btn">Search</button>
+    </div>
+    <div id="customer-results"></div>
   </div>
-  <div id="wo-results"></div>
 
-  <p class="section-heading">Vendor lookup</p>
-  <p class="section-sub">See historical purchases by vendor, including delivery time trends.</p>
-  <div class="lookup-bar">
-    <input type="text" id="vendor-search-input" placeholder="Vendor name…">
-    <button id="vendor-search-btn">Search</button>
+  <div id="tab-workorder" style="display:none;">
+    <div class="lookup-bar">
+      <input type="text" id="wo-search-input" placeholder="Filter by contact name (leave blank to see everything)…">
+      <button id="wo-search-btn">Search</button>
+    </div>
+    <div id="wo-results"></div>
   </div>
-  <div id="vendor-trend"></div>
-  <div id="vendor-results"></div>
+
+  <div id="tab-vendor" style="display:none;">
+    <div class="lookup-bar">
+      <input type="text" id="vendor-search-input" placeholder="Filter by vendor name (leave blank to see everything)…">
+      <button id="vendor-search-btn">Search</button>
+    </div>
+    <div id="vendor-trend"></div>
+    <div id="vendor-results"></div>
+  </div>
 </main>
 </div>
 
@@ -280,7 +294,24 @@ function showApp() {
   loadFabshopRevenue();
   loadDailyReports();
   loadCurrentJobs();
+  showLookupTab("customer");
 }
+
+function showLookupTab(tab) {
+  ["customer", "workorder", "vendor"].forEach(t => {
+    document.getElementById("tab-" + t).style.display = (t === tab) ? "block" : "none";
+  });
+  document.querySelectorAll("#lookup-tabs .lookup-tab").forEach(el => {
+    el.classList.toggle("active", el.getAttribute("data-tab") === tab);
+  });
+  if (tab === "customer") runCustomerSearch();
+  else if (tab === "workorder") runWorkOrderSearch();
+  else if (tab === "vendor") runVendorSearch();
+}
+
+document.querySelectorAll("#lookup-tabs .lookup-tab").forEach(el => {
+  el.addEventListener("click", () => showLookupTab(el.getAttribute("data-tab")));
+});
 
 function showLogin(message) {
   document.getElementById("app-content").style.display = "none";
@@ -305,7 +336,6 @@ async function checkSession() {
 async function runCustomerSearch() {
   const q = document.getElementById("customer-search-input").value.trim();
   const resultsEl = document.getElementById("customer-results");
-  if (!q) { resultsEl.innerHTML = ""; return; }
 
   resultsEl.innerHTML = '<div class="empty">Searching…</div>';
   try {
@@ -314,7 +344,7 @@ async function runCustomerSearch() {
     if (!res.ok) throw new Error(data.message || "Search failed");
 
     if (data.results.length === 0) {
-      resultsEl.innerHTML = '<div class="empty">No orders found for "' + q + '".</div>';
+      resultsEl.innerHTML = '<div class="empty">No orders found' + (q ? ' for "' + q + '"' : '') + '.</div>';
       return;
     }
 
@@ -344,7 +374,6 @@ document.getElementById("customer-search-input").addEventListener("keydown", (e)
 async function runWorkOrderSearch() {
   const q = document.getElementById("wo-search-input").value.trim();
   const resultsEl = document.getElementById("wo-results");
-  if (!q) { resultsEl.innerHTML = ""; return; }
 
   resultsEl.innerHTML = '<div class="empty">Searching…</div>';
   try {
@@ -353,7 +382,7 @@ async function runWorkOrderSearch() {
     if (!res.ok) throw new Error(data.message || "Search failed");
 
     if (data.results.length === 0) {
-      resultsEl.innerHTML = '<div class="empty">No work orders found for "' + q + '".</div>';
+      resultsEl.innerHTML = '<div class="empty">No work orders found' + (q ? ' for "' + q + '"' : '') + '.</div>';
       return;
     }
 
@@ -384,7 +413,6 @@ async function runVendorSearch() {
   const q = document.getElementById("vendor-search-input").value.trim();
   const resultsEl = document.getElementById("vendor-results");
   const trendEl = document.getElementById("vendor-trend");
-  if (!q) { resultsEl.innerHTML = ""; trendEl.innerHTML = ""; return; }
 
   resultsEl.innerHTML = '<div class="empty">Searching…</div>';
   trendEl.innerHTML = "";
@@ -394,7 +422,7 @@ async function runVendorSearch() {
     if (!res.ok) throw new Error(data.message || "Search failed");
 
     if (data.results.length === 0) {
-      resultsEl.innerHTML = '<div class="empty">No purchase orders found for "' + q + '".</div>';
+      resultsEl.innerHTML = '<div class="empty">No purchase orders found' + (q ? ' for "' + q + '"' : '') + '.</div>';
       return;
     }
 
