@@ -392,7 +392,8 @@ const SOURCES = [
   { id: "dropbox-dailylog", label: "Daily Job Log (Dropbox)", lastSynced: "not yet synced" },
   { id: "excel-fabshop", label: "Fab Shop Excel", lastSynced: "3 days ago" },
   { id: "notion-batch-reports", label: "MCI Batch Reports", lastSynced: "not yet synced" },
-  { id: "notion-gravel-sales", label: "Gravel Sales", lastSynced: "not yet synced" }
+  { id: "notion-gravel-sales", label: "Gravel Sales", lastSynced: "not yet synced" },
+  { id: "notion-mgmt-log", label: "Daily Management Log", lastSynced: "not yet synced" }
 ];
 
 const FLAG_OPTIONS = [
@@ -1057,6 +1058,7 @@ function loadAllLiveSources() {
   loadDailyLogsFromDropbox();
   loadNotionSource("notion-batch-reports", "/api/notion/batch-reports");
   loadNotionSource("notion-gravel-sales", "/api/notion/gravel-sales");
+  loadNotionSource("notion-mgmt-log", "/api/notion/mgmt-log");
   loadFabshopRevenue();
 }
 

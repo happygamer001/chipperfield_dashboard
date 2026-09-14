@@ -95,6 +95,9 @@ NOTION_PURCHASE_ORDERS_DB_ID = os.environ.get(
 NOTION_WORKORDERS_DATASOURCE_ID = os.environ.get(
     "NOTION_WORKORDERS_DATASOURCE_ID", "52e9dbff-b6db-4374-a77b-31b86c8ce5eb"
 )
+NOTION_MGMT_LOG_DB_ID = os.environ.get(
+    "NOTION_MGMT_LOG_DB_ID", "39c4562c-e56f-8005-b0dd-c9d80bb378da"
+)
 
 
 # ==========================================
@@ -740,5 +743,60 @@ def fabshop_revenue():
         except dropbox.exceptions.ApiError:
             data = {"uploaded_at": None, "filename": None, "weekly": [], "daily": []}
         return jsonify(data)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# Daily Management Log — each Notion page is one person's day, with up to
+# 7 project slots (project / what was done / how long / next action).
+# Folded into one review-queue item per day, same shape as the other
+# Notion sources, so it reuses the existing generic loader on the frontend.
+# ==========================================
+
+@app.route("/api/notion/mgmt-log", methods=["GET"])
+@require_role("admin")
+def notion_mgmt_log():
+    try:
+        pages = notion_utils.query_database(NOTION_MGMT_LOG_DB_ID, page_size=30)
+        items = []
+        for page in pages:
+            props = page.get("properties", {})
+            name = notion_utils.prop_text(props, "Name") or "Unknown"
+            date = notion_utils.prop_date(props, "Date")
+
+            lines = []
+            has_next_action = False
+            for i in range(1, 8):
+                project = notion_utils.prop_text(props, f"What project ({i})")
+                done = notion_utils.prop_text(props, f"What was done ({i})")
+                how_long = notion_utils.prop_text(props, f"How Long ({i})")
+                next_action = notion_utils.prop_text(props, f"Next Action ({i})")
+
+                if not (project or done):
+                    continue
+
+                line = f"{project or 'Project'}: {done or ''}"
+                if how_long:
+                    line += f" ({how_long})"
+                if next_action:
+                    line += f" — Next: {next_action}"
+                    has_next_action = True
+                lines.append(line)
+
+            items.append({
+                "id": "notion-mgmtlog-" + page["id"],
+                "type": "general",
+                "source": "notion-mgmt-log",
+                "sourceLabel": "Notion · Daily Management Log",
+                "job": None,
+                "title": f"{name} — daily management log",
+                "subtitle": f"{date or 'No date'} · {len(lines)} project(s) logged",
+                "tagClass": "warn" if has_next_action else "ok",
+                "tagText": "Follow-up needed" if has_next_action else "Logged",
+                "summary": "\n".join(lines),
+                "status": "pending",
+            })
+        return jsonify({"count": len(items), "items": items})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
