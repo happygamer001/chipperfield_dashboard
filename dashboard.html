@@ -127,6 +127,10 @@
   </div>
   <div id="vendor-trend"></div>
   <div id="vendor-results"></div>
+
+  <p class="section-heading">Fab Shop revenue</p>
+  <p class="section-sub" id="fabshop-status">Loading…</p>
+  <div id="fabshop-revenue-display"></div>
 </main>
 </div>
 
@@ -243,6 +247,7 @@ function showApp() {
   document.getElementById("login-screen").style.display = "none";
   document.getElementById("app-content").style.display = "block";
   loadDashboard();
+  loadFabshopRevenue();
 }
 
 function showLogin(message) {
@@ -396,6 +401,51 @@ document.getElementById("vendor-search-btn").addEventListener("click", runVendor
 document.getElementById("vendor-search-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") runVendorSearch();
 });
+
+function renderFabshopRevenue(data) {
+  const displayEl = document.getElementById("fabshop-revenue-display");
+  const statusEl = document.getElementById("fabshop-status");
+
+  if (!data.uploaded_at) {
+    statusEl.textContent = "No data uploaded yet";
+    displayEl.innerHTML = '<div class="empty">Nothing here yet.</div>';
+    return;
+  }
+
+  statusEl.textContent = "Last updated: " + new Date(data.uploaded_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+  const recentWeeks = data.weekly.slice(-8).reverse();
+  const totalRevenue = data.weekly.reduce((sum, w) => sum + (w.total_revenue || 0), 0);
+
+  displayEl.innerHTML = `
+    <div class="item">
+      <p style="font-size:12px;color:var(--ink-soft);margin:0 0 4px;">Total revenue (full file period)</p>
+      <p style="font-size:20px;font-weight:600;margin:0;">$${totalRevenue.toLocaleString(undefined, {maximumFractionDigits: 0})}</p>
+    </div>
+    <p class="section-sub" style="margin-top:14px;">Last 8 weeks</p>
+    ${recentWeeks.map(w => `
+      <div class="item">
+        <div class="item-top">
+          <div>
+            <p class="item-title">Week of ${w.week_of}</p>
+            <p class="item-sub">${w.billable_hours.toFixed(1)} billable hrs · ${w.total_man_hours.toFixed(1)} total man-hrs</p>
+          </div>
+          <span class="tag ${w.total_revenue > 0 ? 'ok' : 'warn'}">$${w.total_revenue.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
+        </div>
+      </div>
+    `).join("")}
+  `;
+}
+
+async function loadFabshopRevenue() {
+  try {
+    const res = await fetch("/api/fabshop-revenue");
+    const data = await res.json();
+    renderFabshopRevenue(data);
+  } catch (err) {
+    document.getElementById("fabshop-status").textContent = "Could not load revenue data";
+  }
+}
 
 document.getElementById("login-btn").addEventListener("click", async () => {
   const role = document.getElementById("login-role").value;

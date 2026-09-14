@@ -20,6 +20,7 @@ import os
 import sys
 import re
 import json
+import io
 import hmac
 import hashlib
 import base64
@@ -28,6 +29,7 @@ from functools import wraps
 
 import requests
 import dropbox
+import openpyxl
 from flask import Flask, request, jsonify, session, send_from_directory
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "scripts"))
@@ -74,6 +76,9 @@ def dashboard_page():
 
 DASHBOARD_STATE_PATH = os.environ.get(
     "DASHBOARD_STATE_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/published.json"
+)
+FABSHOP_REVENUE_PATH = os.environ.get(
+    "FABSHOP_REVENUE_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/fabshop_revenue.json"
 )
 
 NOTION_BATCH_REPORTS_DB_ID = os.environ.get(
@@ -613,5 +618,127 @@ def vendor_search():
         ]
 
         return jsonify({"count": len(results), "results": results, "yearly_trend": yearly_trend})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# Fab Shop revenue — weekly file upload, parsed and stored in Dropbox.
+# No live Microsoft Graph connection; you upload the workbook manually
+# (admin only), the server reads it, Calvin's page just displays the result.
+# ==========================================
+
+def _find_sheet(wb, target_name):
+    """Matches sheet names loosely (trailing spaces, case) since Excel tab
+    names are easy to fat-finger and this shouldn't break on that."""
+    target = target_name.strip().lower()
+    for name in wb.sheetnames:
+        if name.strip().lower() == target:
+            return wb[name]
+    return None
+
+
+def _cell_date(value):
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.date().isoformat() if hasattr(value, "date") else value.isoformat()
+    return str(value)
+
+
+def parse_fabshop_workbook(file_bytes):
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+
+    weekly = []
+    weekly_sheet = _find_sheet(wb, "Weekly Labor Value")
+    if weekly_sheet:
+        for row in weekly_sheet.iter_rows(min_row=2, max_col=6, values_only=True):
+            week_of = row[0]
+            if not week_of:
+                continue
+            weekly.append({
+                "week_of": str(week_of),
+                "billable_hours": row[1] or 0,
+                "non_billable_hours": row[2] or 0,
+                "mgt_design_hours": row[3] or 0,
+                "total_revenue": row[4] or 0,
+                "total_man_hours": row[5] or 0,
+            })
+
+    daily = []
+    daily_sheet = _find_sheet(wb, "Labor Value - Daily")
+    if daily_sheet:
+        for row in daily_sheet.iter_rows(min_row=2, max_col=6, values_only=True):
+            date_val = row[0]
+            if not date_val:
+                continue
+            daily.append({
+                "date": _cell_date(date_val),
+                "billable_hours": row[1] or 0,
+                "non_billable_hours": row[2] or 0,
+                "mgt_design_hours": row[3] or 0,
+                "total_man_hours": row[4] or 0,
+                "estimated_value": row[5] or 0,
+            })
+
+    return {"weekly": weekly, "daily": daily, "sheets_found": wb.sheetnames}
+
+
+@app.route("/api/upload-fabshop", methods=["POST"])
+@require_role("admin")
+def upload_fabshop():
+    if "file" not in request.files:
+        return jsonify({"status": "error", "message": "No file included in upload"}), 400
+
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"status": "error", "message": "No file selected"}), 400
+
+    try:
+        file_bytes = file.read()
+        parsed = parse_fabshop_workbook(file_bytes)
+
+        if not parsed["weekly"] and not parsed["daily"]:
+            return jsonify({
+                "status": "error",
+                "message": f"Couldn't find 'Weekly Labor Value' or 'Labor Value - Daily' sheets. "
+                           f"Sheets found in file: {', '.join(parsed['sheets_found'])}"
+            }), 400
+
+        payload = {
+            "uploaded_at": datetime.datetime.utcnow().isoformat() + "Z",
+            "filename": file.filename,
+            "weekly": parsed["weekly"],
+            "daily": parsed["daily"],
+        }
+
+        dbx = get_dropbox_client()
+        dbx.files_upload(
+            json.dumps(payload, indent=2).encode("utf-8"),
+            FABSHOP_REVENUE_PATH,
+            mode=dropbox.files.WriteMode.overwrite,
+        )
+
+        return jsonify({
+            "status": "ok",
+            "weekly_rows": len(parsed["weekly"]),
+            "daily_rows": len(parsed["daily"]),
+            "uploaded_at": payload["uploaded_at"],
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-revenue", methods=["GET"])
+@require_role("admin", "calvin")
+def fabshop_revenue():
+    try:
+        dbx = get_dropbox_client()
+        try:
+            _, res = dbx.files_download(FABSHOP_REVENUE_PATH)
+            data = json.loads(res.content)
+        except dropbox.exceptions.ApiError:
+            data = {"uploaded_at": None, "filename": None, "weekly": [], "daily": []}
+        return jsonify(data)
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

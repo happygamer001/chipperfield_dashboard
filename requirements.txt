@@ -3,3 +3,4 @@ dropbox
 requests
 beautifulsoup4
 reportlab
+openpyxl

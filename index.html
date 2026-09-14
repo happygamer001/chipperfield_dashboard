@@ -243,6 +243,16 @@
   <div id="vendor-results"></div>
 
   <div class="queue-header">
+    <h2>Fab Shop revenue</h2>
+    <span id="fabshop-status">No file uploaded yet</span>
+  </div>
+  <div class="filters" style="margin-bottom:20px;align-items:center;">
+    <input type="file" id="fabshop-file-input" accept=".xlsx,.xlsm" style="flex:1;font-size:13px;">
+    <button class="primary" id="fabshop-upload-btn" style="flex:0 0 auto;">Upload weekly file</button>
+  </div>
+  <div id="fabshop-revenue-display"></div>
+
+  <div class="queue-header">
     <h2>Review queue</h2>
     <span id="queue-count">0 items</span>
   </div>
@@ -856,6 +866,79 @@ document.getElementById("vendor-search-input").addEventListener("keydown", (e) =
   if (e.key === "Enter") runVendorSearch();
 });
 
+function renderFabshopRevenue(data) {
+  const displayEl = document.getElementById("fabshop-revenue-display");
+  const statusEl = document.getElementById("fabshop-status");
+
+  if (!data.uploaded_at) {
+    statusEl.textContent = "No file uploaded yet";
+    displayEl.innerHTML = '<div class="empty">Upload a weekly workbook to see revenue here.</div>';
+    return;
+  }
+
+  statusEl.textContent = "Last uploaded: " + new Date(data.uploaded_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + " (" + data.filename + ")";
+
+  const recentWeeks = data.weekly.slice(-8).reverse();
+  const totalRevenue = data.weekly.reduce((sum, w) => sum + (w.total_revenue || 0), 0);
+
+  displayEl.innerHTML = `
+    <div class="item" style="padding:14px 16px;margin-bottom:10px;">
+      <p class="field-label" style="margin-bottom:4px;">Total revenue (full file period)</p>
+      <p style="font-size:20px;font-weight:600;margin:0;">$${totalRevenue.toLocaleString(undefined, {maximumFractionDigits: 0})}</p>
+    </div>
+    <p class="field-label" style="margin:14px 0 8px;">Last 8 weeks</p>
+    ${recentWeeks.map(w => `
+      <div class="item">
+        <div class="item-row" style="cursor:default;">
+          <div>
+            <p class="item-title">Week of ${w.week_of}</p>
+            <p class="item-sub">${w.billable_hours.toFixed(1)} billable hrs · ${w.total_man_hours.toFixed(1)} total man-hrs</p>
+          </div>
+          <span class="tag ${w.total_revenue > 0 ? 'ok' : 'warn'}">$${w.total_revenue.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
+        </div>
+      </div>
+    `).join("")}
+  `;
+}
+
+async function loadFabshopRevenue() {
+  try {
+    const res = await fetch("/api/fabshop-revenue");
+    const data = await res.json();
+    renderFabshopRevenue(data);
+  } catch (err) {
+    document.getElementById("fabshop-status").textContent = "Could not load revenue data";
+  }
+}
+
+document.getElementById("fabshop-upload-btn").addEventListener("click", async () => {
+  const fileInput = document.getElementById("fabshop-file-input");
+  const btn = document.getElementById("fabshop-upload-btn");
+  if (!fileInput.files.length) {
+    alert("Choose a file first.");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", fileInput.files[0]);
+
+  btn.disabled = true;
+  btn.textContent = "Uploading…";
+  try {
+    const res = await fetch("/api/upload-fabshop", { method: "POST", body: formData });
+    const data = await res.json();
+    if (data.status !== "ok") throw new Error(data.message || "Upload failed");
+    alert(`Uploaded — ${data.weekly_rows} weekly rows, ${data.daily_rows} daily rows parsed.`);
+    fileInput.value = "";
+    loadFabshopRevenue();
+  } catch (err) {
+    alert("Upload failed: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Upload weekly file";
+  }
+});
+
 function applyTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
   document.getElementById("theme-toggle").textContent = theme === "dark" ? "☀️ Light mode" : "🌙 Dark mode";
@@ -974,6 +1057,7 @@ function loadAllLiveSources() {
   loadDailyLogsFromDropbox();
   loadNotionSource("notion-batch-reports", "/api/notion/batch-reports");
   loadNotionSource("notion-gravel-sales", "/api/notion/gravel-sales");
+  loadFabshopRevenue();
 }
 
 // ==========================================
