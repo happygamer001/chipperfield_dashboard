@@ -867,18 +867,94 @@ def job_budgets():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+def _parse_latest_job_analyses():
+    """
+    Current Jobs, redefined: not the full Current Jobs database (which
+    includes leads, prospects, and everything else), but specifically
+    whichever job numbers appear under the MOST RECENT dated heading on
+    the Current Job Analyses page — that's what's actually being actively
+    tracked week to week, updated every Friday/Monday.
+    """
+    blocks = notion_utils.get_page_blocks(NOTION_JOB_ANALYSES_PAGE_ID)
+    as_of_date = None
+    as_of_label = None
+    jobs = []
+    found_latest_heading = False
+
+    for block in blocks:
+        btype = block.get("type")
+
+        if btype in ("heading_1", "heading_2", "heading_3"):
+            text, _ = notion_utils.block_plain_text(block)
+            m = _DATE_IN_HEADING.search(text)
+            if m:
+                if found_latest_heading:
+                    break  # hit the *next* dated heading — stop, we only want the first (latest) one
+                mm, dd, yy = m.groups()
+                yy = int(yy)
+                if yy < 100:
+                    yy += 2000
+                try:
+                    as_of_date = datetime.date(yy, int(mm), int(dd))
+                    as_of_label = text
+                    found_latest_heading = True
+                except ValueError:
+                    pass
+            continue
+
+        if not found_latest_heading:
+            continue  # skip anything before the first dated heading (e.g. "Purchase Order Review")
+
+        text, url = notion_utils.block_plain_text(block)
+        if not url or not text:
+            continue
+        job_match = _JOB_NUMBER_IN_TEXT.search(text)
+        if not job_match:
+            continue
+
+        jobs.append({
+            "job_number": job_match.group(0).upper(),
+            "filename": text,
+            "url": url,
+        })
+
+    return {
+        "as_of": as_of_date.isoformat() if as_of_date else None,
+        "as_of_label": as_of_label,
+        "jobs": jobs,
+    }
+
+
+@app.route("/api/notion/latest-job-analyses", methods=["GET"])
+@require_role("admin", "calvin")
+def latest_job_analyses():
+    try:
+        data = _parse_latest_job_analyses()
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 # ==========================================
-# Purchase Orders grouped by Job # and a best-effort product category
-# (Sweep, Bin, Fan, etc.) — Purchase Orders has no dedicated category
-# field, so this guesses from the item Name/Description text. Worth
-# reviewing the category list once real data is visible.
+# Purchase Orders grouped by Job # and a category derived from the actual
+# Description text (its first meaningful word) rather than a fixed guess
+# list — so grouping reflects whatever terminology is really being used.
 # ==========================================
 
-_PO_CATEGORY_KEYWORDS = [
-    "Sweep", "Bin", "Fan", "Door", "Leg", "Auger", "Motor", "Roof", "Floor",
-    "Stiffener", "Ladder", "Hatch", "Chute", "Unload", "Aeration", "Bearing",
-    "Gearbox", "Belt", "Grain", "Hopper",
-]
+_PO_STOPWORDS = {
+    "a", "an", "the", "for", "and", "or", "of", "to", "new", "replacement",
+    "part", "parts", "misc", "miscellaneous", "item", "items", "with",
+}
+
+
+def _category_from_description(description):
+    if not description:
+        return "Other"
+    words = re.findall(r"[A-Za-z][A-Za-z\-]*", description)
+    for w in words:
+        if w.lower() not in _PO_STOPWORDS:
+            return w.capitalize()
+    return "Other"
 
 
 @app.route("/api/notion/po-by-job", methods=["GET"])
@@ -897,13 +973,7 @@ def po_by_job():
 
             name = notion_utils.prop_text(props, "Name") or ""
             description = notion_utils.prop_text(props, "Description") or ""
-            combined = f"{name} {description}".lower()
-
-            category = "Other"
-            for kw in _PO_CATEGORY_KEYWORDS:
-                if kw.lower() in combined:
-                    category = kw
-                    break
+            category = _category_from_description(description)
 
             grouped.setdefault(job_key, {}).setdefault(category, []).append({
                 "po_number": notion_utils.prop_text(props, "PO #"),

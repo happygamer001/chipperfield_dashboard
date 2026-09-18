@@ -147,7 +147,7 @@
   <div id="daily-reports-display" class="daily-report-grid"></div>
 
   <p class="section-heading">Current Jobs</p>
-  <p class="section-sub">The same list reviewed in Monday morning meetings.</p>
+  <p class="section-sub" id="current-jobs-subheader">Loading…</p>
   <div id="current-jobs-display"></div>
 
   <p class="section-heading">Purchase Orders</p>
@@ -627,48 +627,29 @@ async function loadPoByJob() {
 
 async function loadCurrentJobs() {
   const displayEl = document.getElementById("current-jobs-display");
+  const subheaderEl = document.getElementById("current-jobs-subheader");
   displayEl.innerHTML = '<div class="empty">Loading…</div>';
 
   try {
-    const [jobsRes, budgetsRes] = await Promise.all([
-      fetch("/api/notion/current-jobs"),
-      fetch("/api/notion/job-budgets")
-    ]);
-    const data = await jobsRes.json();
-    if (!jobsRes.ok) throw new Error(data.message || "Failed to load");
+    const res = await fetch("/api/notion/latest-job-analyses");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Failed to load");
 
-    let budgetsByJob = {};
-    if (budgetsRes.ok) {
-      const budgetsData = await budgetsRes.json();
-      budgetsByJob = budgetsData.budgets_by_job || {};
-    }
+    subheaderEl.textContent = data.as_of_label ? "As of " + data.as_of_label : "No date found";
 
-    if (data.items.length === 0) {
+    if (!data.jobs || data.jobs.length === 0) {
       displayEl.innerHTML = '<div class="empty">No current jobs found.</div>';
       return;
     }
 
-    displayEl.innerHTML = data.items.map(j => {
-      const pctUsed = j.hours_budget ? Math.round((j.hours_used / j.hours_budget) * 100) : null;
-      const jobKey = (j.job_number || "").toUpperCase();
-      const budgetLinks = budgetsByJob[jobKey] || [];
-
-      return `
-        <div class="item">
-          <div class="item-top">
-            <div>
-              <p class="item-title">${j.job_number ? j.job_number + ' · ' : ''}${j.name || 'Untitled job'}</p>
-              <p class="item-sub">${j.stage || '—'} · PM: ${j.project_manager || '—'}${pctUsed !== null ? ' · ' + j.hours_used + '/' + j.hours_budget + ' hrs (' + pctUsed + '%)' : ''}</p>
-            </div>
-            <span class="tag ${j.priority === 'Urgent' ? 'escalated' : 'ok'}">${j.job_status || 'Unknown'}</span>
-          </div>
-          ${j.status_note ? `<p class="summary">${j.status_note}</p>` : ''}
-          ${j.next_action ? `<p class="summary" style="color:var(--ink-soft);">Next: ${j.next_action}</p>` : ''}
-          ${j.notion_url ? `<p style="margin:6px 0 0;"><a href="${j.notion_url}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
-          ${budgetLinks.map(b => `<p style="margin:4px 0 0;"><a href="${b.url}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View budget (${b.date}) ↗</a></p>`).join('')}
+    displayEl.innerHTML = data.jobs.map(j => `
+      <div class="item">
+        <div class="item-top">
+          <p class="item-title" style="margin:0;">${j.job_number}</p>
         </div>
-      `;
-    }).join("");
+        <p style="margin:6px 0 0;"><a href="${j.url}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View budget ↗</a></p>
+      </div>
+    `).join("");
   } catch (err) {
     displayEl.innerHTML = '<div class="empty">Could not load current jobs: ' + err.message + '</div>';
   }
