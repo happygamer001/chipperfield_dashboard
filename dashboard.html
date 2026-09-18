@@ -324,7 +324,11 @@ async function checkSession() {
   try {
     const res = await fetch("/api/session");
     const data = await res.json();
-    if (data.logged_in && data.role === "calvin") {
+    // Admin's login already grants access to everything on this page (same
+    // backend permissions), so let it straight in too — avoids needing to
+    // actually switch session role, which would log Chicken out of the
+    // admin page in any other open tab (same shared session cookie).
+    if (data.logged_in && (data.role === "calvin" || data.role === "admin")) {
       showApp();
     } else {
       showLogin();

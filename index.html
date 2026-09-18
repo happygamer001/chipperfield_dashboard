@@ -74,11 +74,11 @@
     border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;
   }
   button.primary:hover { background: #3d6425; }
-  button.ghost {
+  button.ghost, a.ghost {
     background: transparent; border: 1px solid var(--line); padding: 6px 12px;
     border-radius: 6px; font-size: 12px; cursor: pointer; color: var(--ink);
   }
-  button.ghost:hover { background: var(--page); }
+  button.ghost:hover, a.ghost:hover { background: var(--page); }
   main { max-width: 960px; margin: 0 auto; padding: 24px; }
 
   .filters {
@@ -190,6 +190,7 @@
     </div>
   </div>
   <div class="header-actions">
+    <a href="/dashboard.html" target="_blank" rel="noopener" class="ghost" style="text-decoration:none;display:inline-block;">View Calvin's dashboard ↗</a>
     <button class="ghost" id="theme-toggle">🌙 Dark mode</button>
     <div class="bell">🔔<span class="badge" id="bell-count">0</span></div>
     <button class="primary" id="publish-btn">Publish to dashboard</button>
