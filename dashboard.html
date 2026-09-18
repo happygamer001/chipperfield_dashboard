@@ -74,6 +74,24 @@
   }
   .lookup-tab.active { background: var(--green); border-color: var(--green-dark); color: #1c1f1a; }
 
+  .daily-report-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+  }
+  .daily-report-grid .item {
+    margin-bottom: 0; aspect-ratio: 1 / 1; display: flex; flex-direction: column;
+    justify-content: space-between; overflow: hidden; padding: 12px;
+  }
+  .daily-report-grid .item-title {
+    font-size: 13px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .daily-report-grid .item-sub { font-size: 11px; margin-top: 4px; }
+  .daily-report-grid .item-top { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .daily-report-grid .tag { align-self: flex-start; }
+  .daily-report-grid .summary { display: none; } /* full text stays in the PDF/details, not the square tile */
+  @media (max-width: 700px) { .daily-report-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 420px) { .daily-report-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; } }
+
   #login-screen {
     max-width: 340px; margin: 120px auto; background: var(--surface);
     border: 1px solid var(--line); border-radius: 20px; padding: 28px; text-align: center;
@@ -126,7 +144,7 @@
 <main style="padding-bottom:0;">
   <p class="section-heading" style="margin-top:0;">Daily reports</p>
   <p class="section-sub">Management log and job logs from the crew, most recent first.</p>
-  <div id="daily-reports-display"></div>
+  <div id="daily-reports-display" class="daily-report-grid"></div>
 
   <p class="section-heading">Current Jobs</p>
   <p class="section-sub">The same list reviewed in Monday morning meetings.</p>
