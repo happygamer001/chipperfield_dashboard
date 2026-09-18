@@ -170,6 +170,12 @@ def parse_metadata_from_email(subject, body_text):
     elif wo_match:
         prefix = wo_match.group(1).upper() if len(wo_match.groups()) > 1 else "WO"
         job_wo = f"{prefix}{wo_match.group(2) if len(wo_match.groups()) > 1 else wo_match.group(1)}"
+    elif re.search(r'how\s*long\s*did\s*that\s*take', combined, re.IGNORECASE) and re.search(r'next\s*action', combined, re.IGNORECASE):
+        # Repeating project-slot form (project / what you did / how long / next action)
+        job_wo = "Daily Management Log"
+    elif re.search(r'what\s*did\s*your\s*team\s*work\s*on\s*today', combined, re.IGNORECASE):
+        # Fab Shop's own team log — no job number, shop-wide daily entry
+        job_wo = "Fab Shop Daily Log"
     elif re.search(r'\boffice\b', combined, re.IGNORECASE):
         job_wo = "Office"
     elif re.search(r'\bshop\b', combined, re.IGNORECASE):
