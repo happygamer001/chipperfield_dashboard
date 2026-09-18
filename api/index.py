@@ -95,6 +95,11 @@ NOTION_PURCHASE_ORDERS_DATASOURCE_ID = os.environ.get(
 NOTION_JOB_ANALYSES_PAGE_ID = os.environ.get(
     "NOTION_JOB_ANALYSES_PAGE_ID", "1994562c-e56f-8092-af5e-d751067576c1"
 )
+# "Typeform Leads. FEED HERE" — the sales pipeline / CRM database. This is
+# also where Kevin's reports land, since he's one of the Sales Reps.
+NOTION_SALES_PIPELINE_DATASOURCE_ID = os.environ.get(
+    "NOTION_SALES_PIPELINE_DATASOURCE_ID", "df4a2436-3221-4e35-921f-2c78440188e9"
+)
 # Work Orders lives inside a multi-source database. This is the ID of the
 # specific "Service Request" data source within it (see notion_utils.query_data_source).
 NOTION_WORKORDERS_DATASOURCE_ID = os.environ.get(
@@ -407,12 +412,17 @@ def notion_batch_reports():
             props = page.get("properties", {})
             name = notion_utils.prop_text(props, "Name") or "Batch report"
             report_date = notion_utils.prop_date(props, "Report Date") or notion_utils.prop_date(props, "Date")
-            issues = notion_utils.prop_text(props, "Issues Presented")
+            issues_raw = notion_utils.prop_text(props, "Issues Presented")
             yards = notion_utils.prop_number(props, "Total Yards Out")
             trips = notion_utils.prop_number(props, "Trips Out")
             submitted_by = notion_utils.prop_text(props, "Submitted By")
 
-            has_issue = bool(issues)
+            # "N/A", "None", "-", etc. are placeholder values meaning "no issue",
+            # not real issue descriptions — treat them as empty.
+            issues_clean = (issues_raw or "").strip()
+            no_issue_placeholders = {"n/a", "na", "none", "no", "no issues", "-", ""}
+            has_issue = issues_clean.lower() not in no_issue_placeholders
+
             items.append({
                 "id": "notion-batch-" + page["id"],
                 "notionUrl": page.get("url"),
@@ -424,7 +434,7 @@ def notion_batch_reports():
                 "subtitle": f"{report_date or 'No date'} · {yards or 0} yds · {trips or 0} trips" + (f" · by {submitted_by}" if submitted_by else ""),
                 "tagClass": "warn" if has_issue else "ok",
                 "tagText": "Issue reported" if has_issue else "On track",
-                "summary": issues or "",
+                "summary": issues_clean if has_issue else "",
                 "status": "pending",
             })
         return jsonify({"count": len(items), "items": items})
@@ -961,6 +971,12 @@ def _category_from_description(description):
 @require_role("admin", "calvin")
 def po_by_job():
     try:
+        # Only show POs for jobs that are actually current (per the same
+        # "latest heading" definition used for Current Jobs) — otherwise
+        # this fills up with completed jobs from long ago.
+        latest = _parse_latest_job_analyses()
+        current_job_keys = {j["job_number"] for j in latest.get("jobs", [])}
+
         pages = notion_utils.query_data_source_all(NOTION_PURCHASE_ORDERS_DATASOURCE_ID)
         grouped = {}
 
@@ -970,6 +986,9 @@ def po_by_job():
             if not job_number_raw:
                 continue
             job_key = f"J{int(job_number_raw)}"
+
+            if current_job_keys and job_key not in current_job_keys:
+                continue  # not one of the currently active jobs — skip
 
             name = notion_utils.prop_text(props, "Name") or ""
             description = notion_utils.prop_text(props, "Description") or ""
@@ -987,6 +1006,52 @@ def po_by_job():
                 "notion_url": page.get("url"),
             })
 
-        return jsonify({"count": len(grouped), "purchase_orders_by_job": grouped})
+        return jsonify({"count": len(grouped), "purchase_orders_by_job": grouped, "current_jobs_considered": sorted(current_job_keys)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# Sales pipeline (Typeform Leads. FEED HERE) — filtered to the statuses
+# Jacque said Calvin cares about: NEW, Initial Takeoff, Proposal to review.
+# This also covers Kevin's reports, since Kevin is one of the Sales Reps
+# feeding this same database.
+# ==========================================
+
+_SALES_PIPELINE_STATUSES = ["NEW", "Initial Takeoff", "Proposal to review"]
+
+
+@app.route("/api/notion/sales-pipeline", methods=["GET"])
+@require_role("admin", "calvin")
+def sales_pipeline():
+    try:
+        filter_obj = {
+            "and": [
+                {"property": "Inactive", "checkbox": {"equals": False}},
+                {"or": [
+                    {"property": "Project Status", "select": {"equals": s}}
+                    for s in _SALES_PIPELINE_STATUSES
+                ]},
+            ]
+        }
+        pages = notion_utils.query_data_source(NOTION_SALES_PIPELINE_DATASOURCE_ID, page_size=100, filter_obj=filter_obj)
+
+        items = []
+        for page in pages:
+            props = page.get("properties", {})
+            items.append({
+                "project": notion_utils.prop_text(props, "Project"),
+                "customer_name": notion_utils.prop_text(props, "Customer Name"),
+                "job_number": notion_utils.prop_text(props, "Job #"),
+                "project_status": notion_utils.prop_select(props, "Project Status"),
+                "sales_rep": notion_utils.prop_select(props, "Sales Rep"),
+                "priority": notion_utils.prop_select(props, "Priority"),
+                "next_action": notion_utils.prop_text(props, "Next Action"),
+                "est_contract": notion_utils.prop_number(props, "Est Contract"),
+                "scope_of_work": notion_utils.prop_text(props, "Scope of Work"),
+                "notion_url": page.get("url"),
+            })
+
+        return jsonify({"count": len(items), "items": items})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

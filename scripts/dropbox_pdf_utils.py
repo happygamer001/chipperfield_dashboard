@@ -130,10 +130,16 @@ def upload_pdf_and_photos(dbx, log_date_yymmdd, log_name, job_wo, pdf_text_conte
     """
     photo_bytes_list: list of raw bytes for each photo (already downloaded).
     Returns a summary dict.
+
+    Also writes a plain-text sidecar next to the PDF (same name, .txt) with
+    the same content used to generate the PDF — this is what lets the
+    dashboard show "work completed" text inline without anyone having to
+    open the PDF. Older entries uploaded before this existed won't have one.
     """
     target_folder_path = get_year_subfolder(log_date_yymmdd)
     existing_files = get_existing_dropbox_files(dbx, target_folder_path)
     pdf_filename, photo_filename_fn = build_filenames(log_date_yymmdd, log_name, job_wo)
+    txt_filename = pdf_filename[:-4] + ".txt"  # same base name as the PDF
 
     summary = {"pdf_uploaded": False, "photos_uploaded": 0, "pdf_path": None}
 
@@ -144,6 +150,14 @@ def upload_pdf_and_photos(dbx, log_date_yymmdd, log_name, job_wo, pdf_text_conte
         summary["pdf_uploaded"] = True
         summary["pdf_path"] = dest_pdf_path
         existing_files.add(pdf_filename)
+
+        # Sidecar text file, same content as the PDF
+        try:
+            dest_txt_path = f"{target_folder_path}/{txt_filename}"
+            dbx.files_upload(pdf_text_content.encode("utf-8"), dest_txt_path, mode=dropbox.files.WriteMode.overwrite)
+            existing_files.add(txt_filename)
+        except Exception:
+            pass  # non-critical — the PDF is still there even if this fails
 
     for idx, photo_bytes in enumerate(photo_bytes_list, start=1):
         filename = photo_filename_fn(idx)
@@ -218,11 +232,14 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
                     "name": name,
                     "job_or_wo": job_wo or None,
                     "dropbox_pdf_path": None,
+                    "dropbox_txt_path": None,
                     "photo_count": 0,
                 }
 
             if ext == "pdf":
                 entries_by_key[key]["dropbox_pdf_path"] = entry.path_display
+            elif ext == "txt":
+                entries_by_key[key]["dropbox_txt_path"] = entry.path_display
             elif ext in ("jpeg", "jpg", "png", "heic", "webp"):
                 entries_by_key[key]["photo_count"] += 1
 
@@ -231,6 +248,8 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
 
     # Get an openable link for each PDF (valid ~4 hours — regenerated fresh
     # every time this endpoint is called, so it's live whenever the page loads).
+    # Also pull the sidecar text file's content, if one exists, so the
+    # dashboard can show "work completed" without anyone opening the PDF.
     for r in results:
         if r["dropbox_pdf_path"]:
             try:
@@ -240,5 +259,14 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
                 r["dropbox_view_url"] = None
         else:
             r["dropbox_view_url"] = None
+
+        if r["dropbox_txt_path"]:
+            try:
+                _, res = dbx.files_download(r["dropbox_txt_path"])
+                r["summary"] = res.content.decode("utf-8", errors="ignore").strip()
+            except Exception:
+                r["summary"] = None
+        else:
+            r["summary"] = None  # older entries uploaded before this existed
 
     return results
