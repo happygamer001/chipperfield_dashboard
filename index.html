@@ -465,6 +465,7 @@ function renderFilters() {
       else activeSources.add(s.id);
       renderFilters();
       renderQueue();
+      if (typeof updateLookupTabAvailability === "function") updateLookupTabAvailability();
     };
 
     const stale = document.createElement("div");
@@ -1086,7 +1087,58 @@ function loadAllLiveSources() {
   loadNotionSource("notion-batch-reports", "/api/notion/batch-reports");
   loadNotionSource("notion-gravel-sales", "/api/notion/gravel-sales");
   loadFabshopRevenue();
-  showLookupTab("customer");
+  updateLookupTabAvailability();
+}
+
+// Each Lookup tab is powered by a specific data source under the hood —
+// tying its visibility to that source's chip keeps the whole page's
+// "click it off, it's gone" behavior consistent.
+const LOOKUP_TAB_SOURCE = {
+  customer: "notion-gravel-sales",
+  workorder: "notion-workorders",
+  vendor: "notion-po"
+};
+
+function updateLookupTabAvailability() {
+  let anyVisible = false;
+  let firstAvailable = null;
+
+  Object.entries(LOOKUP_TAB_SOURCE).forEach(([tab, sourceId]) => {
+    const tabBtn = document.querySelector('#lookup-tabs .filter-chip[data-tab="' + tab + '"]');
+    const isEnabled = activeSources.has(sourceId);
+    if (tabBtn) tabBtn.style.display = isEnabled ? "" : "none";
+    if (isEnabled) {
+      anyVisible = true;
+      if (!firstAvailable) firstAvailable = tab;
+    }
+  });
+
+  const currentActiveBtn = document.querySelector("#lookup-tabs .filter-chip.active");
+  const currentTab = currentActiveBtn ? currentActiveBtn.getAttribute("data-tab") : null;
+  const currentStillEnabled = currentTab && activeSources.has(LOOKUP_TAB_SOURCE[currentTab]);
+
+  if (!anyVisible) {
+    // Every underlying source is off — hide all tab panels and show a note instead.
+    Object.keys(LOOKUP_TAB_SOURCE).forEach(t => {
+      const panel = document.getElementById("tab-" + t);
+      if (panel) panel.style.display = "none";
+    });
+    let note = document.getElementById("lookups-disabled-note");
+    if (!note) {
+      note = document.createElement("div");
+      note.id = "lookups-disabled-note";
+      note.className = "empty";
+      note.textContent = "Turn on at least one of Gravel Sales, Work Orders, or Purchase Orders above to use the lookups.";
+      document.getElementById("lookup-tabs").insertAdjacentElement("afterend", note);
+    }
+    note.style.display = "block";
+  } else {
+    const note = document.getElementById("lookups-disabled-note");
+    if (note) note.style.display = "none";
+    if (!currentStillEnabled) {
+      showLookupTab(firstAvailable);
+    }
+  }
 }
 
 function showLookupTab(tab) {
@@ -1102,7 +1154,10 @@ function showLookupTab(tab) {
 }
 
 document.querySelectorAll("#lookup-tabs .filter-chip").forEach(el => {
-  el.addEventListener("click", () => showLookupTab(el.getAttribute("data-tab")));
+  el.addEventListener("click", () => {
+    if (el.style.display === "none") return; // hidden tabs aren't clickable
+    showLookupTab(el.getAttribute("data-tab"));
+  });
 });
 
 // ==========================================
