@@ -224,43 +224,95 @@ def download_file(url):
     return resp.content if resp.status_code == 200 else None
 
 
+def _classify_field(field_title):
+    """
+    This form repeats a group of questions per project: project name, what
+    was done, how long, next action, then a yes/no "any more projects?"
+    check. The exact wording drifts slightly slot to slot (and Typeform
+    embeds a {{field:UUID}} reference in some titles), so this matches on
+    the stable keyword rather than the exact title.
+    """
+    t = field_title.lower()
+    if "how long" in t:
+        return "duration"
+    if "next action" in t:
+        return "next_action"
+    if "did you do" in t:
+        return "did"
+    if "any more" in t or "any other" in t:
+        return "continuation"
+    if "project" in t:
+        return "project"
+    return None
+
+
 def process_submission(payload):
     form_response = payload.get("form_response", {})
     answers = form_response.get("answers", [])
     submitted_at = form_response.get("submitted_at", "")
 
-    # --- FIELD MATCHING (adjust keywords here if your form's titles differ) ---
-    name_ans = find_answer(answers, ["name"])
-    job_ans = find_answer(answers, ["job", "work order"])
-    date_ans = find_answer(answers, ["date"])
+    if not answers:
+        raise ValueError("Submission had no answers")
 
-    log_name = (answer_text(name_ans) or "Unknown").strip()
-
-    raw_job = answer_text(job_ans) or ""
-    job_match = re.search(r'\bJ\s*(\d{3,5})\b', raw_job, re.IGNORECASE)
-    wo_match = re.search(r'\b(WO|S)\s*(\d{3,5})\b', raw_job, re.IGNORECASE)
-    if job_match:
-        job_wo = f"J{job_match.group(1)}"
-    elif wo_match:
-        job_wo = f"{wo_match.group(1).upper()}{wo_match.group(2)}"
-    else:
-        job_wo = raw_job.strip() or ""
-
-    raw_date = answer_text(date_ans) or submitted_at[:10] or ""
+    # First two answers are always name and date, in that fixed order.
+    log_name = (answer_text(answers[0]) or "Unknown").strip()
+    raw_date = answer_text(answers[1]) or submitted_at[:10] or ""
     log_date = format_date_for_jacque(raw_date)
 
-    body_lines = []
     photo_bytes_list = []
-    for ans in answers:
-        field_title = ans.get("field", {}).get("title", "Field")
+    projects = []          # list of dicts: {project, did, duration, next_action}
+    current_project = None
+
+    for ans in answers[2:]:
+        field_title = ans.get("field", {}).get("title", "")
+
         if ans.get("type") == "file_url":
             file_bytes = download_file(ans.get("file_url"))
             if file_bytes:
                 photo_bytes_list.append(file_bytes)
             continue
+
+        kind = _classify_field(field_title)
         text_val = answer_text(ans)
-        if text_val:
-            body_lines.append(f"{field_title}: {text_val}")
+
+        if kind == "project":
+            current_project = {"project": text_val or "", "did": "", "duration": "", "next_action": ""}
+            projects.append(current_project)
+        elif kind == "did" and current_project is not None:
+            current_project["did"] = text_val or ""
+        elif kind == "duration" and current_project is not None:
+            current_project["duration"] = text_val or ""
+        elif kind == "next_action" and current_project is not None:
+            current_project["next_action"] = text_val or ""
+        # "continuation" (the yes/no "any more projects?") is intentionally skipped
+
+    # This form doesn't have a dedicated job-number field — it's the same
+    # shape as the Notion-based management logs. If a project name happens
+    # to contain a real job number (e.g. "J1397 bin repair"), use that;
+    # otherwise this is a management-log-style entry, not a per-job one.
+    job_wo = ""
+    for p in projects:
+        job_match = re.search(r'\bJ\s*(\d{3,5})\b', p["project"], re.IGNORECASE)
+        if job_match:
+            job_wo = f"J{job_match.group(1)}"
+            break
+    if not job_wo:
+        job_wo = "Daily Management Log"
+
+    body_lines = []
+    has_next_action = False
+    no_action_placeholders = {"n/a", "na", "none", "no", "-", ""}
+    for p in projects:
+        if not (p["project"] or p["did"]):
+            continue
+        line = f"{p['project'] or 'Project'}: {p['did']}"
+        if p["duration"]:
+            line += f" ({p['duration']})"
+        next_action_clean = (p["next_action"] or "").strip()
+        if next_action_clean and next_action_clean.lower() not in no_action_placeholders:
+            line += f" — Next: {next_action_clean}"
+            has_next_action = True
+        body_lines.append(line)
 
     pdf_text = "\n".join(body_lines)
     pdf_title_parts = [log_date, log_name]
@@ -275,6 +327,8 @@ def process_submission(payload):
     summary["log_name"] = log_name
     summary["job_wo"] = job_wo
     summary["log_date"] = log_date
+    summary["projects_parsed"] = len(projects)
+    summary["has_next_action"] = has_next_action
     return summary
 
 
