@@ -248,6 +248,10 @@
     </div>
     <div id="fabshop-weekly-display"></div>
     <div id="fabshop-daily-display" style="display:none;"></div>
+
+    <p class="section-heading">Daily Team Log</p>
+    <p class="section-sub">From the shop's own daily Typeform, most recent first.</p>
+    <div id="fabshop-log-display" class="daily-report-grid"></div>
   </main>
 </div>
 </div>
@@ -368,6 +372,7 @@ function showApp() {
   document.getElementById("app-content").style.display = "block";
   loadDashboard();
   loadFabshopRevenue();
+  loadFabshopDailyLog();
   loadDailyReports();
   loadCurrentJobs();
   loadPoByJob();
@@ -848,6 +853,40 @@ async function loadCurrentJobs() {
     `).join("");
   } catch (err) {
     displayEl.innerHTML = '<div class="empty">Could not load current jobs: ' + err.message + '</div>';
+  }
+}
+
+async function loadFabshopDailyLog() {
+  const el = document.getElementById("fabshop-log-display");
+  el.innerHTML = '<div class="empty">Loading…</div>';
+
+  try {
+    const res = await fetch("/api/recent-logs?days=5");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Failed to load");
+
+    const entries = (data.logs || []).filter(l => l.job_or_wo === "Fab Shop Daily Log");
+
+    if (entries.length === 0) {
+      el.innerHTML = '<div class="empty">No Fab Shop log entries in the last 5 days.</div>';
+      return;
+    }
+
+    el.innerHTML = entries.map(l => `
+      <div class="item">
+        <div class="item-top">
+          <div>
+            <p class="item-title">${l.name}</p>
+            <p class="item-sub">${l.date} · ${l.photo_count} photo(s)</p>
+          </div>
+          <span class="tag ok">Fab Shop</span>
+        </div>
+        ${l.summary ? `<p class="summary">${l.summary}</p>` : `<p class="summary" style="color:var(--ink-soft);font-style:italic;">No details captured for this entry.</p>`}
+        ${l.dropbox_view_url ? `<p style="margin:6px 0 0;"><a href="${l.dropbox_view_url}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View PDF ↗</a></p>` : ''}
+      </div>
+    `).join("");
+  } catch (err) {
+    el.innerHTML = '<div class="empty">Could not load Fab Shop log: ' + err.message + '</div>';
   }
 }
 
