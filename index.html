@@ -477,6 +477,21 @@ function renderFilters() {
 
     wrap.appendChild(chip);
     wrap.appendChild(stale);
+
+    if (s.lastError) {
+      const errEl = document.createElement("div");
+      errEl.style.fontSize = "10px";
+      errEl.style.color = "var(--danger-text)";
+      errEl.style.maxWidth = "160px";
+      errEl.style.marginTop = "2px";
+      errEl.style.whiteSpace = "normal";
+      errEl.style.wordBreak = "break-word";
+      errEl.title = s.lastError; // full message on hover
+      const truncated = s.lastError.length > 60 ? s.lastError.slice(0, 60) + "…" : s.lastError;
+      errEl.textContent = truncated;
+      wrap.appendChild(errEl);
+    }
+
     container.appendChild(wrap);
   });
 }
@@ -1005,8 +1020,8 @@ async function loadDailyLogsFromDropbox() {
   const source = findSource("dropbox-dailylog");
   try {
     const res = await fetch("/api/recent-logs?days=5");
-    if (!res.ok) throw new Error("API returned " + res.status);
     const data = await res.json();
+    if (!res.ok) throw new Error(data.message || ("API returned " + res.status));
 
     data.logs.forEach(log => {
       const hasJob = !!log.job_or_wo;
@@ -1032,10 +1047,10 @@ async function loadDailyLogsFromDropbox() {
       });
     });
 
-    if (source) source.lastSynced = "just now";
+    if (source) { source.lastSynced = "just now"; source.lastError = null; }
   } catch (err) {
     console.error("Failed to load daily logs from Dropbox:", err);
-    if (source) source.lastSynced = "sync failed";
+    if (source) { source.lastSynced = "sync failed"; source.lastError = err.message; }
   }
 
   renderFilters();
@@ -1047,18 +1062,18 @@ async function loadNotionSource(sourceId, apiPath) {
   const source = findSource(sourceId);
   try {
     const res = await fetch(apiPath);
-    if (!res.ok) throw new Error("API returned " + res.status);
     const data = await res.json();
+    if (!res.ok) throw new Error(data.message || ("API returned " + res.status));
 
     (data.items || []).forEach(item => {
       if (ITEMS.some(i => i.id === item.id)) return; // avoid dupes on refresh
       ITEMS.push(item);
     });
 
-    if (source) source.lastSynced = "just now";
+    if (source) { source.lastSynced = "just now"; source.lastError = null; }
   } catch (err) {
     console.error("Failed to load " + sourceId + ":", err);
-    if (source) source.lastSynced = "sync failed";
+    if (source) { source.lastSynced = "sync failed"; source.lastError = err.message; }
   }
 
   renderFilters();
