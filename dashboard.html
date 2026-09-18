@@ -510,25 +510,23 @@ async function loadDailyReports() {
   displayEl.innerHTML = '<div class="empty">Loading…</div>';
 
   try {
-    const [mgmtRes, logsRes] = await Promise.all([
-      fetch("/api/notion/mgmt-log"),
-      fetch("/api/recent-logs?days=5")
-    ]);
-    const mgmtData = await mgmtRes.json();
-    const logsData = await logsRes.json();
+    const res = await fetch("/api/recent-logs?days=5");
+    const logsData = await res.json();
+    if (!res.ok) throw new Error(logsData.message || "Failed to load");
 
-    const mgmtItems = (mgmtData.items || []).map(i => ({
-      title: i.title, subtitle: i.subtitle, summary: i.summary,
-      tagClass: i.tagClass, tagText: i.tagText, kind: "Management log", notionUrl: i.notionUrl
-    }));
-    const jobLogItems = (logsData.logs || []).map(l => ({
-      title: `${l.name} — daily log`,
-      subtitle: `${l.date} · ${l.job_or_wo || 'No job #'} · ${l.photo_count} photo(s)`,
-      summary: "", tagClass: "ok", tagText: "Job log", kind: "Job log", notionUrl: null,
-      pdfUrl: l.dropbox_view_url || null
-    }));
+    const all = (logsData.logs || []).map(l => {
+      const isMgmtLog = l.job_or_wo === "Daily Management Log";
+      return {
+        title: isMgmtLog ? `${l.name} — daily management log` : `${l.name} — daily log`,
+        subtitle: isMgmtLog ? `${l.date} · ${l.photo_count} photo(s)` : `${l.date} · ${l.job_or_wo || 'No job #'} · ${l.photo_count} photo(s)`,
+        summary: "",
+        tagClass: "ok",
+        tagText: isMgmtLog ? "Management log" : "Job log",
+        kind: isMgmtLog ? "Management log" : "Job log",
+        pdfUrl: l.dropbox_view_url || null
+      };
+    });
 
-    const all = [...mgmtItems, ...jobLogItems];
     if (all.length === 0) {
       displayEl.innerHTML = '<div class="empty">No daily reports yet.</div>';
       return;
@@ -544,7 +542,6 @@ async function loadDailyReports() {
           <span class="tag ${r.tagClass}">${r.tagText}</span>
         </div>
         ${r.summary ? `<p class="summary" style="white-space:pre-line;">${r.summary}</p>` : ''}
-        ${r.notionUrl ? `<p style="margin:6px 0 0;"><a href="${r.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
         ${r.pdfUrl ? `<p style="margin:6px 0 0;"><a href="${r.pdfUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View PDF ↗</a></p>` : ''}
       </div>
     `).join("");

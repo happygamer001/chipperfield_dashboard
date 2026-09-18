@@ -397,8 +397,7 @@ const SOURCES = [
   { id: "dropbox-dailylog", label: "Daily Job Log (Dropbox)", lastSynced: "not yet synced" },
   { id: "excel-fabshop", label: "Fab Shop Excel", lastSynced: "3 days ago" },
   { id: "notion-batch-reports", label: "MCI Batch Reports", lastSynced: "not yet synced" },
-  { id: "notion-gravel-sales", label: "Gravel Sales", lastSynced: "not yet synced" },
-  { id: "notion-mgmt-log", label: "Daily Management Log", lastSynced: "not yet synced" }
+  { id: "notion-gravel-sales", label: "Gravel Sales", lastSynced: "not yet synced" }
 ];
 
 const FLAG_OPTIONS = [
@@ -1024,7 +1023,8 @@ async function loadDailyLogsFromDropbox() {
     if (!res.ok) throw new Error(data.message || ("API returned " + res.status));
 
     data.logs.forEach(log => {
-      const hasJob = !!log.job_or_wo;
+      const isMgmtLog = log.job_or_wo === "Daily Management Log";
+      const hasJob = !!log.job_or_wo && !isMgmtLog;
       const safeId = ("dbxlog-" + log.date + "-" + log.name).replace(/[^a-zA-Z0-9]/g, "_");
 
       // Skip if we've already loaded this one (e.g. a manual refresh)
@@ -1032,14 +1032,14 @@ async function loadDailyLogsFromDropbox() {
 
       ITEMS.push({
         id: safeId,
-        type: hasJob ? "general" : "orphan",
+        type: isMgmtLog ? "general" : (hasJob ? "general" : "orphan"),
         source: "dropbox-dailylog",
-        sourceLabel: "Dropbox · Daily Job Log",
-        job: log.job_or_wo || null,
-        title: hasJob ? `${log.name} — daily log` : `${log.name} — daily log, no job/WO# found`,
+        sourceLabel: isMgmtLog ? "Dropbox · Daily Management Log" : "Dropbox · Daily Job Log",
+        job: isMgmtLog ? null : (log.job_or_wo || null),
+        title: isMgmtLog ? `${log.name} — daily management log` : (hasJob ? `${log.name} — daily log` : `${log.name} — daily log, no job/WO# found`),
         subtitle: `Date: ${log.date} · Photos: ${log.photo_count}`,
-        tagClass: hasJob ? "ok" : "warn",
-        tagText: hasJob ? "On track" : "Unmatched",
+        tagClass: isMgmtLog ? "ok" : (hasJob ? "ok" : "warn"),
+        tagText: isMgmtLog ? "Management log" : (hasJob ? "On track" : "Unmatched"),
         summary: "",
         dropboxPdfPath: log.dropbox_pdf_path,
         dropboxViewUrl: log.dropbox_view_url,
@@ -1085,7 +1085,6 @@ function loadAllLiveSources() {
   loadDailyLogsFromDropbox();
   loadNotionSource("notion-batch-reports", "/api/notion/batch-reports");
   loadNotionSource("notion-gravel-sales", "/api/notion/gravel-sales");
-  loadNotionSource("notion-mgmt-log", "/api/notion/mgmt-log");
   loadFabshopRevenue();
   showLookupTab("customer");
 }
