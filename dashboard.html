@@ -150,6 +150,10 @@
   <p class="section-sub">The same list reviewed in Monday morning meetings.</p>
   <div id="current-jobs-display"></div>
 
+  <p class="section-heading">Purchase Orders</p>
+  <p class="section-sub">Grouped by job number and item type.</p>
+  <div id="po-by-job-display"></div>
+
   <p class="section-heading">Fab Shop revenue</p>
   <p class="section-sub" id="fabshop-status">Loading…</p>
   <div id="fabshop-revenue-display"></div>
@@ -313,6 +317,7 @@ function showApp() {
   loadFabshopRevenue();
   loadDailyReports();
   loadCurrentJobs();
+  loadPoByJob();
   showLookupTab("customer");
 }
 
@@ -568,14 +573,75 @@ async function loadDailyReports() {
   }
 }
 
+async function loadPoByJob() {
+  const displayEl = document.getElementById("po-by-job-display");
+  displayEl.innerHTML = '<div class="empty">Loading…</div>';
+
+  try {
+    const res = await fetch("/api/notion/po-by-job");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Failed to load");
+
+    const jobKeys = Object.keys(data.purchase_orders_by_job || {}).sort();
+    if (jobKeys.length === 0) {
+      displayEl.innerHTML = '<div class="empty">No purchase orders found.</div>';
+      return;
+    }
+
+    displayEl.innerHTML = jobKeys.map(jobKey => {
+      const categories = data.purchase_orders_by_job[jobKey];
+      const categoryKeys = Object.keys(categories).sort();
+
+      const categoryHtml = categoryKeys.map(cat => {
+        const orders = categories[cat];
+        const rows = orders.map(po => `
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:6px 0;border-top:1px solid var(--line);">
+            <div>
+              <p style="font-size:13px;margin:0;">${po.po_number || 'PO'} — ${po.vendor || 'Unknown vendor'}</p>
+              <p style="font-size:11px;color:var(--ink-soft);margin:2px 0 0;">${po.name || po.description || ''}</p>
+              ${po.notion_url ? `<a href="${po.notion_url}" target="_blank" rel="noopener" style="font-size:11px;color:var(--green-dark);">View in Notion ↗</a>` : ''}
+            </div>
+            <span class="tag ${po.status === 'Delivered' ? 'ok' : 'warn'}" style="font-size:11px;">${po.status || 'Unknown'}${po.amount ? ' · $' + po.amount.toLocaleString() : ''}</span>
+          </div>
+        `).join('');
+
+        return `
+          <div style="margin-top:8px;">
+            <p style="font-size:12px;font-weight:600;color:var(--ink-soft);margin:0;">${cat}</p>
+            ${rows}
+          </div>
+        `;
+      }).join('');
+
+      return `
+        <div class="item">
+          <p class="item-title" style="margin-bottom:4px;">${jobKey}</p>
+          ${categoryHtml}
+        </div>
+      `;
+    }).join("");
+  } catch (err) {
+    displayEl.innerHTML = '<div class="empty">Could not load purchase orders: ' + err.message + '</div>';
+  }
+}
+
 async function loadCurrentJobs() {
   const displayEl = document.getElementById("current-jobs-display");
   displayEl.innerHTML = '<div class="empty">Loading…</div>';
 
   try {
-    const res = await fetch("/api/notion/current-jobs");
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || "Failed to load");
+    const [jobsRes, budgetsRes] = await Promise.all([
+      fetch("/api/notion/current-jobs"),
+      fetch("/api/notion/job-budgets")
+    ]);
+    const data = await jobsRes.json();
+    if (!jobsRes.ok) throw new Error(data.message || "Failed to load");
+
+    let budgetsByJob = {};
+    if (budgetsRes.ok) {
+      const budgetsData = await budgetsRes.json();
+      budgetsByJob = budgetsData.budgets_by_job || {};
+    }
 
     if (data.items.length === 0) {
       displayEl.innerHTML = '<div class="empty">No current jobs found.</div>';
@@ -584,6 +650,9 @@ async function loadCurrentJobs() {
 
     displayEl.innerHTML = data.items.map(j => {
       const pctUsed = j.hours_budget ? Math.round((j.hours_used / j.hours_budget) * 100) : null;
+      const jobKey = (j.job_number || "").toUpperCase();
+      const budgetLinks = budgetsByJob[jobKey] || [];
+
       return `
         <div class="item">
           <div class="item-top">
@@ -596,6 +665,7 @@ async function loadCurrentJobs() {
           ${j.status_note ? `<p class="summary">${j.status_note}</p>` : ''}
           ${j.next_action ? `<p class="summary" style="color:var(--ink-soft);">Next: ${j.next_action}</p>` : ''}
           ${j.notion_url ? `<p style="margin:6px 0 0;"><a href="${j.notion_url}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
+          ${budgetLinks.map(b => `<p style="margin:4px 0 0;"><a href="${b.url}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View budget (${b.date}) ↗</a></p>`).join('')}
         </div>
       `;
     }).join("");

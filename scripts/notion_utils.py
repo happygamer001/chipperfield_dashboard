@@ -155,3 +155,44 @@ def prop_date(props, name):
         return None
     d = p.get("date")
     return d.get("start") if d else None
+
+
+def get_page_blocks(page_id, max_pages=10):
+    """
+    Reads a Notion page's content as blocks (not a database query) — used
+    for pages like "Current Job Analyses" that are just a running list of
+    headings and links, not structured rows.
+    """
+    all_blocks = []
+    cursor = None
+    for _ in range(max_pages):
+        url = f"{NOTION_BASE_URL}/blocks/{page_id}/children"
+        params = {"page_size": 100}
+        if cursor:
+            params["start_cursor"] = cursor
+        resp = requests.get(url, headers=_headers(), params=params, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        all_blocks.extend(data.get("results", []))
+        if not data.get("has_more"):
+            break
+        cursor = data.get("next_cursor")
+    return all_blocks
+
+
+def block_plain_text(block):
+    """Extracts plain text + first link URL (if any) from a block's rich_text, whatever the block type."""
+    block_type = block.get("type")
+    type_data = block.get(block_type, {})
+    rich_text = type_data.get("rich_text", [])
+    text = "".join(t.get("plain_text", "") for t in rich_text)
+    url = None
+    for t in rich_text:
+        link = (t.get("text") or {}).get("link")
+        if link and link.get("url"):
+            url = link["url"]
+            break
+    # Bookmark/embed blocks store the URL directly, not in rich_text
+    if not url and "url" in type_data:
+        url = type_data["url"]
+    return text.strip(), url

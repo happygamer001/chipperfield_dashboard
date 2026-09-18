@@ -90,6 +90,11 @@ NOTION_GRAVEL_SALES_DATASOURCE_ID = os.environ.get(
 NOTION_PURCHASE_ORDERS_DATASOURCE_ID = os.environ.get(
     "NOTION_PURCHASE_ORDERS_DATASOURCE_ID", "7d417736-3252-48b3-8335-4f534905085f"
 )
+# "Current Job Analyses" is a Notion PAGE (not a database) — a running list
+# of links to per-job SharePoint budget workbooks, organized by week.
+NOTION_JOB_ANALYSES_PAGE_ID = os.environ.get(
+    "NOTION_JOB_ANALYSES_PAGE_ID", "1994562c-e56f-8092-af5e-d751067576c1"
+)
 # Work Orders lives inside a multi-source database. This is the ID of the
 # specific "Service Request" data source within it (see notion_utils.query_data_source).
 NOTION_WORKORDERS_DATASOURCE_ID = os.environ.get(
@@ -786,5 +791,132 @@ def notion_current_jobs():
         items.sort(key=lambda i: (i["job_status"] in closed_statuses if i["job_status"] else False, i["job_number"] or ""))
 
         return jsonify({"count": len(items), "items": items})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# Job budget links — reads the "Current Job Analyses" Notion PAGE (not a
+# database), which is a running list of headings (week-of dates) each
+# followed by links to per-job SharePoint budget workbooks. Filtered to
+# the current calendar month only, since jobs repeat across many weeks.
+#
+# NOTE: this parses raw Notion page blocks rather than a structured
+# database, which is inherently less predictable than the other routes.
+# Please test and report back what it returns.
+# ==========================================
+
+_DATE_IN_HEADING = re.compile(r'(\d{1,2})/(\d{1,2})/(\d{2,4})')
+_JOB_NUMBER_IN_TEXT = re.compile(r'J\d{3,5}', re.IGNORECASE)
+
+
+def _parse_job_budget_links():
+    blocks = notion_utils.get_page_blocks(NOTION_JOB_ANALYSES_PAGE_ID)
+    now = datetime.datetime.utcnow().date()
+    current_heading_date = None
+    by_job = {}
+
+    for block in blocks:
+        btype = block.get("type")
+
+        if btype in ("heading_1", "heading_2", "heading_3"):
+            text, _ = notion_utils.block_plain_text(block)
+            m = _DATE_IN_HEADING.search(text)
+            if m:
+                mm, dd, yy = m.groups()
+                yy = int(yy)
+                if yy < 100:
+                    yy += 2000
+                try:
+                    current_heading_date = datetime.date(yy, int(mm), int(dd))
+                except ValueError:
+                    current_heading_date = None
+            else:
+                current_heading_date = None  # a non-date heading, e.g. "Purchase Order Review"
+            continue
+
+        if not current_heading_date:
+            continue
+        if current_heading_date.year != now.year or current_heading_date.month != now.month:
+            continue
+
+        text, url = notion_utils.block_plain_text(block)
+        if not url or not text:
+            continue
+        job_match = _JOB_NUMBER_IN_TEXT.search(text)
+        if not job_match:
+            continue
+
+        job_number = job_match.group(0).upper()
+        by_job.setdefault(job_number, []).append({
+            "date": current_heading_date.isoformat(),
+            "filename": text,
+            "url": url,
+        })
+
+    return by_job
+
+
+@app.route("/api/notion/job-budgets", methods=["GET"])
+@require_role("admin", "calvin")
+def job_budgets():
+    try:
+        data = _parse_job_budget_links()
+        return jsonify({"count": len(data), "budgets_by_job": data})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# Purchase Orders grouped by Job # and a best-effort product category
+# (Sweep, Bin, Fan, etc.) — Purchase Orders has no dedicated category
+# field, so this guesses from the item Name/Description text. Worth
+# reviewing the category list once real data is visible.
+# ==========================================
+
+_PO_CATEGORY_KEYWORDS = [
+    "Sweep", "Bin", "Fan", "Door", "Leg", "Auger", "Motor", "Roof", "Floor",
+    "Stiffener", "Ladder", "Hatch", "Chute", "Unload", "Aeration", "Bearing",
+    "Gearbox", "Belt", "Grain", "Hopper",
+]
+
+
+@app.route("/api/notion/po-by-job", methods=["GET"])
+@require_role("admin", "calvin")
+def po_by_job():
+    try:
+        pages = notion_utils.query_data_source_all(NOTION_PURCHASE_ORDERS_DATASOURCE_ID)
+        grouped = {}
+
+        for page in pages:
+            props = page.get("properties", {})
+            job_number_raw = notion_utils.prop_number(props, "Job #")
+            if not job_number_raw:
+                continue
+            job_key = f"J{int(job_number_raw)}"
+
+            name = notion_utils.prop_text(props, "Name") or ""
+            description = notion_utils.prop_text(props, "Description") or ""
+            combined = f"{name} {description}".lower()
+
+            category = "Other"
+            for kw in _PO_CATEGORY_KEYWORDS:
+                if kw.lower() in combined:
+                    category = kw
+                    break
+
+            grouped.setdefault(job_key, {}).setdefault(category, []).append({
+                "po_number": notion_utils.prop_text(props, "PO #"),
+                "vendor": notion_utils.prop_select(props, "Vendor"),
+                "name": name,
+                "description": description,
+                "amount": notion_utils.prop_number(props, "Amount"),
+                "status": notion_utils.prop_status(props, "Status"),
+                "ordered": notion_utils.prop_date(props, "Ordered"),
+                "delivered": notion_utils.prop_date(props, "Delivered"),
+                "notion_url": page.get("url"),
+            })
+
+        return jsonify({"count": len(grouped), "purchase_orders_by_job": grouped})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
