@@ -81,22 +81,22 @@ FABSHOP_REVENUE_PATH = os.environ.get(
     "FABSHOP_REVENUE_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/fabshop_revenue.json"
 )
 
-NOTION_BATCH_REPORTS_DB_ID = os.environ.get(
-    "NOTION_BATCH_REPORTS_DB_ID", "348304a3-86dc-43df-b7b6-e7316b65f1e5"
+NOTION_BATCH_REPORTS_DATASOURCE_ID = os.environ.get(
+    "NOTION_BATCH_REPORTS_DATASOURCE_ID", "ec5dda0d-7c82-4c4a-a613-fa28c7702c9c"
 )
-NOTION_GRAVEL_SALES_DB_ID = os.environ.get(
-    "NOTION_GRAVEL_SALES_DB_ID", "82d0c995-bc76-4f0f-927a-2e38ab6c564c"
+NOTION_GRAVEL_SALES_DATASOURCE_ID = os.environ.get(
+    "NOTION_GRAVEL_SALES_DATASOURCE_ID", "80c0157b-05b2-46f8-9c19-b6f63c6e99af"
 )
-NOTION_PURCHASE_ORDERS_DB_ID = os.environ.get(
-    "NOTION_PURCHASE_ORDERS_DB_ID", "d9d315d7-9c68-41a2-a3ae-c752a0876ae1"
+NOTION_PURCHASE_ORDERS_DATASOURCE_ID = os.environ.get(
+    "NOTION_PURCHASE_ORDERS_DATASOURCE_ID", "7d417736-3252-48b3-8335-4f534905085f"
 )
 # Work Orders lives inside a multi-source database. This is the ID of the
 # specific "Service Request" data source within it (see notion_utils.query_data_source).
 NOTION_WORKORDERS_DATASOURCE_ID = os.environ.get(
     "NOTION_WORKORDERS_DATASOURCE_ID", "52e9dbff-b6db-4374-a77b-31b86c8ce5eb"
 )
-NOTION_MGMT_LOG_DB_ID = os.environ.get(
-    "NOTION_MGMT_LOG_DB_ID", "39c4562c-e56f-8005-b0dd-c9d80bb378da"
+NOTION_MGMT_LOG_DATASOURCE_ID = os.environ.get(
+    "NOTION_MGMT_LOG_DATASOURCE_ID", "39c4562c-e56f-80c6-856d-000b12eae904"
 )
 # Current Jobs is an inline database within a page (not a standalone
 # top-level database), so it uses the newer data-sources endpoint like
@@ -399,7 +399,7 @@ def add_note():
 @require_role("admin")
 def notion_batch_reports():
     try:
-        pages = notion_utils.query_database(NOTION_BATCH_REPORTS_DB_ID)
+        pages = notion_utils.query_data_source(NOTION_BATCH_REPORTS_DATASOURCE_ID)
         items = []
         for page in pages:
             props = page.get("properties", {})
@@ -434,7 +434,7 @@ def notion_batch_reports():
 @require_role("admin")
 def notion_gravel_sales():
     try:
-        pages = notion_utils.query_database(NOTION_GRAVEL_SALES_DB_ID)
+        pages = notion_utils.query_data_source(NOTION_GRAVEL_SALES_DATASOURCE_ID)
         items = []
         for page in pages:
             props = page.get("properties", {})
@@ -483,7 +483,7 @@ def customer_search():
             "property": "Customer Name",
             "rich_text": {"contains": query},
         } if query else None
-        pages = notion_utils.query_database(NOTION_GRAVEL_SALES_DB_ID, page_size=100, filter_obj=filter_obj)
+        pages = notion_utils.query_data_source(NOTION_GRAVEL_SALES_DATASOURCE_ID, page_size=100, filter_obj=filter_obj)
 
         results = []
         for page in pages:
@@ -576,7 +576,7 @@ def vendor_search():
     query = (request.args.get("q") or "").strip().lower()
 
     try:
-        all_pages = notion_utils.query_database_all(NOTION_PURCHASE_ORDERS_DB_ID)
+        all_pages = notion_utils.query_data_source_all(NOTION_PURCHASE_ORDERS_DATASOURCE_ID)
 
         results = []
         for page in all_pages:
@@ -763,7 +763,7 @@ def fabshop_revenue():
 @require_role("admin", "calvin")
 def notion_mgmt_log():
     try:
-        pages = notion_utils.query_database(NOTION_MGMT_LOG_DB_ID, page_size=30)
+        pages = notion_utils.query_data_source(NOTION_MGMT_LOG_DATASOURCE_ID, page_size=30)
         items = []
         for page in pages:
             props = page.get("properties", {})

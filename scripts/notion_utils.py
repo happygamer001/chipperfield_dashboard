@@ -80,6 +80,28 @@ def query_data_source(data_source_id, page_size=50, filter_obj=None):
     return resp.json().get("results", [])
 
 
+def query_data_source_all(data_source_id, filter_obj=None, max_pages=10):
+    """Same as query_database_all, but for the newer data-sources endpoint."""
+    headers = _headers()
+    headers["Notion-Version"] = "2025-09-03"
+    all_results = []
+    cursor = None
+    for _ in range(max_pages):
+        body = {"page_size": 100}
+        if filter_obj:
+            body["filter"] = filter_obj
+        if cursor:
+            body["start_cursor"] = cursor
+        resp = requests.post(f"{NOTION_BASE_URL}/data_sources/{data_source_id}/query", headers=headers, json=body, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        all_results.extend(data.get("results", []))
+        if not data.get("has_more"):
+            break
+        cursor = data.get("next_cursor")
+    return all_results
+
+
 # ---- Property extraction helpers ----
 # Notion page properties are deeply nested by type; these pull out plain values.
 
