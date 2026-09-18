@@ -398,7 +398,7 @@ def add_note():
 # ==========================================
 
 @app.route("/api/notion/batch-reports", methods=["GET"])
-@require_role("admin")
+@require_role("admin", "calvin")
 def notion_batch_reports():
     try:
         pages = notion_utils.query_data_source(NOTION_BATCH_REPORTS_DATASOURCE_ID)

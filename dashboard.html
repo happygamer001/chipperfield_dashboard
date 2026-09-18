@@ -91,6 +91,10 @@
   .daily-report-grid .summary { display: none; } /* full text stays in the PDF/details, not the square tile */
   @media (max-width: 700px) { .daily-report-grid { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 420px) { .daily-report-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; } }
+  #company-picker .item:hover { background: var(--page); }
+  @media (max-width: 640px) {
+    #company-picker main > div[style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+  }
 
   #login-screen {
     max-width: 340px; margin: 120px auto; background: var(--surface);
@@ -131,7 +135,7 @@
   <div class="brand">
     <div class="icon">C</div>
     <div>
-      <h1>Chipperfield</h1>
+      <h1 id="header-title">Chipperfield</h1>
       <div class="sub" id="last-published">Loading…</div>
     </div>
   </div>
@@ -141,62 +145,104 @@
   </div>
 </header>
 
-<main style="padding-bottom:0;">
-  <p class="section-heading" style="margin-top:0;">Daily reports</p>
-  <p class="section-sub">Management log and job logs from the crew, most recent first.</p>
-  <div id="daily-reports-display" class="daily-report-grid"></div>
+<!-- Company picker -->
+<div id="company-picker">
+  <main>
+    <p class="section-heading" style="margin-top:0;">Select a company</p>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">
+      <div class="item" style="cursor:pointer;text-align:center;padding:32px 16px;" data-company="chipperfield">
+        <p style="font-size:16px;font-weight:600;margin:0;">Chipperfield Ag</p>
+      </div>
+      <div class="item" style="cursor:pointer;text-align:center;padding:32px 16px;" data-company="mccook">
+        <p style="font-size:16px;font-weight:600;margin:0;">McCook Concrete</p>
+      </div>
+      <div class="item" style="cursor:pointer;text-align:center;padding:32px 16px;" data-company="fabshop">
+        <p style="font-size:16px;font-weight:600;margin:0;">Fab Shop</p>
+      </div>
+    </div>
+  </main>
+</div>
 
-  <p class="section-heading">Current Jobs</p>
-  <p class="section-sub" id="current-jobs-subheader">Loading…</p>
-  <div id="current-jobs-display"></div>
+<!-- Chipperfield Ag -->
+<div id="company-chipperfield" style="display:none;">
+  <main style="padding-bottom:0;">
+    <p class="logout-link back-link" style="margin:0 0 16px;">← Back to companies</p>
+    <p class="section-heading" style="margin-top:0;">Daily reports</p>
+    <p class="section-sub">Management log and job logs from the crew, most recent first.</p>
+    <div id="daily-reports-display" class="daily-report-grid"></div>
 
-  <p class="section-heading">Purchase Orders</p>
-  <p class="section-sub">Grouped by job number and item type.</p>
-  <div id="po-by-job-display"></div>
+    <p class="section-heading">Current Jobs</p>
+    <p class="section-sub" id="current-jobs-subheader">Loading…</p>
+    <div id="current-jobs-display"></div>
 
-  <p class="section-heading">Fab Shop revenue</p>
-  <p class="section-sub" id="fabshop-status">Loading…</p>
-  <div id="fabshop-revenue-display"></div>
-</main>
+    <p class="section-heading">Purchase Orders</p>
+    <p class="section-sub">Grouped by job number and item type.</p>
+    <div id="po-by-job-display"></div>
+  </main>
 
-<main id="main" style="padding-top:0;">
-  <div class="empty">Loading dashboard…</div>
-</main>
+  <main id="main" style="padding-top:0;">
+    <div class="empty">Loading dashboard…</div>
+  </main>
 
-<main style="padding-top:0;">
-  <p class="section-heading" style="margin-top:0;">Lookups</p>
-  <p class="section-sub">Browse full historical data by category.</p>
-  <div class="lookup-tabs" id="lookup-tabs">
-    <div class="lookup-tab active" data-tab="customer">Customer Orders</div>
-    <div class="lookup-tab" data-tab="workorder">Work Orders</div>
-    <div class="lookup-tab" data-tab="vendor">Vendors</div>
-  </div>
+  <main style="padding-top:0;">
+    <p class="section-heading" style="margin-top:0;">Lookups</p>
+    <p class="section-sub">Browse full historical data by category.</p>
+    <div class="lookup-tabs" id="lookup-tabs">
+      <div class="lookup-tab active" data-tab="workorder">Work Orders</div>
+      <div class="lookup-tab" data-tab="vendor">Vendors</div>
+    </div>
 
-  <div id="tab-customer">
+    <div id="tab-workorder">
+      <div class="lookup-bar">
+        <input type="text" id="wo-search-input" placeholder="Filter by contact name (leave blank to see everything)…">
+        <button id="wo-search-btn">Search</button>
+      </div>
+      <div id="wo-results"></div>
+    </div>
+
+    <div id="tab-vendor" style="display:none;">
+      <div class="lookup-bar">
+        <input type="text" id="vendor-search-input" placeholder="Filter by vendor name (leave blank to see everything)…">
+        <button id="vendor-search-btn">Search</button>
+      </div>
+      <div id="vendor-trend"></div>
+      <div id="vendor-results"></div>
+    </div>
+  </main>
+</div>
+
+<!-- McCook Concrete -->
+<div id="company-mccook" style="display:none;">
+  <main>
+    <p class="logout-link back-link" style="margin:0 0 16px;">← Back to companies</p>
+    <p class="section-heading" style="margin-top:0;">MCI Batch Reports</p>
+    <p class="section-sub" id="batch-reports-status">Loading…</p>
+    <div id="batch-reports-display"></div>
+
+    <p class="section-heading">Gravel Sales</p>
+    <p class="section-sub">Browse all Gravel Sales history.</p>
     <div class="lookup-bar">
       <input type="text" id="customer-search-input" placeholder="Filter by customer name (leave blank to see everything)…">
       <button id="customer-search-btn">Search</button>
     </div>
     <div id="customer-results"></div>
-  </div>
+  </main>
+</div>
 
-  <div id="tab-workorder" style="display:none;">
-    <div class="lookup-bar">
-      <input type="text" id="wo-search-input" placeholder="Filter by contact name (leave blank to see everything)…">
-      <button id="wo-search-btn">Search</button>
+<!-- Fab Shop -->
+<div id="company-fabshop" style="display:none;">
+  <main>
+    <p class="logout-link back-link" style="margin:0 0 16px;">← Back to companies</p>
+    <p class="section-heading" style="margin-top:0;">Fab Shop</p>
+    <p class="section-sub" id="fabshop-status">Loading…</p>
+    <div class="lookup-tabs" id="fabshop-tabs">
+      <div class="lookup-tab active" data-tab="weekly">Weekly (last 4 weeks)</div>
+      <div class="lookup-tab" data-tab="daily">Daily (last 5 days)</div>
     </div>
-    <div id="wo-results"></div>
-  </div>
-
-  <div id="tab-vendor" style="display:none;">
-    <div class="lookup-bar">
-      <input type="text" id="vendor-search-input" placeholder="Filter by vendor name (leave blank to see everything)…">
-      <button id="vendor-search-btn">Search</button>
-    </div>
-    <div id="vendor-trend"></div>
-    <div id="vendor-results"></div>
-  </div>
-</main>
+    <div id="fabshop-weekly-display"></div>
+    <div id="fabshop-daily-display" style="display:none;"></div>
+  </main>
+</div>
 </div>
 
 <script>
@@ -318,24 +364,92 @@ function showApp() {
   loadDailyReports();
   loadCurrentJobs();
   loadPoByJob();
-  showLookupTab("customer");
+  loadBatchReports();
+  showLookupTab("workorder");
+  runCustomerSearch(); // Gravel Sales under McCook Concrete — loads once up front
+  showFabshopTab("weekly");
+  showCompany(null); // land on the picker
 }
 
 function showLookupTab(tab) {
-  ["customer", "workorder", "vendor"].forEach(t => {
+  ["workorder", "vendor"].forEach(t => {
     document.getElementById("tab-" + t).style.display = (t === tab) ? "block" : "none";
   });
   document.querySelectorAll("#lookup-tabs .lookup-tab").forEach(el => {
     el.classList.toggle("active", el.getAttribute("data-tab") === tab);
   });
-  if (tab === "customer") runCustomerSearch();
-  else if (tab === "workorder") runWorkOrderSearch();
+  if (tab === "workorder") runWorkOrderSearch();
   else if (tab === "vendor") runVendorSearch();
 }
 
 document.querySelectorAll("#lookup-tabs .lookup-tab").forEach(el => {
   el.addEventListener("click", () => showLookupTab(el.getAttribute("data-tab")));
 });
+
+function showFabshopTab(tab) {
+  document.getElementById("fabshop-weekly-display").style.display = (tab === "weekly") ? "block" : "none";
+  document.getElementById("fabshop-daily-display").style.display = (tab === "daily") ? "block" : "none";
+  document.querySelectorAll("#fabshop-tabs .lookup-tab").forEach(el => {
+    el.classList.toggle("active", el.getAttribute("data-tab") === tab);
+  });
+}
+
+document.querySelectorAll("#fabshop-tabs .lookup-tab").forEach(el => {
+  el.addEventListener("click", () => showFabshopTab(el.getAttribute("data-tab")));
+});
+
+const COMPANY_NAMES = { chipperfield: "Chipperfield", mccook: "McCook Concrete", fabshop: "Fab Shop" };
+
+function showCompany(company) {
+  ["chipperfield", "mccook", "fabshop"].forEach(c => {
+    document.getElementById("company-" + c).style.display = (c === company) ? "block" : "none";
+  });
+  document.getElementById("company-picker").style.display = company ? "none" : "block";
+  document.getElementById("header-title").textContent = company ? COMPANY_NAMES[company] : "Chipperfield";
+}
+
+document.querySelectorAll('[data-company]').forEach(el => {
+  el.addEventListener("click", () => showCompany(el.getAttribute("data-company")));
+});
+
+document.querySelectorAll(".back-link").forEach(el => {
+  el.addEventListener("click", () => showCompany(null));
+});
+
+async function loadBatchReports() {
+  const displayEl = document.getElementById("batch-reports-display");
+  const statusEl = document.getElementById("batch-reports-status");
+  displayEl.innerHTML = '<div class="empty">Loading…</div>';
+
+  try {
+    const res = await fetch("/api/notion/batch-reports");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Failed to load");
+
+    statusEl.textContent = data.count + " report(s)";
+
+    if (data.items.length === 0) {
+      displayEl.innerHTML = '<div class="empty">No batch reports found.</div>';
+      return;
+    }
+
+    displayEl.innerHTML = data.items.map(r => `
+      <div class="item">
+        <div class="item-top">
+          <div>
+            <p class="item-title">${r.title}</p>
+            <p class="item-sub">${r.subtitle}</p>
+          </div>
+          <span class="tag ${r.tagClass}">${r.tagText}</span>
+        </div>
+        ${r.summary ? `<p class="summary">${r.summary}</p>` : ''}
+        ${r.notionUrl ? `<p style="margin:6px 0 0;"><a href="${r.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
+      </div>
+    `).join("");
+  } catch (err) {
+    displayEl.innerHTML = '<div class="empty">Could not load batch reports: ' + err.message + '</div>';
+  }
+}
 
 function showLogin(message) {
   document.getElementById("app-content").style.display = "none";
@@ -494,27 +608,25 @@ document.getElementById("vendor-search-input").addEventListener("keydown", (e) =
 });
 
 function renderFabshopRevenue(data) {
-  const displayEl = document.getElementById("fabshop-revenue-display");
+  const weeklyEl = document.getElementById("fabshop-weekly-display");
+  const dailyEl = document.getElementById("fabshop-daily-display");
   const statusEl = document.getElementById("fabshop-status");
 
   if (!data.uploaded_at) {
     statusEl.textContent = "No data uploaded yet";
-    displayEl.innerHTML = '<div class="empty">Nothing here yet.</div>';
+    weeklyEl.innerHTML = '<div class="empty">Nothing here yet.</div>';
+    dailyEl.innerHTML = '<div class="empty">Nothing here yet.</div>';
     return;
   }
 
   statusEl.textContent = "Last updated: " + new Date(data.uploaded_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
-  const recentWeeks = data.weekly.slice(-8).reverse();
-  const totalRevenue = data.weekly.reduce((sum, w) => sum + (w.total_revenue || 0), 0);
+  const recentWeeks = (data.weekly || []).slice(-4).reverse();
+  const recentDays = (data.daily || []).slice(-5).reverse();
 
-  displayEl.innerHTML = `
-    <div class="item">
-      <p style="font-size:12px;color:var(--ink-soft);margin:0 0 4px;">Total revenue (full file period)</p>
-      <p style="font-size:20px;font-weight:600;margin:0;">$${totalRevenue.toLocaleString(undefined, {maximumFractionDigits: 0})}</p>
-    </div>
-    <p class="section-sub" style="margin-top:14px;">Last 8 weeks</p>
-    ${recentWeeks.map(w => `
+  weeklyEl.innerHTML = recentWeeks.length === 0
+    ? '<div class="empty">No weekly data yet.</div>'
+    : recentWeeks.map(w => `
       <div class="item">
         <div class="item-top">
           <div>
@@ -524,8 +636,21 @@ function renderFabshopRevenue(data) {
           <span class="tag ${w.total_revenue > 0 ? 'ok' : 'warn'}">$${w.total_revenue.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
         </div>
       </div>
-    `).join("")}
-  `;
+    `).join("");
+
+  dailyEl.innerHTML = recentDays.length === 0
+    ? '<div class="empty">No daily data yet.</div>'
+    : recentDays.map(d => `
+      <div class="item">
+        <div class="item-top">
+          <div>
+            <p class="item-title">${d.date}</p>
+            <p class="item-sub">${d.billable_hours.toFixed(1)} billable · ${d.non_billable_hours.toFixed(1)} non-billable · ${d.mgt_design_hours.toFixed(1)} mgt/design hrs</p>
+          </div>
+          <span class="tag ${d.estimated_value > 0 ? 'ok' : 'warn'}">$${(d.estimated_value || 0).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
+        </div>
+      </div>
+    `).join("");
 }
 
 async function loadDailyReports() {
