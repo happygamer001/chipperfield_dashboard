@@ -626,9 +626,11 @@ function renderQueue() {
         </div>
       `;
     } else {
-      const dbxLine = item.dropboxPdfPath
-        ? `<p class="field-label">Source file</p><input type="text" value="${item.dropboxPdfPath}" readonly>`
-        : "";
+      const dbxLine = item.dropboxViewUrl
+        ? `<p style="margin:0 0 10px;"><a href="${item.dropboxViewUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View PDF ↗</a></p>`
+        : (item.dropboxPdfPath
+            ? `<p class="field-label">Source file</p><input type="text" value="${item.dropboxPdfPath}" readonly>`
+            : "");
       const notionLine = item.notionUrl
         ? `<p style="margin:0 0 10px;"><a href="${item.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>`
         : "";
@@ -1024,6 +1026,7 @@ async function loadDailyLogsFromDropbox() {
         tagText: hasJob ? "On track" : "Unmatched",
         summary: "",
         dropboxPdfPath: log.dropbox_pdf_path,
+        dropboxViewUrl: log.dropbox_view_url,
         status: "pending"
       });
     });

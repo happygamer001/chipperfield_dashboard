@@ -228,4 +228,17 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
 
     results = list(entries_by_key.values())
     results.sort(key=lambda r: r["date"], reverse=True)
+
+    # Get an openable link for each PDF (valid ~4 hours — regenerated fresh
+    # every time this endpoint is called, so it's live whenever the page loads).
+    for r in results:
+        if r["dropbox_pdf_path"]:
+            try:
+                link = dbx.files_get_temporary_link(r["dropbox_pdf_path"])
+                r["dropbox_view_url"] = link.link
+            except Exception:
+                r["dropbox_view_url"] = None
+        else:
+            r["dropbox_view_url"] = None
+
     return results

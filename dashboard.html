@@ -44,7 +44,7 @@
   .brand .sub { font-size: 12px; color: var(--ink-soft); }
   .header-actions { display: flex; align-items: center; gap: 14px; }
   main { max-width: 720px; margin: 0 auto; padding: 24px; }
-  .item { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; padding: 14px 16px; }
+  .item { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; margin-bottom: 12px; padding: 14px 16px; }
   .item-title { font-size: 14px; font-weight: 600; margin: 0; }
   .item-sub { font-size: 12px; color: var(--ink-soft); margin: 3px 0 0; }
   .tag { font-size: 11px; padding: 3px 9px; border-radius: 5px; font-weight: 600; white-space: nowrap; }
@@ -56,17 +56,17 @@
   .notes { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
   .note { font-size: 12px; padding: 6px 0; }
   .note .who { font-weight: 600; }
-  .note.flag { background: #fff7e6; border-radius: 6px; padding: 6px 8px; }
+  .note.flag { background: var(--warn-bg); color: var(--warn-text); border-radius: 12px; padding: 6px 8px; }
   .note-form { display: flex; gap: 6px; margin-top: 8px; }
-  .note-form input, .note-form select { font-size: 12px; padding: 6px; border: 1px solid var(--line); border-radius: 6px; }
+  .note-form input, .note-form select { font-size: 12px; padding: 8px; border: 1px solid var(--line); border-radius: 10px; }
   .note-form input[type=text] { flex: 1; }
-  .note-form button { font-size: 12px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--green-dark); background: var(--green); cursor: pointer; font-weight: 600; }
+  .note-form button { font-size: 12px; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--green-dark); background: var(--green); cursor: pointer; font-weight: 600; }
   .empty { text-align: center; padding: 60px 0; color: var(--ink-soft); font-size: 13px; }
   .section-heading { font-size: 15px; font-weight: 600; margin: 28px 0 4px; }
   .section-sub { font-size: 12px; color: var(--ink-soft); margin: 0 0 12px; }
   .lookup-bar { display: flex; gap: 8px; margin-bottom: 16px; }
-  .lookup-bar input { flex: 1; font-size: 13px; padding: 9px; border: 1px solid var(--line); border-radius: 6px; }
-  .lookup-bar button { font-size: 13px; padding: 9px 16px; border-radius: 6px; border: 1px solid var(--green-dark); background: var(--green); font-weight: 600; cursor: pointer; }
+  .lookup-bar input { flex: 1; font-size: 13px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; }
+  .lookup-bar button { font-size: 13px; padding: 10px 18px; border-radius: 12px; border: 1px solid var(--green-dark); background: var(--green); font-weight: 600; cursor: pointer; }
   .lookup-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
   .lookup-tab {
     border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px;
@@ -76,7 +76,7 @@
 
   #login-screen {
     max-width: 340px; margin: 120px auto; background: var(--surface);
-    border: 1px solid var(--line); border-radius: 12px; padding: 28px; text-align: center;
+    border: 1px solid var(--line); border-radius: 20px; padding: 28px; text-align: center;
   }
   #login-screen .icon {
     width: 44px; height: 44px; border-radius: 10px; background: var(--green);
@@ -86,11 +86,11 @@
   #login-screen h2 { font-size: 16px; margin: 0 0 16px; }
   #login-screen input, #login-screen select {
     width: 100%; font-size: 13px; padding: 9px; border: 1px solid var(--line);
-    border-radius: 6px; margin-bottom: 8px; box-sizing: border-box;
+    border-radius: 12px; margin-bottom: 8px; box-sizing: border-box;
   }
   #login-screen button {
     width: 100%; background: var(--green-dark); color: #fff; border: none;
-    padding: 10px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; margin-top: 4px;
+    padding: 10px; border-radius: 12px; font-size: 13px; font-weight: 600; cursor: pointer; margin-top: 4px;
   }
   #login-error { color: var(--danger-text); font-size: 12px; margin-top: 8px; min-height: 16px; }
   .logout-link { font-size: 12px; color: var(--ink-soft); cursor: pointer; text-decoration: underline; }
@@ -235,6 +235,7 @@ function render() {
         </div>
         ${item.summary ? `<p class="summary">${item.summary}</p>` : ""}
         ${item.notionUrl ? `<p style="margin:6px 0 0;"><a href="${item.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ""}
+        ${item.dropboxViewUrl ? `<p style="margin:6px 0 0;"><a href="${item.dropboxViewUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View PDF ↗</a></p>` : ""}
         <div class="notes">
           ${notesHtml || '<div class="note" style="color:var(--ink-soft);">No notes yet.</div>'}
           <div class="note-form">
@@ -432,7 +433,7 @@ async function runVendorSearch() {
           <p style="font-weight:600;font-size:13px;margin:0 0 8px;">Average delivery lead time by year</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             ${data.yearly_trend.map(y => `
-              <div style="background:var(--page);border:1px solid var(--line);border-radius:6px;padding:8px 12px;text-align:center;">
+              <div style="background:var(--page);border:1px solid var(--line);border-radius:12px;padding:8px 12px;text-align:center;">
                 <div style="font-size:11px;color:var(--ink-soft);">${y.year} (${y.count} orders)</div>
                 <div style="font-size:17px;font-weight:600;">${y.avg_lead_time_days} days</div>
               </div>
@@ -519,7 +520,8 @@ async function loadDailyReports() {
     const jobLogItems = (logsData.logs || []).map(l => ({
       title: `${l.name} — daily log`,
       subtitle: `${l.date} · ${l.job_or_wo || 'No job #'} · ${l.photo_count} photo(s)`,
-      summary: "", tagClass: "ok", tagText: "Job log", kind: "Job log", notionUrl: null
+      summary: "", tagClass: "ok", tagText: "Job log", kind: "Job log", notionUrl: null,
+      pdfUrl: l.dropbox_view_url || null
     }));
 
     const all = [...mgmtItems, ...jobLogItems];
@@ -539,6 +541,7 @@ async function loadDailyReports() {
         </div>
         ${r.summary ? `<p class="summary" style="white-space:pre-line;">${r.summary}</p>` : ''}
         ${r.notionUrl ? `<p style="margin:6px 0 0;"><a href="${r.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
+        ${r.pdfUrl ? `<p style="margin:6px 0 0;"><a href="${r.pdfUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View PDF ↗</a></p>` : ''}
       </div>
     `).join("");
   } catch (err) {
