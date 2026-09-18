@@ -142,6 +142,16 @@ def prop_status(props, name):
     return st.get("name") if st else None
 
 
+def prop_people(props, name):
+    """Notion's 'people' property type — returns comma-joined display names."""
+    p = props.get(name)
+    if not p or p["type"] != "people":
+        return None
+    people = p.get("people", [])
+    names = [person.get("name") for person in people if person.get("name")]
+    return ", ".join(names) if names else None
+
+
 def prop_checkbox(props, name):
     p = props.get(name)
     if not p or p["type"] != "checkbox":

@@ -668,9 +668,12 @@ async function loadDailyReports() {
   mgmtEl.innerHTML = '<div class="empty">Loading…</div>';
 
   try {
-    const res = await fetch("/api/recent-logs?days=5");
-    const logsData = await res.json();
-    if (!res.ok) throw new Error(logsData.message || "Failed to load");
+    const [logsRes, kevinRes] = await Promise.all([
+      fetch("/api/recent-logs?days=5"),
+      fetch("/api/notion/kevin-management-form")
+    ]);
+    const logsData = await logsRes.json();
+    if (!logsRes.ok) throw new Error(logsData.message || "Failed to load");
 
     const crew = [];
     const mgmt = [];
@@ -679,14 +682,31 @@ async function loadDailyReports() {
       const isMgmtLog = l.job_or_wo === "Daily Management Log";
       const entry = {
         title: isMgmtLog ? l.name : (l.job_or_wo ? l.job_or_wo + " — " + l.name : l.name),
-        subtitle: isMgmtLog ? `${l.date} · ${l.photo_count} photo(s)` : `${l.date} · ${l.photo_count} photo(s)`,
+        subtitle: `${l.date} · ${l.photo_count} photo(s)`,
         summary: l.summary || "",
         tagClass: "ok",
         tagText: isMgmtLog ? "Management log" : "Job log",
-        pdfUrl: l.dropbox_view_url || null
+        pdfUrl: l.dropbox_view_url || null,
+        notionUrl: null
       };
       (isMgmtLog ? mgmt : crew).push(entry);
     });
+
+    if (kevinRes.ok) {
+      const kevinData = await kevinRes.json();
+      (kevinData.items || []).forEach(k => {
+        mgmt.push({
+          title: k.name,
+          subtitle: k.date || "No date",
+          summary: k.summary || "",
+          tagClass: k.has_next_action ? "warn" : "ok",
+          tagText: k.has_next_action ? "Follow-up needed" : "Management log",
+          pdfUrl: null,
+          notionUrl: k.notionUrl
+        });
+      });
+      mgmt.sort((a, b) => (b.subtitle || "").localeCompare(a.subtitle || ""));
+    }
 
     const renderGroup = (el, list, emptyMsg) => {
       if (list.length === 0) {
@@ -702,8 +722,9 @@ async function loadDailyReports() {
             </div>
             <span class="tag ${r.tagClass}">${r.tagText}</span>
           </div>
-          ${r.summary ? `<p class="summary">${r.summary}</p>` : `<p class="summary" style="color:var(--ink-soft);font-style:italic;">No text captured for this entry — open the PDF for details.</p>`}
+          ${r.summary ? `<p class="summary">${r.summary}</p>` : `<p class="summary" style="color:var(--ink-soft);font-style:italic;">No details captured for this entry.</p>`}
           ${r.pdfUrl ? `<p style="margin:6px 0 0;"><a href="${r.pdfUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View PDF ↗</a></p>` : ''}
+          ${r.notionUrl ? `<p style="margin:6px 0 0;"><a href="${r.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
         </div>
       `).join("");
     };

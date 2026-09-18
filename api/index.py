@@ -100,6 +100,11 @@ NOTION_JOB_ANALYSES_PAGE_ID = os.environ.get(
 NOTION_SALES_PIPELINE_DATASOURCE_ID = os.environ.get(
     "NOTION_SALES_PIPELINE_DATASOURCE_ID", "df4a2436-3221-4e35-921f-2c78440188e9"
 )
+# Kevin's "Daily Management Form" — syncs directly into Notion via a
+# separate Typeform-to-Notion connector, unrelated to our own script/webhook.
+NOTION_KEVIN_FORM_DATASOURCE_ID = os.environ.get(
+    "NOTION_KEVIN_FORM_DATASOURCE_ID", "3ab4562c-e56f-8029-b87a-000b05352beb"
+)
 # Work Orders lives inside a multi-source database. This is the ID of the
 # specific "Service Request" data source within it (see notion_utils.query_data_source).
 NOTION_WORKORDERS_DATASOURCE_ID = os.environ.get(
@@ -1052,6 +1057,69 @@ def sales_pipeline():
                 "notion_url": page.get("url"),
             })
 
+        return jsonify({"count": len(items), "items": items})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# Kevin's Daily Management Form — same 7-project-slot shape as the Garage
+# "Daily Management Log", but a separate Notion database entirely, synced
+# directly from Typeform (not through our script/webhook).
+# ==========================================
+
+_KEVIN_FORM_SLOT_FIELDS = [
+    ("1 What project did you work on today? ", "1 What did you do for this project? (1)", "1 How long did that take? (2) 1", "1 What is the next action for this project? (2) 1"),
+    ("2 What project did you work on today? (3)", "2 What did you do for this project? (2)", "2 How long did that take? (2)", "2 What is the next action for this project? (2)"),
+    ("3 What project did you work on today? (4)", "3 What did you do for this project? (3)", "3 How long did that take? (4) 1", "3 What is the next action for this project? (4) 1"),
+    ("4 What project did you work on today? (5)", "4 What did you do for this project? (4)", "4 How long did that take? (4)", "4 What is the next action for this project? (4)"),
+    ("5 What project did you work on today? (6)", "5 What did you do for this project? (5)", "5 How long did that take? (5)", "5 What is the next action for this project? (6)"),
+    ("6 What project did you work on today? (7)", "6 What did you do for this project? (6)", "6 How long did that take? (7)", "6 What is the next action for this project? (7)"),
+    ("7 What project did you work on today? (8)", "7 What did you do for this project? (7)", "7 How long did that take? (8)", "7 What is the next action for this project? (8)"),
+]
+
+
+@app.route("/api/notion/kevin-management-form", methods=["GET"])
+@require_role("admin", "calvin")
+def kevin_management_form():
+    try:
+        pages = notion_utils.query_data_source(NOTION_KEVIN_FORM_DATASOURCE_ID, page_size=30)
+        items = []
+
+        for page in pages:
+            props = page.get("properties", {})
+            date = notion_utils.prop_date(props, "Date")
+            name = notion_utils.prop_people(props, "Name") or "Kevin"
+
+            lines = []
+            has_next_action = False
+            for project_f, did_f, how_long_f, next_f in _KEVIN_FORM_SLOT_FIELDS:
+                project = notion_utils.prop_text(props, project_f)
+                did = notion_utils.prop_text(props, did_f)
+                how_long = notion_utils.prop_text(props, how_long_f)
+                next_action = notion_utils.prop_text(props, next_f)
+
+                if not (project or did):
+                    continue
+
+                line = f"{project or 'Project'}: {did or ''}"
+                if how_long:
+                    line += f" ({how_long})"
+                if next_action:
+                    line += f" — Next: {next_action}"
+                    has_next_action = True
+                lines.append(line)
+
+            items.append({
+                "id": "kevin-mgmt-" + page["id"],
+                "notionUrl": page.get("url"),
+                "date": date,
+                "name": name,
+                "summary": "\n".join(lines),
+                "has_next_action": has_next_action,
+            })
+
+        items.sort(key=lambda i: i["date"] or "", reverse=True)
         return jsonify({"count": len(items), "items": items})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
