@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chipperfield Ag Fabrication</title>
+<style>
+  :root {
+    --green: #97E45D;
+    --green-dark: #4d7a2f;
+    --ink: #1c1f1a;
+    --ink-soft: #5b5f56;
+    --line: #e2e3dc;
+    --surface: #ffffff;
+    --page: #f6f7f3;
+    --danger-bg: #fde8e8;
+    --danger-text: #a02020;
+    --warn-bg: #fdf3d8;
+    --warn-text: #8a6300;
+    --ok-bg: #e6f4e0;
+    --ok-text: #2f6b1f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--page); color: var(--ink); }
+  a { color: inherit; }
+
+  /* ---------- Landing / slideshow ---------- */
+  #landing {
+    position: relative; height: 100vh; min-height: 560px; width: 100%;
+    overflow: hidden; display: flex; align-items: center; justify-content: center;
+  }
+  .slide {
+    position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+    opacity: 0; transition: opacity 1.8s ease-in-out;
+  }
+  .slide.active { opacity: 1; }
+  #landing::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(10,12,8,0.55) 0%, rgba(10,12,8,0.7) 60%, rgba(10,12,8,0.85) 100%);
+    z-index: 1;
+  }
+  .landing-content { position: relative; z-index: 2; text-align: center; padding: 24px; max-width: 640px; }
+  .landing-content h1 {
+    color: #fff; font-size: clamp(28px, 5vw, 44px); font-weight: 700; margin: 0 0 8px;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.4);
+  }
+  .landing-content .sub { color: rgba(255,255,255,0.85); font-size: 15px; margin: 0 0 36px; }
+  .floating-nav { display: flex; flex-direction: column; gap: 14px; align-items: center; }
+  .floating-btn {
+    background: rgba(255,255,255,0.14); backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.35); color: #fff;
+    padding: 16px 36px; border-radius: 999px; font-size: 16px; font-weight: 600;
+    cursor: pointer; min-width: 280px; transition: all 0.2s ease;
+  }
+  .floating-btn:hover { background: var(--green); border-color: var(--green); color: #0f1a08; transform: translateY(-2px); }
+  .jerron-link {
+    display: inline-block; margin-top: 28px; color: rgba(255,255,255,0.75); font-size: 13px;
+    text-decoration: underline; cursor: pointer;
+  }
+  .jerron-link:hover { color: #fff; }
+
+  /* ---------- App shell ---------- */
+  #app-shell { display: none; }
+  header {
+    background: var(--surface); border-bottom: 1px solid var(--line); padding: 16px 24px;
+    display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 10;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .icon { width: 32px; height: 32px; border-radius: 8px; background: var(--green); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 17px; color: #000; }
+  .brand h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .back-link { font-size: 13px; color: var(--ink-soft); cursor: pointer; text-decoration: underline; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px; }
+  .page { display: none; }
+  .page.active { display: block; }
+
+  .section-heading { font-size: 15px; font-weight: 600; margin: 24px 0 4px; }
+  .section-heading:first-child { margin-top: 0; }
+  .section-sub { font-size: 12px; color: var(--ink-soft); margin: 0 0 12px; }
+
+  .item {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+    padding: 16px; margin-bottom: 12px;
+  }
+  .item-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .item-title { font-size: 15px; font-weight: 600; margin: 0; }
+  .item-sub { font-size: 12px; color: var(--ink-soft); margin: 3px 0 0; }
+  .tag { font-size: 11px; padding: 3px 9px; border-radius: 5px; font-weight: 600; white-space: nowrap; }
+  .tag.ok { background: var(--ok-bg); color: var(--ok-text); }
+  .tag.warn { background: var(--warn-bg); color: var(--warn-text); }
+  .summary { font-size: 13px; margin: 8px 0 0; white-space: pre-line; }
+  .empty { text-align: center; padding: 30px 0; color: var(--ink-soft); font-size: 13px; }
+
+  label { font-size: 12px; font-weight: 600; color: var(--ink-soft); display: block; margin: 10px 0 4px; }
+  input[type=text], input[type=date], input[type=number], textarea, select {
+    width: 100%; font-size: 14px; padding: 10px 12px; border: 1px solid var(--line);
+    border-radius: 10px; font-family: inherit; box-sizing: border-box;
+  }
+  textarea { min-height: 64px; resize: vertical; }
+  button.primary {
+    background: var(--green-dark); color: #fff; border: none; padding: 10px 18px;
+    border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button.primary:hover { background: #3d6425; }
+  button.ghost {
+    background: transparent; border: 1px solid var(--line); padding: 8px 14px;
+    border-radius: 10px; font-size: 13px; cursor: pointer; color: var(--ink);
+  }
+  button.ghost:hover { background: var(--page); }
+  button.danger { background: transparent; border: 1px solid var(--danger-text); color: var(--danger-text); padding: 6px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; }
+
+  .employee-row { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr auto; gap: 8px; align-items: end; margin-bottom: 8px; }
+  .employee-row label { margin: 0 0 4px; }
+  @media (max-width: 640px) { .employee-row { grid-template-columns: 1fr 1fr; } }
+
+  .chart-toggle { display: flex; gap: 8px; margin-bottom: 16px; }
+  .chart-toggle button.active { background: var(--green); border-color: var(--green-dark); color: #0f1a08; font-weight: 600; }
+
+  .lead-status { font-size: 12px; padding: 4px 10px; border-radius: 999px; font-weight: 600; }
+  .lead-status.New { background: var(--warn-bg); color: var(--warn-text); }
+  .lead-status.Contacted { background: #e4eefc; color: #24507e; }
+  .lead-status.Quoted { background: #ede4fc; color: #5a2f8a; }
+  .lead-status.Won { background: var(--ok-bg); color: var(--ok-text); }
+  .lead-status.Lost { background: var(--danger-bg); color: var(--danger-text); }
+</style>
+</head>
+<body>
+
+<!-- ============== LANDING ============== -->
+<div id="landing">
+  <img class="slide active" src="https://images.unsplash.com/photo-1585201731775-0597e1be4bfb?q=80&w=1015&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D">
+  <img class="slide" src="https://images.unsplash.com/photo-1735494033576-9c882e80504c?q=80&w=987&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D">
+  <img class="slide" src="https://images.unsplash.com/photo-1548683726-203119be6a39?q=80&w=1055&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D">
+  <img class="slide" src="https://images.unsplash.com/photo-1695603414659-4d573962b517?q=80&w=987&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D">
+
+  <div class="landing-content">
+    <h1>Chipperfield Ag Fabrication</h1>
+    <p class="sub">Fab Shop team portal</p>
+    <div class="floating-nav">
+      <button class="floating-btn" data-page="daily-tab">Fab Shop Daily Tab</button>
+      <button class="floating-btn" data-page="evaluation">Evaluation of the Fab Shop</button>
+      <button class="floating-btn" data-page="sales">Sales Intake Tracker</button>
+    </div>
+    <span class="jerron-link" id="jerron-logs-link">View Jerron's logs →</span>
+  </div>
+</div>
+
+<!-- ============== APP SHELL ============== -->
+<div id="app-shell">
+  <header>
+    <div class="brand">
+      <div class="icon">C</div>
+      <div>
+        <h1 id="page-title">Chipperfield Ag Fabrication</h1>
+      </div>
+    </div>
+    <span class="back-link" id="back-to-landing">← Back</span>
+  </header>
+
+  <main>
+    <!-- ---------- Daily Tab ---------- -->
+    <div class="page" id="page-daily-tab">
+      <p class="section-heading">Fab Shop Daily Tab</p>
+      <p class="section-sub">The digital version of the paper Tab Sheet — submitting this updates Calvin's dashboard directly.</p>
+
+      <label>Date</label>
+      <input type="date" id="dt-date">
+
+      <p class="section-heading">Employees</p>
+      <div id="employee-rows"></div>
+      <button class="ghost" id="add-employee-row-btn" type="button">+ Add employee row</button>
+
+      <p class="section-heading">Description of work today</p>
+      <textarea id="dt-description" placeholder="What did the team work on?"></textarea>
+
+      <p class="section-heading">New leads</p>
+      <textarea id="dt-new-leads" placeholder="Any new leads to note?"></textarea>
+
+      <p class="section-heading">Problems</p>
+      <textarea id="dt-problems" placeholder="Any problems today?"></textarea>
+
+      <p class="section-heading">Estimated value of work completed</p>
+      <input type="number" id="dt-estimated-value" placeholder="$">
+
+      <p class="section-heading">Tab completed by</p>
+      <input type="text" id="dt-completed-by" placeholder="Name">
+
+      <div style="margin-top:20px;">
+        <button class="primary" id="submit-daily-tab-btn">Submit Daily Tab</button>
+      </div>
+      <div id="dt-status" style="margin-top:10px;font-size:13px;"></div>
+
+      <p class="section-heading" style="margin-top:36px;">Manage employee roster</p>
+      <p class="section-sub">Add or remove people from the shop's standing list — doesn't affect past submissions.</p>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <input type="text" id="new-roster-name" placeholder="New employee name" style="flex:1;">
+        <button class="ghost" id="add-roster-btn" type="button">Add</button>
+      </div>
+      <div id="roster-list"></div>
+
+      <p class="section-heading" style="margin-top:36px;">Recent submissions</p>
+      <div id="recent-entries-display"></div>
+    </div>
+
+    <!-- ---------- Evaluation ---------- -->
+    <div class="page" id="page-evaluation">
+      <p class="section-heading">Evaluation of the Fab Shop</p>
+      <p class="section-sub" id="eval-status">Loading…</p>
+
+      <div class="chart-toggle">
+        <button class="ghost active" data-range="4w">Last 4 weeks</button>
+        <button class="ghost" data-range="3m">Last 3 months</button>
+        <button class="ghost" data-range="all">All-time</button>
+      </div>
+
+      <div class="item">
+        <p style="font-size:13px;font-weight:600;margin:0 0 10px;">Billable vs. Non-Billable hours</p>
+        <canvas id="hours-chart" height="220"></canvas>
+      </div>
+
+      <div class="item">
+        <p style="font-size:13px;font-weight:600;margin:0 0 10px;">Estimated value</p>
+        <canvas id="value-chart" height="220"></canvas>
+      </div>
+    </div>
+
+    <!-- ---------- Sales Intake Tracker ---------- -->
+    <div class="page" id="page-sales">
+      <p class="section-heading">Sales Intake Tracker</p>
+      <p class="section-sub">Jerron's running list of leads.</p>
+
+      <div class="item">
+        <label>Company</label>
+        <input type="text" id="lead-company">
+        <label>Contact</label>
+        <input type="text" id="lead-contact">
+        <label>Notes</label>
+        <textarea id="lead-notes"></textarea>
+        <div style="margin-top:10px;">
+          <button class="primary" id="add-lead-btn">Add lead</button>
+        </div>
+      </div>
+
+      <div id="leads-display"></div>
+    </div>
+
+    <!-- ---------- Jerron's Logs ---------- -->
+    <div class="page" id="page-jerron-logs">
+      <p class="section-heading">Jerron's Logs</p>
+      <p class="section-sub">Fab Shop and Daily Management Log entries tagged with Jerron, last 30 days.</p>
+      <div id="jerron-logs-display"></div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script>
+// ============== Slideshow ==============
+let slideIndex = 0;
+const slides = document.querySelectorAll(".slide");
+setInterval(() => {
+  slides[slideIndex].classList.remove("active");
+  slideIndex = (slideIndex + 1) % slides.length;
+  slides[slideIndex].classList.add("active");
+}, 6000);
+
+// ============== Page navigation ==============
+function showPage(page) {
+  document.getElementById("landing").style.display = "none";
+  document.getElementById("app-shell").style.display = "block";
+  document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+  document.getElementById("page-" + page).classList.add("active");
+
+  const titles = {
+    "daily-tab": "Fab Shop Daily Tab",
+    "evaluation": "Evaluation of the Fab Shop",
+    "sales": "Sales Intake Tracker",
+    "jerron-logs": "Jerron's Logs"
+  };
+  document.getElementById("page-title").textContent = titles[page] || "Chipperfield Ag Fabrication";
+
+  if (page === "daily-tab") { loadRoster(); loadRecentEntries(); }
+  else if (page === "evaluation") { loadEvaluationData(); }
+  else if (page === "sales") { loadLeads(); }
+  else if (page === "jerron-logs") { loadJerronLogs(); }
+}
+
+document.querySelectorAll(".floating-btn").forEach(btn => {
+  btn.addEventListener("click", () => showPage(btn.getAttribute("data-page")));
+});
+document.getElementById("jerron-logs-link").addEventListener("click", () => showPage("jerron-logs"));
+document.getElementById("back-to-landing").addEventListener("click", () => {
+  document.getElementById("app-shell").style.display = "none";
+  document.getElementById("landing").style.display = "flex";
+});
+
+// ============== Daily Tab: employee rows ==============
+let ROSTER = [];
+let employeeRowCount = 0;
+
+function addEmployeeRow(prefillName) {
+  const container = document.getElementById("employee-rows");
+  const rowId = "emp-row-" + (employeeRowCount++);
+  const div = document.createElement("div");
+  div.className = "employee-row";
+  div.id = rowId;
+
+  const optionsHtml = ROSTER.map(n => `<option value="${n}" ${n === prefillName ? "selected" : ""}>${n}</option>`).join("");
+
+  div.innerHTML = `
+    <div>
+      <label>Name</label>
+      <select data-role="emp-name">${optionsHtml || '<option value="">No roster yet</option>'}</select>
+    </div>
+    <div>
+      <label>Billable</label>
+      <input type="number" step="0.1" data-role="emp-billable" placeholder="0">
+    </div>
+    <div>
+      <label>Non-Billable</label>
+      <input type="number" step="0.1" data-role="emp-nonbillable" placeholder="0">
+    </div>
+    <div>
+      <label>MGT/Design</label>
+      <input type="number" step="0.1" data-role="emp-mgt" placeholder="0">
+    </div>
+    <div>
+      <button class="danger" type="button" onclick="document.getElementById('${rowId}').remove()">×</button>
+    </div>
+  `;
+  container.appendChild(div);
+}
+
+document.getElementById("add-employee-row-btn").addEventListener("click", () => addEmployeeRow());
+
+async function loadRoster() {
+  try {
+    const res = await fetch("/api/fabshop-portal/employees");
+    const data = await res.json();
+    ROSTER = data.employees || [];
+
+    const rosterEl = document.getElementById("roster-list");
+    rosterEl.innerHTML = ROSTER.map(name => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);">
+        <span style="font-size:13px;">${name}</span>
+        <button class="danger" onclick="removeRosterEmployee('${name}')">Remove</button>
+      </div>
+    `).join("") || '<div class="empty">No employees yet.</div>';
+
+    // Seed the daily tab with one row per roster employee, if empty
+    if (document.getElementById("employee-rows").children.length === 0) {
+      ROSTER.forEach(name => addEmployeeRow(name));
+    }
+  } catch (err) {
+    console.error("Failed to load roster:", err);
+  }
+}
+
+document.getElementById("add-roster-btn").addEventListener("click", async () => {
+  const nameInput = document.getElementById("new-roster-name");
+  const name = nameInput.value.trim();
+  if (!name) return;
+  await fetch("/api/fabshop-portal/employees", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name })
+  });
+  nameInput.value = "";
+  loadRoster();
+});
+
+async function removeRosterEmployee(name) {
+  await fetch("/api/fabshop-portal/employees", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name })
+  });
+  loadRoster();
+}
+
+// ============== Daily Tab: submit ==============
+document.getElementById("submit-daily-tab-btn").addEventListener("click", async () => {
+  const statusEl = document.getElementById("dt-status");
+  const date = document.getElementById("dt-date").value;
+  if (!date) {
+    statusEl.textContent = "Please pick a date.";
+    statusEl.style.color = "var(--danger-text)";
+    return;
+  }
+
+  const employees = [];
+  document.querySelectorAll("#employee-rows .employee-row").forEach(row => {
+    const name = row.querySelector('[data-role="emp-name"]').value;
+    if (!name) return;
+    employees.push({
+      name,
+      billable: parseFloat(row.querySelector('[data-role="emp-billable"]').value) || 0,
+      non_billable: parseFloat(row.querySelector('[data-role="emp-nonbillable"]').value) || 0,
+      mgt_design: parseFloat(row.querySelector('[data-role="emp-mgt"]').value) || 0,
+    });
+  });
+
+  const payload = {
+    date,
+    employees,
+    description: document.getElementById("dt-description").value,
+    new_leads: document.getElementById("dt-new-leads").value,
+    problems: document.getElementById("dt-problems").value,
+    estimated_value: parseFloat(document.getElementById("dt-estimated-value").value) || 0,
+    completed_by: document.getElementById("dt-completed-by").value,
+  };
+
+  statusEl.textContent = "Submitting…";
+  statusEl.style.color = "var(--ink-soft)";
+  try {
+    const res = await fetch("/api/fabshop-portal/daily-tab", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.status !== "ok") throw new Error(data.message || "Submit failed");
+    statusEl.textContent = "Submitted — Calvin's dashboard updated.";
+    statusEl.style.color = "var(--ok-text)";
+    loadRecentEntries();
+  } catch (err) {
+    statusEl.textContent = "Failed: " + err.message;
+    statusEl.style.color = "var(--danger-text)";
+  }
+});
+
+async function loadRecentEntries() {
+  const el = document.getElementById("recent-entries-display");
+  el.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const res = await fetch("/api/fabshop-portal/daily-entries");
+    const data = await res.json();
+    const entries = (data.entries || []).slice(0, 10);
+    if (entries.length === 0) {
+      el.innerHTML = '<div class="empty">No submissions yet.</div>';
+      return;
+    }
+    el.innerHTML = entries.map(e => `
+      <div class="item">
+        <div class="item-top">
+          <div>
+            <p class="item-title">${e.date}</p>
+            <p class="item-sub">Billable ${e.totals.billable} · Non-billable ${e.totals.non_billable} · MGT/Design ${e.totals.mgt_design}</p>
+          </div>
+          <span class="tag ok">$${(e.estimated_value || 0).toLocaleString()}</span>
+        </div>
+        ${e.description ? `<p class="summary">${e.description}</p>` : ''}
+      </div>
+    `).join("");
+  } catch (err) {
+    el.innerHTML = '<div class="empty">Could not load recent submissions.</div>';
+  }
+}
+
+// ============== Evaluation ==============
+let hoursChart = null;
+let valueChart = null;
+let evalData = { daily: [] };
+let currentRange = "4w";
+
+function filterByRange(daily, range) {
+  const now = new Date();
+  let cutoff;
+  if (range === "4w") cutoff = new Date(now.getTime() - 28 * 86400000);
+  else if (range === "3m") cutoff = new Date(now.getTime() - 90 * 86400000);
+  else return daily;
+  return daily.filter(d => new Date(d.date) >= cutoff);
+}
+
+function renderEvaluationCharts() {
+  const filtered = filterByRange(evalData.daily || [], currentRange);
+  const labels = filtered.map(d => d.date);
+
+  const hoursCtx = document.getElementById("hours-chart").getContext("2d");
+  if (hoursChart) hoursChart.destroy();
+  hoursChart = new Chart(hoursCtx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        { label: "Billable", data: filtered.map(d => d.billable_hours), borderColor: "#4d7a2f", backgroundColor: "transparent", tension: 0.2 },
+        { label: "Non-Billable", data: filtered.map(d => d.non_billable_hours), borderColor: "#a02020", backgroundColor: "transparent", tension: 0.2 },
+      ]
+    },
+    options: { responsive: true, plugins: { legend: { position: "bottom" } } }
+  });
+
+  const valueCtx = document.getElementById("value-chart").getContext("2d");
+  if (valueChart) valueChart.destroy();
+  valueChart = new Chart(valueCtx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        { label: "Estimated Value ($)", data: filtered.map(d => d.estimated_value), borderColor: "#97E45D", backgroundColor: "rgba(151,228,93,0.15)", fill: true, tension: 0.2 },
+      ]
+    },
+    options: { responsive: true, plugins: { legend: { position: "bottom" } } }
+  });
+}
+
+document.querySelectorAll(".chart-toggle button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".chart-toggle button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    currentRange = btn.getAttribute("data-range");
+    renderEvaluationCharts();
+  });
+});
+
+async function loadEvaluationData() {
+  const statusEl = document.getElementById("eval-status");
+  statusEl.textContent = "Loading…";
+  try {
+    const res = await fetch("/api/fabshop-portal/evaluation-data");
+    evalData = await res.json();
+    statusEl.textContent = evalData.uploaded_at
+      ? "Last updated: " + new Date(evalData.uploaded_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+      : "No data yet.";
+    renderEvaluationCharts();
+  } catch (err) {
+    statusEl.textContent = "Could not load evaluation data.";
+  }
+}
+
+// ============== Sales Intake Tracker ==============
+document.getElementById("add-lead-btn").addEventListener("click", async () => {
+  const company = document.getElementById("lead-company").value.trim();
+  if (!company) return;
+  const payload = {
+    company,
+    contact: document.getElementById("lead-contact").value.trim(),
+    notes: document.getElementById("lead-notes").value.trim(),
+  };
+  await fetch("/api/fabshop-portal/leads", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  document.getElementById("lead-company").value = "";
+  document.getElementById("lead-contact").value = "";
+  document.getElementById("lead-notes").value = "";
+  loadLeads();
+});
+
+async function loadLeads() {
+  const el = document.getElementById("leads-display");
+  el.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const res = await fetch("/api/fabshop-portal/leads");
+    const data = await res.json();
+    const leads = data.leads || [];
+    if (leads.length === 0) {
+      el.innerHTML = '<div class="empty">No leads yet.</div>';
+      return;
+    }
+    const statusOptions = ["New", "Contacted", "Quoted", "Won", "Lost"];
+    el.innerHTML = leads.map(l => `
+      <div class="item">
+        <div class="item-top">
+          <div>
+            <p class="item-title">${l.company}</p>
+            <p class="item-sub">${l.contact || 'No contact listed'}</p>
+          </div>
+          <select data-lead-id="${l.id}" class="lead-status-select" style="width:auto;">
+            ${statusOptions.map(s => `<option value="${s}" ${s === l.status ? "selected" : ""}>${s}</option>`).join("")}
+          </select>
+        </div>
+        ${l.notes ? `<p class="summary">${l.notes}</p>` : ''}
+        <div style="margin-top:8px;"><button class="danger" data-delete-lead="${l.id}">Delete</button></div>
+      </div>
+    `).join("");
+
+    el.querySelectorAll(".lead-status-select").forEach(sel => {
+      sel.addEventListener("change", async () => {
+        await fetch(`/api/fabshop-portal/leads/${sel.getAttribute("data-lead-id")}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: sel.value })
+        });
+        loadLeads();
+      });
+    });
+    el.querySelectorAll("[data-delete-lead]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        await fetch(`/api/fabshop-portal/leads/${btn.getAttribute("data-delete-lead")}`, { method: "DELETE" });
+        loadLeads();
+      });
+    });
+  } catch (err) {
+    el.innerHTML = '<div class="empty">Could not load leads.</div>';
+  }
+}
+
+// ============== Jerron's Logs ==============
+async function loadJerronLogs() {
+  const el = document.getElementById("jerron-logs-display");
+  el.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const res = await fetch("/api/fabshop-portal/jerron-logs?days=30");
+    const data = await res.json();
+    const logs = data.logs || [];
+    if (logs.length === 0) {
+      el.innerHTML = '<div class="empty">No logs found for Jerron in the last 30 days.</div>';
+      return;
+    }
+    el.innerHTML = logs.map(l => `
+      <div class="item">
+        <div class="item-top">
+          <div>
+            <p class="item-title">${l.name}</p>
+            <p class="item-sub">${l.date} · ${l.job_or_wo} · ${l.photo_count} photo(s)</p>
+          </div>
+          <span class="tag ok">${l.job_or_wo}</span>
+        </div>
+        ${l.summary ? `<p class="summary">${l.summary}</p>` : `<p class="summary" style="color:var(--ink-soft);font-style:italic;">No details captured.</p>`}
+        ${l.dropbox_view_url ? `<p style="margin:6px 0 0;"><a href="${l.dropbox_view_url}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View PDF ↗</a></p>` : ''}
+      </div>
+    `).join("");
+  } catch (err) {
+    el.innerHTML = '<div class="empty">Could not load Jerron\'s logs.</div>';
+  }
+}
+
+// Default the daily tab date field to today
+document.getElementById("dt-date").value = new Date().toISOString().slice(0, 10);
+</script>
+
+</body>
+</html>

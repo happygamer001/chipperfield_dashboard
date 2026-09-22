@@ -74,11 +74,25 @@ def dashboard_page():
     return send_from_directory(_REPO_ROOT, "dashboard.html")
 
 
+@app.route("/fabshop-portal.html")
+def fabshop_portal_page():
+    return send_from_directory(_REPO_ROOT, "fabshop-portal.html")
+
+
 DASHBOARD_STATE_PATH = os.environ.get(
     "DASHBOARD_STATE_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/published.json"
 )
 FABSHOP_REVENUE_PATH = os.environ.get(
     "FABSHOP_REVENUE_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/fabshop_revenue.json"
+)
+FABSHOP_DAILY_ENTRIES_PATH = os.environ.get(
+    "FABSHOP_DAILY_ENTRIES_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/fabshop_daily_entries.json"
+)
+FABSHOP_EMPLOYEES_PATH = os.environ.get(
+    "FABSHOP_EMPLOYEES_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/fabshop_employees.json"
+)
+FABSHOP_LEADS_PATH = os.environ.get(
+    "FABSHOP_LEADS_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/fabshop_leads.json"
 )
 
 NOTION_BATCH_REPORTS_DATASOURCE_ID = os.environ.get(
@@ -507,6 +521,22 @@ def upload_daily_logs():
 # ==========================================
 # Dashboard storage (Dropbox-backed — no separate database needed)
 # ==========================================
+
+def _read_json_from_dropbox(dbx, path, default):
+    try:
+        _, res = dbx.files_download(path)
+        return json.loads(res.content)
+    except dropbox.exceptions.ApiError:
+        return default
+
+
+def _write_json_to_dropbox(dbx, path, data):
+    dbx.files_upload(
+        json.dumps(data, indent=2).encode("utf-8"),
+        path,
+        mode=dropbox.files.WriteMode.overwrite,
+    )
+
 
 def _read_published_state(dbx):
     try:
@@ -948,17 +978,286 @@ def upload_fabshop():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+def _merge_fabshop_data(dbx):
+    """
+    Option A: the portal is now the live source of truth. This merges the
+    old manually-uploaded workbook data (kept as historical backfill) with
+    live daily entries submitted through the portal — live entries win for
+    any date both sources have, since they're the more current record.
+    Weekly rollups are computed fresh from the merged daily list (grouped
+    Mon-Fri) rather than trusting the workbook's own week labels, so both
+    sources roll up consistently.
+    """
+    legacy = _read_json_from_dropbox(dbx, FABSHOP_REVENUE_PATH, {"uploaded_at": None, "filename": None, "weekly": [], "daily": []})
+    live_entries = _read_json_from_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, [])
+
+    daily_by_date = {}
+    for d in legacy.get("daily", []):
+        if not d.get("date"):
+            continue
+        daily_by_date[d["date"]] = {
+            "date": d["date"],
+            "billable_hours": d.get("billable_hours", 0) or 0,
+            "non_billable_hours": d.get("non_billable_hours", 0) or 0,
+            "mgt_design_hours": d.get("mgt_design_hours", 0) or 0,
+            "total_man_hours": d.get("total_man_hours", 0) or 0,
+            "estimated_value": d.get("estimated_value", 0) or 0,
+            "description": None,
+            "source": "legacy_upload",
+        }
+
+    for entry in live_entries:
+        totals = entry.get("totals", {})
+        billable = totals.get("billable", 0) or 0
+        non_billable = totals.get("non_billable", 0) or 0
+        mgt_design = totals.get("mgt_design", 0) or 0
+        daily_by_date[entry["date"]] = {
+            "date": entry["date"],
+            "billable_hours": billable,
+            "non_billable_hours": non_billable,
+            "mgt_design_hours": mgt_design,
+            "total_man_hours": billable + non_billable + mgt_design,
+            "estimated_value": entry.get("estimated_value", 0) or 0,
+            "description": entry.get("description") or None,
+            "source": "portal",
+        }
+
+    daily_list = sorted(daily_by_date.values(), key=lambda d: d["date"])
+
+    weekly_by_key = {}
+    for d in daily_list:
+        try:
+            dt = datetime.datetime.fromisoformat(d["date"]).date()
+        except ValueError:
+            continue
+        monday = dt - datetime.timedelta(days=dt.weekday())
+        friday = monday + datetime.timedelta(days=4)
+        key = monday.isoformat()
+        w = weekly_by_key.setdefault(key, {
+            "week_of": f"{monday.strftime('%m/%d')} - {friday.strftime('%m/%d')}",
+            "_sort_key": key,
+            "billable_hours": 0, "non_billable_hours": 0, "mgt_design_hours": 0,
+            "total_revenue": 0, "total_man_hours": 0,
+        })
+        w["billable_hours"] += d["billable_hours"]
+        w["non_billable_hours"] += d["non_billable_hours"]
+        w["mgt_design_hours"] += d["mgt_design_hours"]
+        w["total_revenue"] += d["estimated_value"]
+        w["total_man_hours"] += d["total_man_hours"]
+
+    weekly_list = sorted(weekly_by_key.values(), key=lambda w: w["_sort_key"])
+    for w in weekly_list:
+        del w["_sort_key"]
+
+    latest_times = [t for t in [legacy.get("uploaded_at")] + [e.get("submitted_at") for e in live_entries] if t]
+    uploaded_at = max(latest_times) if latest_times else None
+
+    return {
+        "uploaded_at": uploaded_at,
+        "filename": legacy.get("filename"),
+        "weekly": weekly_list,
+        "daily": daily_list,
+    }
+
+
 @app.route("/api/fabshop-revenue", methods=["GET"])
 @require_role("admin", "calvin")
 def fabshop_revenue():
     try:
         dbx = get_dropbox_client()
-        try:
-            _, res = dbx.files_download(FABSHOP_REVENUE_PATH)
-            data = json.loads(res.content)
-        except dropbox.exceptions.ApiError:
-            data = {"uploaded_at": None, "filename": None, "weekly": [], "daily": []}
+        data = _merge_fabshop_data(dbx)
         return jsonify(data)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# Fab Shop portal — no login yet (by explicit request), so these routes are
+# open. Revisit adding a lightweight role gate here once real usage starts.
+# ==========================================
+
+DEFAULT_FABSHOP_EMPLOYEES = ["Jon", "Jerron", "Josh", "Caleb"]
+
+
+@app.route("/api/fabshop-portal/employees", methods=["GET"])
+def fabshop_portal_get_employees():
+    try:
+        dbx = get_dropbox_client()
+        employees = _read_json_from_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, DEFAULT_FABSHOP_EMPLOYEES)
+        return jsonify({"employees": employees})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-portal/employees", methods=["POST"])
+def fabshop_portal_add_employee():
+    try:
+        body = request.get_json(force=True)
+        name = (body.get("name") or "").strip()
+        if not name:
+            return jsonify({"status": "error", "message": "Name is required"}), 400
+
+        dbx = get_dropbox_client()
+        employees = _read_json_from_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, list(DEFAULT_FABSHOP_EMPLOYEES))
+        if name not in employees:
+            employees.append(name)
+            _write_json_to_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, employees)
+        return jsonify({"status": "ok", "employees": employees})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-portal/employees", methods=["DELETE"])
+def fabshop_portal_remove_employee():
+    try:
+        body = request.get_json(force=True)
+        name = (body.get("name") or "").strip()
+
+        dbx = get_dropbox_client()
+        employees = _read_json_from_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, list(DEFAULT_FABSHOP_EMPLOYEES))
+        employees = [e for e in employees if e != name]
+        _write_json_to_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, employees)
+        return jsonify({"status": "ok", "employees": employees})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-portal/daily-tab", methods=["POST"])
+def fabshop_portal_submit_daily_tab():
+    try:
+        body = request.get_json(force=True)
+        date = body.get("date")
+        if not date:
+            return jsonify({"status": "error", "message": "Date is required"}), 400
+
+        employees = body.get("employees", [])
+        totals = {"billable": 0, "non_billable": 0, "mgt_design": 0}
+        for emp in employees:
+            totals["billable"] += float(emp.get("billable") or 0)
+            totals["non_billable"] += float(emp.get("non_billable") or 0)
+            totals["mgt_design"] += float(emp.get("mgt_design") or 0)
+
+        entry = {
+            "date": date,
+            "employees": employees,
+            "totals": totals,
+            "description": body.get("description") or "",
+            "new_leads": body.get("new_leads") or "",
+            "problems": body.get("problems") or "",
+            "estimated_value": float(body.get("estimated_value") or 0),
+            "completed_by": body.get("completed_by") or "",
+            "submitted_at": datetime.datetime.utcnow().isoformat() + "Z",
+        }
+
+        dbx = get_dropbox_client()
+        entries = _read_json_from_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, [])
+        entries = [e for e in entries if e.get("date") != date]  # replace same-day resubmission
+        entries.append(entry)
+        entries.sort(key=lambda e: e["date"])
+        _write_json_to_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, entries)
+
+        return jsonify({"status": "ok", "entry": entry})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-portal/daily-entries", methods=["GET"])
+def fabshop_portal_daily_entries():
+    try:
+        dbx = get_dropbox_client()
+        entries = _read_json_from_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, [])
+        entries.sort(key=lambda e: e["date"], reverse=True)
+        return jsonify({"count": len(entries), "entries": entries})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-portal/leads", methods=["GET"])
+def fabshop_portal_get_leads():
+    try:
+        dbx = get_dropbox_client()
+        leads = _read_json_from_dropbox(dbx, FABSHOP_LEADS_PATH, [])
+        leads.sort(key=lambda l: l.get("created_at", ""), reverse=True)
+        return jsonify({"count": len(leads), "leads": leads})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-portal/leads", methods=["POST"])
+def fabshop_portal_add_lead():
+    try:
+        body = request.get_json(force=True)
+        lead = {
+            "id": "lead-" + str(int(datetime.datetime.utcnow().timestamp() * 1000)),
+            "company": body.get("company") or "",
+            "contact": body.get("contact") or "",
+            "notes": body.get("notes") or "",
+            "status": body.get("status") or "New",
+            "created_at": datetime.datetime.utcnow().isoformat() + "Z",
+        }
+        dbx = get_dropbox_client()
+        leads = _read_json_from_dropbox(dbx, FABSHOP_LEADS_PATH, [])
+        leads.append(lead)
+        _write_json_to_dropbox(dbx, FABSHOP_LEADS_PATH, leads)
+        return jsonify({"status": "ok", "lead": lead})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-portal/leads/<lead_id>", methods=["PATCH"])
+def fabshop_portal_update_lead(lead_id):
+    try:
+        body = request.get_json(force=True)
+        dbx = get_dropbox_client()
+        leads = _read_json_from_dropbox(dbx, FABSHOP_LEADS_PATH, [])
+        target = next((l for l in leads if l["id"] == lead_id), None)
+        if not target:
+            return jsonify({"status": "error", "message": "Lead not found"}), 404
+        if "status" in body:
+            target["status"] = body["status"]
+        if "notes" in body:
+            target["notes"] = body["notes"]
+        _write_json_to_dropbox(dbx, FABSHOP_LEADS_PATH, leads)
+        return jsonify({"status": "ok", "lead": target})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-portal/leads/<lead_id>", methods=["DELETE"])
+def fabshop_portal_delete_lead(lead_id):
+    try:
+        dbx = get_dropbox_client()
+        leads = _read_json_from_dropbox(dbx, FABSHOP_LEADS_PATH, [])
+        leads = [l for l in leads if l["id"] != lead_id]
+        _write_json_to_dropbox(dbx, FABSHOP_LEADS_PATH, leads)
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-portal/evaluation-data", methods=["GET"])
+def fabshop_portal_evaluation_data():
+    """Same merged data as /api/fabshop-revenue, but open (no login) since
+    the portal itself has no auth yet — used for the Evaluation graph."""
+    try:
+        dbx = get_dropbox_client()
+        data = _merge_fabshop_data(dbx)
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-portal/jerron-logs", methods=["GET"])
+def fabshop_portal_jerron_logs():
+    try:
+        days = int(request.args.get("days", 30))
+        logs = get_recent_daily_logs(days=days)
+        jerron_logs = [
+            l for l in logs
+            if "jerron" in (l.get("name") or "").lower()
+            and l.get("job_or_wo") in ("Fab Shop Daily Log", "Daily Management Log")
+        ]
+        return jsonify({"count": len(jerron_logs), "logs": jerron_logs})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
