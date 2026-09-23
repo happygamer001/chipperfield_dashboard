@@ -696,7 +696,7 @@ async function loadDailyReports() {
     (logsData.logs || []).forEach(l => {
       const isMgmtLog = l.job_or_wo === "Daily Management Log";
       const entry = {
-        title: isMgmtLog ? l.name : (l.job_or_wo ? l.job_or_wo + " — " + l.name : l.name),
+        title: isMgmtLog ? l.name : (l.job_or_wo ? l.name + " | " + l.job_or_wo : l.name),
         subtitle: `${l.date} · ${l.photo_count} photo(s)`,
         summary: l.summary || "",
         tagClass: "ok",
@@ -727,6 +727,14 @@ async function loadDailyReports() {
       mgmt.sort((a, b) => (b.subtitle || "").localeCompare(a.subtitle || ""));
     }
 
+    const snippet = (text, sentenceCount = 2) => {
+      if (!text) return "";
+      // Split on sentence-ending punctuation, keep the punctuation with each piece
+      const sentences = text.match(/[^.!?]+[.!?]+(\s|$)/g) || [text];
+      const preview = sentences.slice(0, sentenceCount).join("").trim();
+      return sentences.length > sentenceCount ? preview + "…" : preview;
+    };
+
     const renderGroup = (el, list, emptyMsg) => {
       if (list.length === 0) {
         el.innerHTML = `<div class="empty">${emptyMsg}</div>`;
@@ -741,7 +749,7 @@ async function loadDailyReports() {
             </div>
             <span class="tag ${r.tagClass}">${r.tagText}</span>
           </div>
-          ${r.summary ? `<p class="summary">${r.summary}</p>` : `<p class="summary" style="color:var(--ink-soft);font-style:italic;">No details captured for this entry.</p>`}
+          ${r.summary ? `<p class="summary">${snippet(r.summary)}</p>` : `<p class="summary" style="color:var(--ink-soft);font-style:italic;">No details captured for this entry.</p>`}
           ${r.pdfUrl ? `<p style="margin:6px 0 0;"><a href="${r.pdfUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View PDF ↗</a></p>` : ''}
           ${r.notionUrl ? `<p style="margin:6px 0 0;"><a href="${r.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
           ${r.manualNotes.map(n => `<div style="font-size:12px;padding:6px 0;border-top:1px solid var(--line);"><strong>${n.author}:</strong> ${n.text}</div>`).join("")}
