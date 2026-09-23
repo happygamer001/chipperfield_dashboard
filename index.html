@@ -119,6 +119,7 @@
   .tag.source-notion { background: #eef0ea; color: #4a4f42; }
   .tag.source-excel { background: #e4f0e8; color: #2f6b45; }
   .tag.escalated { background: var(--danger-bg); color: var(--danger-text); }
+  .item.escalated-border { border: 1.5px solid var(--danger-text); }
   .tag.warn { background: var(--warn-bg); color: var(--warn-text); }
   .tag.ok { background: var(--ok-bg); color: var(--ok-text); }
 
@@ -283,45 +284,6 @@
 // ---- Mock data shaped like the real schemas we pulled from Notion ----
 const ITEMS = [
   {
-    id: "wo-471",
-    type: "workorder",
-    source: "notion-workorders",
-    sourceLabel: "Notion · Work Orders",
-    job: "J471",
-    woNumber: "WO-471",
-    name: "Tyler McCoy — bin repair, equipment down",
-    dateCreated: "Sep 3, 2026",
-    title: "Equipment down, awaiting part",
-    subtitle: "Work Status: Escalated · Service Priority: Urgent",
-    tagClass: "escalated",
-    tagText: "Escalated",
-    summary: "Equipment down, awaiting part. No ETA yet.",
-    dailyLogs: [
-      { crew: "Field crew A", date: "Sep 6", hours: 6 },
-      { crew: "Field crew A", date: "Sep 7", hours: 5 }
-    ],
-    status: "pending"
-  },
-  {
-    id: "wo-pending",
-    type: "workorder",
-    source: "notion-workorders",
-    sourceLabel: "Notion · Work Orders",
-    job: "J512",
-    woNumber: null,
-    name: "Grain leg install — journeyman dispatched",
-    dateCreated: null,
-    title: "No work order number assigned yet",
-    subtitle: "Daily logs exist under J512, WO# not created at dispatch",
-    tagClass: "warn",
-    tagText: "No WO#",
-    summary: "",
-    dailyLogs: [
-      { crew: "Ortiz crew", date: "Sep 8", hours: 8 }
-    ],
-    status: "pending"
-  },
-  {
     id: "job-412",
     type: "currentjob",
     source: "notion-currentjobs",
@@ -391,7 +353,7 @@ const ITEMS = [
 ];
 
 const SOURCES = [
-  { id: "notion-workorders", label: "Work Orders", lastSynced: "6 min ago" },
+  { id: "notion-workorders", label: "Work Orders", lastSynced: "not yet synced" },
   { id: "notion-currentjobs", label: "Current Jobs", lastSynced: "6 min ago" },
   { id: "notion-po", label: "Purchase Orders", lastSynced: "6 min ago" },
   { id: "dropbox-dailylog", label: "Daily Job Log (Dropbox)", lastSynced: "not yet synced" },
@@ -536,7 +498,7 @@ function renderQueue() {
 
   filtered.forEach(item => {
     const div = document.createElement("div");
-    div.className = "item" + (openItemId === item.id ? " open" : "");
+    div.className = "item" + (openItemId === item.id ? " open" : "") + (item.tagClass === "escalated" ? " escalated-border" : "");
 
     const flagOptionsHtml = FLAG_OPTIONS.map(f => `<option>${f}</option>`).join("");
 
@@ -1084,6 +1046,7 @@ async function loadNotionSource(sourceId, apiPath) {
 
 function loadAllLiveSources() {
   loadDailyLogsFromDropbox();
+  loadNotionSource("notion-workorders", "/api/notion/work-orders");
   loadNotionSource("notion-batch-reports", "/api/notion/batch-reports");
   loadNotionSource("notion-gravel-sales", "/api/notion/gravel-sales");
   loadFabshopRevenue();

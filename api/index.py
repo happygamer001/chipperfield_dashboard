@@ -628,6 +628,50 @@ def add_note():
 
 
 # ==========================================
+# Work Orders — live feed for the admin review queue. Escalated ones get
+# tagged distinctly so the frontend can give them a red border.
+# ==========================================
+
+@app.route("/api/notion/work-orders", methods=["GET"])
+@require_role("admin")
+def notion_work_orders():
+    try:
+        pages = notion_utils.query_data_source(NOTION_WORKORDERS_DATASOURCE_ID, page_size=100)
+        items = []
+        for page in pages:
+            props = page.get("properties", {})
+            wo_num = notion_utils.prop_number(props, "WO #")
+            job_num = notion_utils.prop_number(props, "Job #")
+            contact = notion_utils.prop_text(props, "Reporting Contact")
+            status = notion_utils.prop_select(props, "Work Status")
+            priority = notion_utils.prop_select(props, "Service Priority")
+            date = notion_utils.prop_date(props, "Date")
+            desc = notion_utils.prop_text(props, "Description of Work")
+            complaint = notion_utils.prop_text(props, "Customer Complaint")
+
+            is_escalated = (status == "Escalated")
+            job_key = f"J{int(job_num)}" if job_num else None
+
+            items.append({
+                "id": "notion-wo-" + page["id"],
+                "notionUrl": page.get("url"),
+                "type": "general",
+                "source": "notion-workorders",
+                "sourceLabel": "Notion · Work Orders",
+                "job": job_key,
+                "title": (f"WO {int(wo_num)}" if wo_num else "Work order") + (f" — {contact}" if contact else ""),
+                "subtitle": f"{status or 'Unknown'}" + (f" · {priority}" if priority else "") + (f" · {date}" if date else ""),
+                "tagClass": "escalated" if is_escalated else ("warn" if priority == "Urgent" else "ok"),
+                "tagText": status or "Unknown",
+                "summary": desc or complaint or "",
+                "status": "pending",
+            })
+        return jsonify({"count": len(items), "items": items})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
 # Notion sources — MCI Batch Reports & Gravel Sales
 # ==========================================
 
