@@ -259,6 +259,15 @@
   <div id="fabshop-revenue-display"></div>
 
   <div class="queue-header">
+    <h2>Daily Job Log CSV import</h2>
+    <span id="csv-import-status">Backfills description text on existing entries</span>
+  </div>
+  <div class="filters" style="margin-bottom:20px;align-items:center;">
+    <input type="file" id="csv-import-file-input" accept=".csv" style="flex:1;font-size:13px;">
+    <button class="primary" id="csv-import-btn" style="flex:0 0 auto;">Import CSV</button>
+  </div>
+
+  <div class="queue-header">
     <h2>Review queue</h2>
     <span id="queue-count">0 items</span>
   </div>
@@ -925,6 +934,35 @@ document.getElementById("fabshop-upload-btn").addEventListener("click", async ()
   } finally {
     btn.disabled = false;
     btn.textContent = "Upload weekly file";
+  }
+});
+
+document.getElementById("csv-import-btn").addEventListener("click", async () => {
+  const fileInput = document.getElementById("csv-import-file-input");
+  const btn = document.getElementById("csv-import-btn");
+  const statusEl = document.getElementById("csv-import-status");
+  if (!fileInput.files.length) {
+    alert("Choose a CSV file first.");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", fileInput.files[0]);
+
+  btn.disabled = true;
+  btn.textContent = "Importing…";
+  try {
+    const res = await fetch("/api/bulk-import-daily-logs", { method: "POST", body: formData });
+    const data = await res.json();
+    if (data.status !== "ok") throw new Error(data.message || "Import failed");
+    statusEl.textContent = `Imported ${data.imported} · skipped ${data.skipped_duplicate} duplicate(s), ${data.skipped_no_data} with no usable data`;
+    alert(`Import complete — ${data.imported} entries backfilled. Reload the Daily Reports section on Calvin's dashboard to see them.`);
+    fileInput.value = "";
+  } catch (err) {
+    alert("Import failed: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Import CSV";
   }
 });
 

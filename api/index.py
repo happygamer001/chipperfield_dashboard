@@ -21,6 +21,7 @@ import sys
 import re
 import json
 import io
+import csv
 import hmac
 import hashlib
 import base64
@@ -210,6 +211,21 @@ def _daily_log_key(log):
     return f"{log.get('date', '')}|{log.get('name', '')}|{log.get('job_or_wo') or ''}"
 
 
+def _notes_for_log(all_notes, log):
+    """Exact key match first; falls back to any note sharing just date+name,
+    since a bulk-imported note's job/WO tag won't always exactly match
+    whatever tag ended up in the real Dropbox filename."""
+    exact = all_notes.get(_daily_log_key(log))
+    if exact:
+        return exact
+    prefix = f"{log.get('date', '')}|{log.get('name', '')}|"
+    combined = []
+    for key, notes in all_notes.items():
+        if key.startswith(prefix):
+            combined.extend(notes)
+    return combined
+
+
 @app.route("/api/recent-logs", methods=["GET"])
 @require_role("admin", "calvin")
 def recent_logs():
@@ -220,7 +236,7 @@ def recent_logs():
         dbx = get_dropbox_client()
         all_notes = _read_json_from_dropbox(dbx, DAILY_LOG_NOTES_PATH, {})
         for log in logs:
-            log["manual_notes"] = all_notes.get(_daily_log_key(log), [])
+            log["manual_notes"] = _notes_for_log(all_notes, log)
 
         return jsonify({"days": days, "count": len(logs), "logs": logs})
     except Exception as e:
@@ -251,6 +267,113 @@ def add_daily_log_note():
         })
         _write_json_to_dropbox(dbx, DAILY_LOG_NOTES_PATH, all_notes)
         return jsonify({"status": "ok", "notes": all_notes[key]})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def _parse_daily_job_log_csv_row(row):
+    """
+    Parses one row of a Typeform CSV export of the real 'Daily Job Log' form
+    (the one with an actual Job Number field — not the management-log or
+    Fab Shop forms). Column names come directly from the export, so this is
+    more reliable than the webhook's keyword-guessing on field titles.
+    """
+    name = (row.get("Your Name") or "").strip()
+    raw_date = (row.get("*Date*") or "")[:10]
+    try:
+        date_iso = datetime.date.fromisoformat(raw_date).isoformat() if raw_date else None
+    except ValueError:
+        date_iso = None
+
+    job_field = (row.get("*Job number* ") or row.get("*Job number*") or "").strip()
+    wo_num = (row.get("Workorder #") or "").strip()
+    wo_name = (row.get("Workorder Name") or "").strip()
+
+    job_wo = _extract_job_number(job_field) or _clean_or_none(job_field)
+    if not job_wo:
+        job_wo = _extract_job_number(wo_num) or _clean_or_none(wo_num)
+    if not job_wo and wo_name:
+        job_wo = wo_name
+
+    lines = []
+    work_desc = _clean_or_none(row.get("What did your team work on today?"))
+    if work_desc:
+        lines.append(f"Work: {work_desc}")
+    productivity = _clean_or_none(row.get("*Productivity Issues*"))
+    if productivity:
+        lines.append(f"Productivity issues: {productivity}")
+    incident = _clean_or_none(row.get("Incident Report?")) or _clean_or_none(row.get("*Safety Incident*"))
+    if incident:
+        lines.append(f"Incident: {incident}")
+    todo = _clean_or_none(row.get("To do:"))
+    if todo:
+        lines.append(f"To do: {todo}")
+    scope_desc = _clean_or_none(row.get("Please describe additional work:"))
+    if scope_desc:
+        lines.append(f"Additional work: {scope_desc}")
+
+    return {
+        "name": name,
+        "date": date_iso,
+        "job_or_wo": job_wo,
+        "text": "\n".join(lines),
+    }
+
+
+@app.route("/api/bulk-import-daily-logs", methods=["POST"])
+@require_role("admin")
+def bulk_import_daily_logs():
+    """
+    Upload a Typeform CSV export of the Daily Job Log form to backfill
+    description text for existing entries — stored the same way as a
+    manual note, tagged 'CSV Import' so it's clear where it came from.
+    Safe to re-run: skips rows whose exact text was already imported.
+    """
+    if "file" not in request.files:
+        return jsonify({"status": "error", "message": "No file included in upload"}), 400
+
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"status": "error", "message": "No file selected"}), 400
+
+    try:
+        content = file.read().decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(content))
+
+        dbx = get_dropbox_client()
+        all_notes = _read_json_from_dropbox(dbx, DAILY_LOG_NOTES_PATH, {})
+
+        imported = 0
+        skipped_no_data = 0
+        skipped_duplicate = 0
+
+        for row in reader:
+            parsed = _parse_daily_job_log_csv_row(row)
+            if not parsed["name"] or not parsed["date"] or not parsed["text"]:
+                skipped_no_data += 1
+                continue
+
+            key = f"{parsed['date']}|{parsed['name']}|{parsed['job_or_wo'] or ''}"
+            existing = all_notes.get(key, [])
+            if any(n.get("text") == parsed["text"] for n in existing):
+                skipped_duplicate += 1
+                continue
+
+            existing.append({
+                "author": "CSV Import",
+                "text": parsed["text"],
+                "created_at": datetime.datetime.utcnow().isoformat() + "Z",
+            })
+            all_notes[key] = existing
+            imported += 1
+
+        _write_json_to_dropbox(dbx, DAILY_LOG_NOTES_PATH, all_notes)
+        return jsonify({
+            "status": "ok",
+            "imported": imported,
+            "skipped_no_data": skipped_no_data,
+            "skipped_duplicate": skipped_duplicate,
+        })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
