@@ -49,7 +49,7 @@ DROPBOX_BASE_FOLDER = os.environ.get(
 
 # Rolling search window instead of a fixed date, so the scan doesn't grow slower every month.
 # Overridable via env var if you ever need to re-scan further back (e.g. a one-off backfill).
-SEARCH_WINDOW_DAYS = int(os.environ.get("SEARCH_WINDOW_DAYS", "7"))
+SEARCH_WINDOW_DAYS = int(os.environ.get("SEARCH_WINDOW_DAYS", "5"))
 
 
 def _get_search_since_date():

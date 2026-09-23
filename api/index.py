@@ -94,6 +94,9 @@ FABSHOP_EMPLOYEES_PATH = os.environ.get(
 FABSHOP_LEADS_PATH = os.environ.get(
     "FABSHOP_LEADS_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/fabshop_leads.json"
 )
+DAILY_LOG_NOTES_PATH = os.environ.get(
+    "DAILY_LOG_NOTES_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/daily_log_notes.json"
+)
 
 NOTION_BATCH_REPORTS_DATASOURCE_ID = os.environ.get(
     "NOTION_BATCH_REPORTS_DATASOURCE_ID", "ec5dda0d-7c82-4c4a-a613-fa28c7702c9c"
@@ -148,6 +151,25 @@ def require_role(*allowed_roles):
     return decorator
 
 
+def require_role_or_cron(*allowed_roles):
+    """Same as require_role, but also lets Vercel's scheduled Cron trigger
+    through — Vercel sends 'Authorization: Bearer <CRON_SECRET>' on cron
+    invocations, which carry no login session at all."""
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            cron_secret = os.environ.get("CRON_SECRET")
+            auth_header = request.headers.get("Authorization", "")
+            if cron_secret and auth_header == f"Bearer {cron_secret}":
+                return fn(*args, **kwargs)
+            role = session.get("role")
+            if role not in allowed_roles:
+                return jsonify({"status": "error", "message": "Not logged in or not authorized"}), 401
+            return fn(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
 @app.route("/api/login", methods=["POST"])
 def login():
     """
@@ -182,13 +204,53 @@ def get_session():
 # /api/recent-logs
 # ==========================================
 
+def _daily_log_key(log):
+    """Stable key for a Dropbox-derived log entry, since these don't have a
+    real ID of their own (they're just files in a folder each time)."""
+    return f"{log.get('date', '')}|{log.get('name', '')}|{log.get('job_or_wo') or ''}"
+
+
 @app.route("/api/recent-logs", methods=["GET"])
 @require_role("admin", "calvin")
 def recent_logs():
     try:
         days = int(request.args.get("days", DAYS_TO_SHOW_DEFAULT))
         logs = get_recent_daily_logs(days=days)
+
+        dbx = get_dropbox_client()
+        all_notes = _read_json_from_dropbox(dbx, DAILY_LOG_NOTES_PATH, {})
+        for log in logs:
+            log["manual_notes"] = all_notes.get(_daily_log_key(log), [])
+
         return jsonify({"days": days, "count": len(logs), "logs": logs})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/daily-log-notes", methods=["POST"])
+@require_role("admin", "calvin")
+def add_daily_log_note():
+    """A manual comment/correction on a Dropbox-derived log entry — a
+    stopgap for entries whose real text wasn't captured at upload time."""
+    try:
+        body = request.get_json(force=True)
+        date = body.get("date", "")
+        name = body.get("name", "")
+        job_or_wo = body.get("job_or_wo") or ""
+        text = (body.get("text") or "").strip()
+        if not text:
+            return jsonify({"status": "error", "message": "Note text is required"}), 400
+
+        key = f"{date}|{name}|{job_or_wo}"
+        dbx = get_dropbox_client()
+        all_notes = _read_json_from_dropbox(dbx, DAILY_LOG_NOTES_PATH, {})
+        all_notes.setdefault(key, []).append({
+            "author": body.get("author") or session.get("role", "admin"),
+            "text": text,
+            "created_at": datetime.datetime.utcnow().isoformat() + "Z",
+        })
+        _write_json_to_dropbox(dbx, DAILY_LOG_NOTES_PATH, all_notes)
+        return jsonify({"status": "ok", "notes": all_notes[key]})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -509,7 +571,7 @@ def typeform_webhook():
 # ==========================================
 
 @app.route("/api/upload-daily-logs", methods=["GET"])
-@require_role("admin")
+@require_role_or_cron("admin")
 def upload_daily_logs():
     try:
         summary = run_gmail_djl_uploader()
