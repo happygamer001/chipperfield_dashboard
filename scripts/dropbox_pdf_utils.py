@@ -13,6 +13,7 @@ import re
 import io
 import datetime
 import dropbox
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -356,38 +357,59 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
     results = list(entries_by_key.values())
     results.sort(key=lambda r: r["date"], reverse=True)
 
-    # Get an openable link for each PDF and each photo (valid ~4 hours —
-    # regenerated fresh every time this endpoint is called, so it's live
-    # whenever the page loads). Also pull the sidecar text file's content,
-    # if one exists, so the dashboard can show "work completed" without
-    # anyone opening the PDF.
+    # All of this is independent I/O (one Dropbox API call each) that was
+    # previously done one at a time — with several entries each having
+    # several photos, that serialized into 16-32+ SECOND page loads and
+    # was likely starving other concurrent requests on the same server
+    # process. Run everything in parallel instead.
+    def _fetch_temp_link(path):
+        try:
+            return dbx.files_get_temporary_link(path).link
+        except Exception:
+            return None
+
+    def _fetch_txt_content(path):
+        try:
+            _, res = dbx.files_download(path)
+            return res.content.decode("utf-8", errors="ignore").strip()
+        except Exception:
+            return None
+
+    jobs = []  # (result_dict, kind, extra) — extra is a photo index for photo jobs
     for r in results:
         if r["dropbox_pdf_path"]:
-            try:
-                link = dbx.files_get_temporary_link(r["dropbox_pdf_path"])
-                r["dropbox_view_url"] = link.link
-            except Exception:
-                r["dropbox_view_url"] = None
-        else:
-            r["dropbox_view_url"] = None
-
+            jobs.append((r, "pdf", None))
         if r["dropbox_txt_path"]:
-            try:
-                _, res = dbx.files_download(r["dropbox_txt_path"])
-                r["summary"] = res.content.decode("utf-8", errors="ignore").strip()
-            except Exception:
-                r["summary"] = None
-        else:
-            r["summary"] = None  # older entries uploaded before this existed
+            jobs.append((r, "txt", None))
+        for i, path in enumerate(r.get("photo_paths", [])):
+            jobs.append((r, "photo", i))
+        r["dropbox_view_url"] = None
+        r["summary"] = None
+        r["photo_urls"] = [None] * len(r.get("photo_paths", []))
 
-        photo_urls = []
-        for path in r.get("photo_paths", []):
-            try:
-                link = dbx.files_get_temporary_link(path)
-                photo_urls.append(link.link)
-            except Exception:
-                pass
-        r["photo_urls"] = photo_urls
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        future_to_job = {}
+        for r, kind, extra in jobs:
+            if kind == "pdf":
+                future = executor.submit(_fetch_temp_link, r["dropbox_pdf_path"])
+            elif kind == "txt":
+                future = executor.submit(_fetch_txt_content, r["dropbox_txt_path"])
+            else:
+                future = executor.submit(_fetch_temp_link, r["photo_paths"][extra])
+            future_to_job[future] = (r, kind, extra)
+
+        for future in as_completed(future_to_job):
+            r, kind, extra = future_to_job[future]
+            value = future.result()
+            if kind == "pdf":
+                r["dropbox_view_url"] = value
+            elif kind == "txt":
+                r["summary"] = value
+            else:
+                r["photo_urls"][extra] = value
+
+    for r in results:
+        r["photo_urls"] = [u for u in r["photo_urls"] if u]  # drop any that failed
         del r["photo_paths"]  # internal only — URLs are what the frontend needs
 
     return results

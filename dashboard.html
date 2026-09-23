@@ -543,7 +543,12 @@ async function runWorkOrderSearch() {
   resultsEl.innerHTML = '<div class="empty">Searching…</div>';
   try {
     const res = await fetch("/api/notion/workorder-search?q=" + encodeURIComponent(q));
-    const data = await res.json();
+    let data;
+    try {
+      data = await res.json();
+    } catch (parseErr) {
+      throw new Error(`Server error (status ${res.status})`);
+    }
     if (!res.ok) throw new Error(data.message || "Search failed");
 
     if (data.results.length === 0) {
@@ -796,7 +801,12 @@ async function loadSalesPipeline() {
 
   try {
     const res = await fetch("/api/notion/sales-pipeline");
-    const data = await res.json();
+    let data;
+    try {
+      data = await res.json();
+    } catch (parseErr) {
+      throw new Error(`Server error (status ${res.status})`);
+    }
     if (!res.ok) throw new Error(data.message || "Failed to load");
 
     if (data.items.length === 0) {
