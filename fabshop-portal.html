@@ -167,7 +167,8 @@
 
       <p class="section-heading">Employees</p>
       <div id="employee-rows"></div>
-      <button class="ghost" id="add-employee-row-btn" type="button">+ Add employee row</button>
+      <div id="employee-quick-add" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;"></div>
+      <button class="ghost" id="add-employee-row-btn" type="button">+ Add other employee</button>
 
       <p class="section-heading">Description of work today</p>
       <textarea id="dt-description" placeholder="What did the team work on?"></textarea>
@@ -197,7 +198,8 @@
       </div>
       <div id="roster-list"></div>
 
-      <p class="section-heading" style="margin-top:36px;">Recent submissions</p>
+      <p class="section-heading" style="margin-top:36px;">History</p>
+      <p class="section-sub">Every past submission, with room for updates/comments on each one.</p>
       <div id="recent-entries-display"></div>
     </div>
 
@@ -207,19 +209,21 @@
       <p class="section-sub" id="eval-status">Loading…</p>
 
       <div class="chart-toggle">
-        <button class="ghost active" data-range="4w">Last 4 weeks</button>
+        <button class="ghost" data-range="4w">Last 4 weeks</button>
         <button class="ghost" data-range="3m">Last 3 months</button>
-        <button class="ghost" data-range="all">All-time</button>
+        <button class="ghost active" data-range="all">All-time</button>
       </div>
 
       <div class="item">
         <p style="font-size:13px;font-weight:600;margin:0 0 10px;">Billable vs. Non-Billable hours</p>
         <canvas id="hours-chart" height="220"></canvas>
+        <div id="hours-chart-empty" class="empty" style="display:none;">No data in this range.</div>
       </div>
 
       <div class="item">
         <p style="font-size:13px;font-weight:600;margin:0 0 10px;">Estimated value</p>
         <canvas id="value-chart" height="220"></canvas>
+        <div id="value-chart-empty" class="empty" style="display:none;">No data in this range.</div>
       </div>
     </div>
 
@@ -346,6 +350,13 @@ async function loadRoster() {
       </div>
     `).join("") || '<div class="empty">No employees yet.</div>';
 
+    // One-click buttons for each roster member — adds their row instantly,
+    // no need to open a dropdown and pick their name.
+    const quickAddEl = document.getElementById("employee-quick-add");
+    quickAddEl.innerHTML = ROSTER.map(name =>
+      `<button class="ghost" type="button" onclick="quickAddEmployee('${name}')">+ ${name}</button>`
+    ).join("");
+
     // Seed the daily tab with one row per roster employee, if empty
     if (document.getElementById("employee-rows").children.length === 0) {
       ROSTER.forEach(name => addEmployeeRow(name));
@@ -353,6 +364,13 @@ async function loadRoster() {
   } catch (err) {
     console.error("Failed to load roster:", err);
   }
+}
+
+function quickAddEmployee(name) {
+  const alreadyAdded = Array.from(document.querySelectorAll('#employee-rows [data-role="emp-name"]'))
+    .some(sel => sel.value === name);
+  if (alreadyAdded) return; // already has a row, don't duplicate
+  addEmployeeRow(name);
 }
 
 document.getElementById("add-roster-btn").addEventListener("click", async () => {
@@ -434,12 +452,20 @@ async function loadRecentEntries() {
   try {
     const res = await fetch("/api/fabshop-portal/daily-entries");
     const data = await res.json();
-    const entries = (data.entries || []).slice(0, 10);
+    const entries = data.entries || [];
     if (entries.length === 0) {
       el.innerHTML = '<div class="empty">No submissions yet.</div>';
       return;
     }
-    el.innerHTML = entries.map(e => `
+    el.innerHTML = entries.map(e => {
+      const notesHtml = (e.notes || []).map(n => `
+        <div style="font-size:12px;padding:6px 0;border-top:1px solid var(--line);">
+          <strong>${n.author}:</strong> ${n.text}
+          <span style="color:var(--ink-soft);"> · ${new Date(n.created_at).toLocaleDateString()}</span>
+        </div>
+      `).join("");
+
+      return `
       <div class="item">
         <div class="item-top">
           <div>
@@ -449,8 +475,39 @@ async function loadRecentEntries() {
           <span class="tag ok">$${(e.estimated_value || 0).toLocaleString()}</span>
         </div>
         ${e.description ? `<p class="summary">${e.description}</p>` : ''}
+        ${e.new_leads ? `<p class="summary" style="color:var(--ink-soft);">New leads: ${e.new_leads}</p>` : ''}
+        ${e.problems ? `<p class="summary" style="color:var(--danger-text);">Problems: ${e.problems}</p>` : ''}
+        <div style="margin-top:10px;">
+          ${notesHtml}
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <input type="text" placeholder="Add a comment…" data-note-input="${e.date}" style="flex:1;">
+            <button class="ghost" type="button" data-note-submit="${e.date}">Add</button>
+          </div>
+        </div>
       </div>
-    `).join("");
+    `;
+    }).join("");
+
+    el.querySelectorAll("[data-note-submit]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const date = btn.getAttribute("data-note-submit");
+        const input = el.querySelector(`[data-note-input="${date}"]`);
+        const text = input.value.trim();
+        if (!text) return;
+        btn.disabled = true;
+        try {
+          await fetch(`/api/fabshop-portal/daily-entries/${date}/notes`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text })
+          });
+          loadRecentEntries();
+        } catch (err) {
+          alert("Could not add comment: " + err.message);
+          btn.disabled = false;
+        }
+      });
+    });
   } catch (err) {
     el.innerHTML = '<div class="empty">Could not load recent submissions.</div>';
   }
@@ -460,7 +517,7 @@ async function loadRecentEntries() {
 let hoursChart = null;
 let valueChart = null;
 let evalData = { daily: [] };
-let currentRange = "4w";
+let currentRange = "all";
 
 function filterByRange(daily, range) {
   const now = new Date();
@@ -474,6 +531,12 @@ function filterByRange(daily, range) {
 function renderEvaluationCharts() {
   const filtered = filterByRange(evalData.daily || [], currentRange);
   const labels = filtered.map(d => d.date);
+
+  document.getElementById("hours-chart-empty").style.display = filtered.length === 0 ? "block" : "none";
+  document.getElementById("value-chart-empty").style.display = filtered.length === 0 ? "block" : "none";
+  document.getElementById("hours-chart").style.display = filtered.length === 0 ? "none" : "block";
+  document.getElementById("value-chart").style.display = filtered.length === 0 ? "none" : "block";
+  if (filtered.length === 0) return;
 
   const hoursCtx = document.getElementById("hours-chart").getContext("2d");
   if (hoursChart) hoursChart.destroy();

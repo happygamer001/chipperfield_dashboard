@@ -1137,6 +1137,13 @@ def fabshop_portal_submit_daily_tab():
             totals["non_billable"] += float(emp.get("non_billable") or 0)
             totals["mgt_design"] += float(emp.get("mgt_design") or 0)
 
+        dbx = get_dropbox_client()
+        entries = _read_json_from_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, [])
+
+        # Preserve any existing comments/notes on this date if resubmitting
+        existing = next((e for e in entries if e.get("date") == date), None)
+        preserved_notes = existing.get("notes", []) if existing else []
+
         entry = {
             "date": date,
             "employees": employees,
@@ -1147,10 +1154,9 @@ def fabshop_portal_submit_daily_tab():
             "estimated_value": float(body.get("estimated_value") or 0),
             "completed_by": body.get("completed_by") or "",
             "submitted_at": datetime.datetime.utcnow().isoformat() + "Z",
+            "notes": preserved_notes,
         }
 
-        dbx = get_dropbox_client()
-        entries = _read_json_from_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, [])
         entries = [e for e in entries if e.get("date") != date]  # replace same-day resubmission
         entries.append(entry)
         entries.sort(key=lambda e: e["date"])
@@ -1168,6 +1174,33 @@ def fabshop_portal_daily_entries():
         entries = _read_json_from_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, [])
         entries.sort(key=lambda e: e["date"], reverse=True)
         return jsonify({"count": len(entries), "entries": entries})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-portal/daily-entries/<date>/notes", methods=["POST"])
+def fabshop_portal_add_daily_entry_note(date):
+    """Comment-style updates on a past Daily Tab entry — lets Jerron (or
+    anyone) add context to a historical submission without editing it."""
+    try:
+        body = request.get_json(force=True)
+        text = (body.get("text") or "").strip()
+        if not text:
+            return jsonify({"status": "error", "message": "Note text is required"}), 400
+
+        dbx = get_dropbox_client()
+        entries = _read_json_from_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, [])
+        target = next((e for e in entries if e.get("date") == date), None)
+        if not target:
+            return jsonify({"status": "error", "message": "No entry found for that date"}), 404
+
+        target.setdefault("notes", []).append({
+            "author": body.get("author") or "Fab Shop",
+            "text": text,
+            "created_at": datetime.datetime.utcnow().isoformat() + "Z",
+        })
+        _write_json_to_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, entries)
+        return jsonify({"status": "ok", "entry": target})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
