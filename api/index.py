@@ -101,6 +101,9 @@ DAILY_LOG_NOTES_PATH = os.environ.get(
 DAILY_LOG_TITLE_OVERRIDES_PATH = os.environ.get(
     "DAILY_LOG_TITLE_OVERRIDES_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/daily_log_title_overrides.json"
 )
+FIELD_ID_ROLE_MAP_PATH = os.environ.get(
+    "FIELD_ID_ROLE_MAP_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/typeform_field_role_map.json"
+)
 
 NOTION_BATCH_REPORTS_DATASOURCE_ID = os.environ.get(
     "NOTION_BATCH_REPORTS_DATASOURCE_ID", "ec5dda0d-7c82-4c4a-a613-fa28c7702c9c"
@@ -312,9 +315,10 @@ def _parse_daily_job_log_csv_row(row):
     wo_num = (row.get("Workorder #") or "").strip()
     wo_name = (row.get("Workorder Name") or "").strip()
 
-    job_wo = _extract_job_number(job_field) or _clean_or_none(job_field)
-    if not job_wo:
-        job_wo = _extract_job_number(wo_num) or _clean_or_none(wo_num)
+    job_tags = _extract_job_numbers(job_field)
+    if not job_tags:
+        job_tags = _extract_job_numbers(wo_num)
+    job_wo = ", ".join(job_tags) if job_tags else _clean_or_none(job_field)
     if not job_wo and wo_name:
         job_wo = wo_name
 
@@ -651,6 +655,29 @@ def find_answer(answers, keywords):
     return None
 
 
+def find_answer_with_learning(answers, keywords, role_key, learned_map):
+    """
+    Same as find_answer, but self-healing: Typeform's webhook payload only
+    guarantees a field's 'id', not its 'title' — title is genuinely absent
+    on some submissions. The first time a field is matched by its title
+    text, we remember that field id -> role permanently. On a later
+    submission where title happens to be missing, we can still recognize
+    the same field by its id and classify it correctly.
+    """
+    found = find_answer(answers, keywords)
+    if found:
+        field_id = found.get("field", {}).get("id")
+        if field_id:
+            learned_map[field_id] = role_key
+        return found
+
+    for ans in answers:
+        field_id = ans.get("field", {}).get("id")
+        if field_id and learned_map.get(field_id) == role_key:
+            return ans
+    return None
+
+
 def answer_text(ans):
     if ans is None:
         return None
@@ -703,29 +730,51 @@ def _clean_or_none(text):
     return t if t and t.lower() not in _NO_VALUE_PLACEHOLDERS else ""
 
 
-def _extract_job_number(text):
-    """Pulls a J#### or WO#### pattern out of free text. Falls back to a bare
-    3-5 digit number (e.g. '21750, schilky plates, shop' -> J21750), since
-    that's how some real submissions write it without a letter prefix."""
+def _extract_job_numbers(text):
+    """
+    Pulls ALL Job/Work Order numbers out of free text (not just the first),
+    so a field like '21764, 21761, shop' produces two tags, not one.
+    A 5-digit number starting with '516' is Chipperfield's Work Order
+    numbering convention — tagged WO instead of J.
+    """
     if not text:
-        return None
-    job_match = re.search(r'\bJ\s*(\d{3,5})\b', text, re.IGNORECASE)
-    if job_match:
-        return f"J{job_match.group(1)}"
-    wo_match = re.search(r'\b(WO|S)\s*(\d{3,5})\b', text, re.IGNORECASE)
-    if wo_match:
-        return f"{wo_match.group(1).upper()}{wo_match.group(2)}"
-    bare_match = re.search(r'\b(\d{3,5})\b', text)
-    if bare_match:
-        return f"J{bare_match.group(1)}"
-    return None
+        return []
+    tags = []
+    seen = set()
+
+    for m in re.finditer(r'\bJ\s*(\d{3,5})\b', text, re.IGNORECASE):
+        tag = f"J{m.group(1)}"
+        if tag not in seen:
+            tags.append(tag)
+            seen.add(tag)
+    for m in re.finditer(r'\b(WO|S)\s*(\d{3,5})\b', text, re.IGNORECASE):
+        tag = f"{m.group(1).upper()}{m.group(2)}"
+        if tag not in seen:
+            tags.append(tag)
+            seen.add(tag)
+    for m in re.finditer(r'\b(\d{3,5})\b', text):
+        num = m.group(1)
+        tag = f"WO{num}" if (len(num) == 5 and num.startswith("516")) else f"J{num}"
+        if tag not in seen:
+            tags.append(tag)
+            seen.add(tag)
+
+    return tags
 
 
-def _detect_form_type(answers):
+def _extract_job_number(text):
+    """Backward-compatible single-result version — first tag found, or None."""
+    tags = _extract_job_numbers(text)
+    return tags[0] if tags else None
+
+
+def _detect_form_type(answers, learned_map=None):
     """
     Multiple Typeform forms point at this one webhook now, so the first
     step is figuring out which one just submitted, based on which fields
-    are present. Checked in order from most to least specific.
+    are present. Checked in order from most to least specific. Falls back
+    to the learned field-id map if no title text matched anything (title
+    is genuinely optional in Typeform's webhook payload).
     """
     titles = [(a.get("field", {}).get("title") or "").lower().replace("*", "") for a in answers]
     joined = " | ".join(titles)
@@ -736,6 +785,18 @@ def _detect_form_type(answers):
         return "management_log"
     if "what did your team work on today" in joined:
         return "fab_shop_log"
+
+    if learned_map:
+        field_ids = {a.get("field", {}).get("id") for a in answers if a.get("field", {}).get("id")}
+        for fid in field_ids:
+            role = learned_map.get(fid)
+            if role == "djl_job_number":
+                return "daily_job_log"
+            if role in ("mgmt_duration", "mgmt_next_action"):
+                return "management_log"
+            if role == "fab_work_desc":
+                return "fab_shop_log"
+
     return "unknown"
 
 
@@ -749,8 +810,9 @@ def _collect_photos(answers):
     return photo_bytes_list
 
 
-def _parse_management_log(answers, log_name, log_date):
+def _parse_management_log(answers, log_name, log_date, learned_map=None):
     """The repeating project-slot form (project / did / how long / next action, up to 7x)."""
+    learned_map = learned_map if learned_map is not None else {}
     projects = []
     current_project = None
 
@@ -760,6 +822,16 @@ def _parse_management_log(answers, log_name, log_date):
             continue
 
         kind = _classify_field(field_title)
+        field_id = ans.get("field", {}).get("id")
+        if kind is None and field_id:
+            # Title was missing on this submission — fall back to what
+            # we've learned this exact field means from a past submission.
+            learned_role = learned_map.get(field_id)
+            if learned_role in ("mgmt_duration", "mgmt_next_action", "mgmt_did", "mgmt_project"):
+                kind = learned_role.replace("mgmt_", "")
+        elif kind and field_id:
+            learned_map[field_id] = f"mgmt_{kind}"
+
         text_val = answer_text(ans)
 
         if kind == "project":
@@ -797,22 +869,24 @@ def _parse_management_log(answers, log_name, log_date):
     return job_wo, "\n".join(body_lines), {"projects_parsed": len(projects), "has_next_action": has_next_action}
 
 
-def _parse_daily_job_log(answers, log_name, log_date):
+def _parse_daily_job_log(answers, log_name, log_date, learned_map=None):
     """The real per-job crew log: has an actual Job # field, work order fields, photos, etc."""
-    job_ans = find_answer(answers, ["job number"])
-    wo_num_ans = find_answer(answers, ["workorder #", "work order #"])
-    wo_name_ans = find_answer(answers, ["workorder name"])
-    work_desc_ans = find_answer(answers, ["what did your team work on today"])
-    productivity_ans = find_answer(answers, ["productivity issues"])
-    incident_ans = find_answer(answers, ["incident report", "safety incident"])
-    todo_ans = find_answer(answers, ["to do"])
-    scope_desc_ans = find_answer(answers, ["describe additional work"])
+    learned_map = learned_map if learned_map is not None else {}
+    job_ans = find_answer_with_learning(answers, ["job number"], "djl_job_number", learned_map)
+    wo_num_ans = find_answer_with_learning(answers, ["workorder #", "work order #"], "djl_workorder_num", learned_map)
+    wo_name_ans = find_answer_with_learning(answers, ["workorder name"], "djl_workorder_name", learned_map)
+    work_desc_ans = find_answer_with_learning(answers, ["what did your team work on today"], "djl_work_desc", learned_map)
+    productivity_ans = find_answer_with_learning(answers, ["productivity issues"], "djl_productivity", learned_map)
+    incident_ans = find_answer_with_learning(answers, ["incident report", "safety incident"], "djl_incident", learned_map)
+    todo_ans = find_answer_with_learning(answers, ["to do"], "djl_todo", learned_map)
+    scope_desc_ans = find_answer_with_learning(answers, ["describe additional work"], "djl_additional_work", learned_map)
 
     raw_job = answer_text(job_ans) or ""
-    job_wo = _extract_job_number(raw_job) or _clean_or_none(raw_job)
-    if not job_wo:
+    job_tags = _extract_job_numbers(raw_job)
+    if not job_tags:
         raw_wo = answer_text(wo_num_ans) or ""
-        job_wo = _extract_job_number(raw_wo) or _clean_or_none(raw_wo)
+        job_tags = _extract_job_numbers(raw_wo)
+    job_wo = ", ".join(job_tags) if job_tags else _clean_or_none(raw_job)
     wo_name = _clean_or_none(answer_text(wo_name_ans))
     if not job_wo and wo_name:
         job_wo = wo_name
@@ -837,14 +911,15 @@ def _parse_daily_job_log(answers, log_name, log_date):
     return job_wo, "\n".join(lines), {"has_incident": bool(incident)}
 
 
-def _parse_fab_shop_log(answers, log_name, log_date):
+def _parse_fab_shop_log(answers, log_name, log_date, learned_map=None):
     """Fab Shop's own simple team log — no job number, shop-wide."""
-    work_desc_ans = find_answer(answers, ["what did your team work on today"])
-    materials_ans = find_answer(answers, ["materials used"])
-    productivity_ans = find_answer(answers, ["productivity issues"])
-    incident_ans = find_answer(answers, ["incident report"])
-    start_ans = find_answer(answers, ["start time"])
-    stop_ans = find_answer(answers, ["stop time"])
+    learned_map = learned_map if learned_map is not None else {}
+    work_desc_ans = find_answer_with_learning(answers, ["what did your team work on today"], "fab_work_desc", learned_map)
+    materials_ans = find_answer_with_learning(answers, ["materials used"], "fab_materials", learned_map)
+    productivity_ans = find_answer_with_learning(answers, ["productivity issues"], "fab_productivity", learned_map)
+    incident_ans = find_answer_with_learning(answers, ["incident report"], "fab_incident", learned_map)
+    start_ans = find_answer_with_learning(answers, ["start time"], "fab_start_time", learned_map)
+    stop_ans = find_answer_with_learning(answers, ["stop time"], "fab_stop_time", learned_map)
 
     lines = []
     start_time = _clean_or_none(answer_text(start_ans))
@@ -875,31 +950,36 @@ def process_submission(payload):
     if not answers:
         raise ValueError("Submission had no answers")
 
-    name_ans = find_answer(answers, ["your name", "name"])
-    date_ans = find_answer(answers, ["date"])
+    dbx = get_dropbox_client()
+    learned_map = _read_json_from_dropbox(dbx, FIELD_ID_ROLE_MAP_PATH, {})
+
+    name_ans = find_answer_with_learning(answers, ["your name", "name"], "submitter_name", learned_map)
+    date_ans = find_answer_with_learning(answers, ["date"], "submitted_date", learned_map)
     log_name = _clean_or_none(answer_text(name_ans)) or "Unknown"
     raw_date = answer_text(date_ans) or submitted_at[:10] or ""
     log_date = format_date_for_jacque(raw_date)
 
-    form_type = _detect_form_type(answers)
+    form_type = _detect_form_type(answers, learned_map)
     if form_type == "management_log":
-        job_wo, pdf_text, extra = _parse_management_log(answers, log_name, log_date)
+        job_wo, pdf_text, extra = _parse_management_log(answers, log_name, log_date, learned_map)
     elif form_type == "daily_job_log":
-        job_wo, pdf_text, extra = _parse_daily_job_log(answers, log_name, log_date)
+        job_wo, pdf_text, extra = _parse_daily_job_log(answers, log_name, log_date, learned_map)
     elif form_type == "fab_shop_log":
-        job_wo, pdf_text, extra = _parse_fab_shop_log(answers, log_name, log_date)
+        job_wo, pdf_text, extra = _parse_fab_shop_log(answers, log_name, log_date, learned_map)
     else:
         # Unrecognized form shape — fall back to a generic dump so at least
         # something usable lands in Dropbox instead of silently failing.
         job_wo = ""
         lines = []
         for ans in answers:
-            title = ans.get("field", {}).get("title", "Field")
+            title = ans.get("field", {}).get("title") or "Field (untitled)"
             val = answer_text(ans)
             if val:
                 lines.append(f"{title}: {val}")
         pdf_text = "\n".join(lines)
         extra = {"form_type": "unrecognized"}
+
+    _write_json_to_dropbox(dbx, FIELD_ID_ROLE_MAP_PATH, learned_map)
 
     photo_bytes_list = _collect_photos(answers)
 
@@ -908,7 +988,6 @@ def process_submission(payload):
         pdf_title_parts.append(job_wo)
     pdf_title = " | ".join(pdf_title_parts)
 
-    dbx = get_dropbox_client()
     summary = upload_pdf_and_photos(
         dbx, log_date, log_name, job_wo, pdf_text, pdf_title, photo_bytes_list
     )
