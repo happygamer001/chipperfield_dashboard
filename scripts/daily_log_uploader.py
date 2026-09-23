@@ -320,6 +320,17 @@ def run_gmail_djl_uploader():
                         print(f"✅ Uploaded PDF Log: {dest_pdf_path}")
                         existing_dropbox_files.add(pdf_filename)
                         summary["pdfs_uploaded"] += 1
+
+                        # Sidecar text file (same content, .txt extension) —
+                        # this is what lets the dashboard show the actual
+                        # description without anyone opening the PDF.
+                        try:
+                            txt_filename = pdf_filename[:-4] + ".txt"
+                            dest_txt_path = f"{target_folder_path}/{txt_filename}"
+                            dbx.files_upload(clean_text.encode("utf-8"), dest_txt_path, mode=dropbox.files.WriteMode.overwrite)
+                            existing_dropbox_files.add(txt_filename)
+                        except Exception as txt_err:
+                            print(f"⚠️ Sidecar text upload error (non-critical): {txt_err}")
                     except Exception as pdf_err:
                         print(f"⚠️ PDF upload error: {pdf_err}")
                 else:
