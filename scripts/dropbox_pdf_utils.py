@@ -117,9 +117,13 @@ def build_filenames(log_date_yymmdd, log_name, job_wo):
     pdf_filename = " | ".join(parts) + ".pdf"
 
     def photo_filename(idx, ext=".jpeg"):
-        photo_parts = [log_date_yymmdd, log_name]
+        # Job/WO comes BEFORE name for photos (opposite of the report
+        # filename) — lets Calvin scan filenames to see which job a photo
+        # belongs to at a glance without opening it.
+        photo_parts = [log_date_yymmdd]
         if job_wo:
             photo_parts.append(job_wo)
+        photo_parts.append(log_name)
         photo_parts.append(f"Image{idx}")
         return " | ".join(photo_parts) + ext
 
@@ -177,10 +181,16 @@ def upload_pdf_and_photos(dbx, log_date_yymmdd, log_name, job_wo, pdf_text_conte
 
 DAYS_TO_SHOW_DEFAULT = 5
 
-# Matches "YYMMDD | Name | JobOrWO[ | ImageN].ext"
-_FILENAME_PATTERN = re.compile(
-    r'^(?P<date>\d{6}|No_Date)\s*\|\s*(?P<name>[^|]+?)\s*(?:\|\s*(?P<jobwo>[^|]+?))?(?:\s*\|\s*Image\d+)?\.(?P<ext>\w+)$'
-)
+# Filenames look like "YYMMDD | Name | JobOrWO.ext" for reports, and
+# "YYMMDD | JobOrWO | Name | ImageN.ext" for photos (job/WO comes first
+# for photos specifically, per the naming convention). This is parsed by
+# segment position + an Image-suffix check, not one fragile do-everything
+# regex — the old regex misread a photo's "| Image1" suffix as the
+# job/WO field whenever job_wo was empty, splintering one person's
+# report and photos into several bogus separate entries.
+_IMAGE_SUFFIX_PATTERN = re.compile(r'^Image(\d+)$', re.IGNORECASE)
+_DATE_SEGMENT_PATTERN = re.compile(r'^(\d{6}|No_Date)$')
+_VALID_EXTENSIONS = {"pdf", "txt", "jpeg", "jpg", "png", "heic", "webp"}
 
 
 def _yymmdd_to_date(yymmdd):
@@ -192,6 +202,50 @@ def _yymmdd_to_date(yymmdd):
         return None
 
 
+def _parse_dropbox_filename(filename):
+    """Returns None if this isn't one of our files. Otherwise a dict with
+    date/segments/is_image/image_index/ext. 'segments' holds the 1-2
+    plain-text parts (name and/or job/WO) with NO assumption about which
+    order they're in — callers decide that based on file type, since PDFs
+    and photos use different conventions and old/new photo files may
+    coexist during the transition."""
+    if "." not in filename:
+        return None
+    stem, _, ext = filename.rpartition(".")
+    ext = ext.lower()
+    if ext not in _VALID_EXTENSIONS:
+        return None
+
+    segments = [s.strip() for s in stem.split("|")]
+    if len(segments) < 2:
+        return None
+
+    date_seg = segments[0]
+    if not _DATE_SEGMENT_PATTERN.match(date_seg):
+        return None
+
+    rest = segments[1:]
+    is_image = False
+    image_index = None
+    if rest:
+        m = _IMAGE_SUFFIX_PATTERN.match(rest[-1])
+        if m:
+            is_image = True
+            image_index = int(m.group(1))
+            rest = rest[:-1]
+
+    if not rest or len(rest) > 2:
+        return None  # malformed — not one of our filenames
+
+    return {
+        "date": date_seg,
+        "segments": rest,
+        "is_image": is_image,
+        "image_index": image_index,
+        "ext": ext,
+    }
+
+
 def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
     dbx = get_dropbox_client()
 
@@ -200,6 +254,7 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
     years_to_check = sorted({window_start.year, today.year})
 
     entries_by_key = {}
+    photo_files = []  # collected in a second pass, once all reports are known
 
     for year in years_to_check:
         folder_path = f"{DROPBOX_BASE_FOLDER}/{year}"
@@ -213,19 +268,27 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
             continue
 
         for entry in all_entries:
-            match = _FILENAME_PATTERN.match(entry.name)
-            if not match:
+            parsed = _parse_dropbox_filename(entry.name)
+            if not parsed:
                 continue
 
-            log_date = _yymmdd_to_date(match.group("date"))
+            log_date = _yymmdd_to_date(parsed["date"])
             if not log_date or log_date < window_start or log_date > today:
                 continue
 
-            name = match.group("name").strip()
-            job_wo = (match.group("jobwo") or "").strip()
-            ext = match.group("ext").lower()
+            if parsed["is_image"]:
+                # Held for a second pass — needs every report's key known
+                # first so it can be matched regardless of segment order.
+                photo_files.append((entry, parsed, log_date))
+                continue
 
-            key = (match.group("date"), name, job_wo)
+            # PDF/TXT: this convention has always been "name, then job/WO"
+            segs = parsed["segments"]
+            name = segs[0]
+            job_wo = segs[1] if len(segs) > 1 else ""
+            ext = parsed["ext"]
+
+            key = (parsed["date"], name, job_wo)
             if key not in entries_by_key:
                 entries_by_key[key] = {
                     "date": log_date.isoformat(),
@@ -234,6 +297,7 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
                     "dropbox_pdf_path": None,
                     "dropbox_txt_path": None,
                     "photo_count": 0,
+                    "photo_paths": [],
                     "uploaded_at": None,
                 }
 
@@ -246,16 +310,57 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
                     entries_by_key[key]["uploaded_at"] = entry.client_modified.isoformat() + "Z"
             elif ext == "txt":
                 entries_by_key[key]["dropbox_txt_path"] = entry.path_display
-            elif ext in ("jpeg", "jpg", "png", "heic", "webp"):
-                entries_by_key[key]["photo_count"] += 1
+
+    # Second pass: match each photo to its report by comparing segments as
+    # an unordered set — correctly handles both the old photo convention
+    # (Name, then Job/WO) and the new one (Job/WO, then Name) without
+    # needing to know which is which, and without ever misreading the
+    # "ImageN" suffix as a job/WO value the way the old single regex did.
+    for entry, parsed, log_date in photo_files:
+        segs = parsed["segments"]
+        seg_set = frozenset(segs)
+        date_str = parsed["date"]
+
+        matched_key = None
+        for key in entries_by_key:
+            key_date, key_name, key_job = key
+            if key_date != date_str:
+                continue
+            key_set = frozenset(s for s in (key_name, key_job) if s)
+            if key_set == seg_set:
+                matched_key = key
+                break
+
+        if matched_key is None:
+            # No matching report (yet) — file it as its own entry rather
+            # than dropping the photo. Best-effort naming since we can't
+            # be sure which segment is the name vs the job/WO here.
+            name = segs[0]
+            job_wo = segs[1] if len(segs) > 1 else ""
+            matched_key = (date_str, name, job_wo)
+            if matched_key not in entries_by_key:
+                entries_by_key[matched_key] = {
+                    "date": log_date.isoformat(),
+                    "name": name,
+                    "job_or_wo": job_wo or None,
+                    "dropbox_pdf_path": None,
+                    "dropbox_txt_path": None,
+                    "photo_count": 0,
+                    "photo_paths": [],
+                    "uploaded_at": None,
+                }
+
+        entries_by_key[matched_key]["photo_count"] += 1
+        entries_by_key[matched_key]["photo_paths"].append(entry.path_display)
 
     results = list(entries_by_key.values())
     results.sort(key=lambda r: r["date"], reverse=True)
 
-    # Get an openable link for each PDF (valid ~4 hours — regenerated fresh
-    # every time this endpoint is called, so it's live whenever the page loads).
-    # Also pull the sidecar text file's content, if one exists, so the
-    # dashboard can show "work completed" without anyone opening the PDF.
+    # Get an openable link for each PDF and each photo (valid ~4 hours —
+    # regenerated fresh every time this endpoint is called, so it's live
+    # whenever the page loads). Also pull the sidecar text file's content,
+    # if one exists, so the dashboard can show "work completed" without
+    # anyone opening the PDF.
     for r in results:
         if r["dropbox_pdf_path"]:
             try:
@@ -274,5 +379,15 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
                 r["summary"] = None
         else:
             r["summary"] = None  # older entries uploaded before this existed
+
+        photo_urls = []
+        for path in r.get("photo_paths", []):
+            try:
+                link = dbx.files_get_temporary_link(path)
+                photo_urls.append(link.link)
+            except Exception:
+                pass
+        r["photo_urls"] = photo_urls
+        del r["photo_paths"]  # internal only — URLs are what the frontend needs
 
     return results
