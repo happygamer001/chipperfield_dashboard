@@ -98,6 +98,9 @@ FABSHOP_LEADS_PATH = os.environ.get(
 DAILY_LOG_NOTES_PATH = os.environ.get(
     "DAILY_LOG_NOTES_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/daily_log_notes.json"
 )
+DAILY_LOG_TITLE_OVERRIDES_PATH = os.environ.get(
+    "DAILY_LOG_TITLE_OVERRIDES_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/daily_log_title_overrides.json"
+)
 
 NOTION_BATCH_REPORTS_DATASOURCE_ID = os.environ.get(
     "NOTION_BATCH_REPORTS_DATASOURCE_ID", "ec5dda0d-7c82-4c4a-a613-fa28c7702c9c"
@@ -235,7 +238,17 @@ def recent_logs():
 
         dbx = get_dropbox_client()
         all_notes = _read_json_from_dropbox(dbx, DAILY_LOG_NOTES_PATH, {})
+        title_overrides = _read_json_from_dropbox(dbx, DAILY_LOG_TITLE_OVERRIDES_PATH, {})
+
         for log in logs:
+            pdf_path = log.get("dropbox_pdf_path")
+            if pdf_path and pdf_path in title_overrides:
+                override = title_overrides[pdf_path]
+                if override.get("name"):
+                    log["name"] = override["name"]
+                if override.get("job_or_wo") is not None:
+                    log["job_or_wo"] = override["job_or_wo"]
+                log["title_corrected"] = True
             log["manual_notes"] = _notes_for_log(all_notes, log)
 
         return jsonify({"days": days, "count": len(logs), "logs": logs})
@@ -269,6 +282,16 @@ def add_daily_log_note():
         return jsonify({"status": "ok", "notes": all_notes[key]})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def _parse_submit_timestamp(val):
+    """Typeform CSV exports 'Submit Date (UTC)' as 'YYYY-MM-DD HH:MM:SS'."""
+    if not val:
+        return None
+    try:
+        return datetime.datetime.strptime(val.strip(), "%Y-%m-%d %H:%M:%S").isoformat()
+    except ValueError:
+        return None
 
 
 def _parse_daily_job_log_csv_row(row):
@@ -317,6 +340,7 @@ def _parse_daily_job_log_csv_row(row):
         "date": date_iso,
         "job_or_wo": job_wo,
         "text": "\n".join(lines),
+        "submitted_at": _parse_submit_timestamp(row.get("Submit Date (UTC)")),
     }
 
 
@@ -332,12 +356,15 @@ def _parse_management_log_csv(content):
 
     name_idx = None
     date_idx = None
+    submit_idx = None
     slot_cols = []  # (index, kind) for every classified project-slot column
 
     for i, h in enumerate(header):
         hl = h.lower().strip()
         if hl.startswith("your name"):
             name_idx = i
+        elif "submit date" in hl:
+            submit_idx = i
         elif "date" in hl and name_idx is not None and date_idx is None and i <= name_idx + 2:
             date_idx = i
         else:
@@ -355,6 +382,7 @@ def _parse_management_log_csv(content):
             date_iso = datetime.date.fromisoformat(raw_date).isoformat() if raw_date else None
         except ValueError:
             date_iso = None
+        submitted_at = _parse_submit_timestamp(row[submit_idx]) if submit_idx is not None and submit_idx < len(row) else None
         if not name or not date_iso:
             continue
 
@@ -403,6 +431,7 @@ def _parse_management_log_csv(content):
             "date": date_iso,
             "job_or_wo": job_wo,
             "text": "\n".join(lines),
+            "submitted_at": submitted_at,
         })
 
     return entries
@@ -485,6 +514,113 @@ def bulk_import_daily_logs():
             "imported": imported,
             "skipped_no_data": skipped_no_data,
             "skipped_duplicate": skipped_duplicate,
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/bulk-fix-titles", methods=["POST"])
+@require_role("admin")
+def bulk_fix_titles():
+    """
+    Corrects the TITLE (name + job/WO) shown on existing entries whose name
+    came through as 'Unknown' — unlike the description-text import, this
+    changes what's actually displayed at the top of the card. Matching is
+    done by closest submit-timestamp on the same date, since a broken
+    entry's own name/job fields can't be used to find its real CSV row.
+    Best-effort: please review the results rather than trusting blindly.
+    """
+    if "file" not in request.files:
+        return jsonify({"status": "error", "message": "No file included in upload"}), 400
+
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"status": "error", "message": "No file selected"}), 400
+
+    try:
+        content = file.read().decode("utf-8-sig")
+        header_row = next(csv.reader(io.StringIO(content)))
+        csv_type = _detect_csv_type(header_row)
+
+        if csv_type == "daily_job_log":
+            reader = csv.DictReader(io.StringIO(content))
+            parsed_rows = [_parse_daily_job_log_csv_row(row) for row in reader]
+        elif csv_type == "management_log":
+            parsed_rows = _parse_management_log_csv(content)
+        else:
+            return jsonify({
+                "status": "error",
+                "message": "Couldn't recognize this CSV's form type."
+            }), 400
+
+        parsed_rows = [r for r in parsed_rows if r.get("submitted_at") and r.get("date")]
+
+        # Wide window so this can catch older broken entries too, not just
+        # whatever the dashboard's normal 5-day view shows.
+        logs = get_recent_daily_logs(days=60)
+        broken = [
+            l for l in logs
+            if (l.get("name") or "").strip().lower() == "unknown"
+            and l.get("uploaded_at") and l.get("dropbox_pdf_path")
+        ]
+
+        dbx = get_dropbox_client()
+        overrides = _read_json_from_dropbox(dbx, DAILY_LOG_TITLE_OVERRIDES_PATH, {})
+
+        from collections import defaultdict
+        broken_by_date = defaultdict(list)
+        for b in broken:
+            broken_by_date[b["date"]].append(b)
+        csv_by_date = defaultdict(list)
+        for i, r in enumerate(parsed_rows):
+            csv_by_date[r["date"]].append((i, r))
+
+        matched = 0
+        unmatched = 0
+        used_csv_rows = set()
+        match_details = []
+
+        for date, broken_entries in broken_by_date.items():
+            candidates = csv_by_date.get(date, [])
+            for b in broken_entries:
+                try:
+                    b_time = datetime.datetime.fromisoformat(b["uploaded_at"].replace("Z", ""))
+                except ValueError:
+                    unmatched += 1
+                    continue
+
+                best, best_diff = None, None
+                for i, r in candidates:
+                    if i in used_csv_rows:
+                        continue
+                    try:
+                        r_time = datetime.datetime.fromisoformat(r["submitted_at"])
+                    except ValueError:
+                        continue
+                    diff = abs((b_time - r_time).total_seconds())
+                    if best_diff is None or diff < best_diff:
+                        best_diff, best = diff, (i, r)
+
+                if best:
+                    i, r = best
+                    used_csv_rows.add(i)
+                    overrides[b["dropbox_pdf_path"]] = {"name": r["name"], "job_or_wo": r["job_or_wo"]}
+                    match_details.append({
+                        "date": date, "corrected_name": r["name"], "corrected_job_or_wo": r["job_or_wo"],
+                        "time_diff_seconds": round(best_diff),
+                    })
+                    matched += 1
+                else:
+                    unmatched += 1
+
+        _write_json_to_dropbox(dbx, DAILY_LOG_TITLE_OVERRIDES_PATH, overrides)
+        return jsonify({
+            "status": "ok",
+            "csv_type": csv_type,
+            "total_broken_found": len(broken),
+            "matched": matched,
+            "unmatched": unmatched,
+            "match_details": match_details,
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

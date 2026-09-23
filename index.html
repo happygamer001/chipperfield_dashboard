@@ -268,6 +268,16 @@
   </div>
 
   <div class="queue-header">
+    <h2>Fix "Unknown" titles from CSV</h2>
+    <span id="title-fix-status">Matches entries by closest submit time — review results before trusting</span>
+  </div>
+  <div class="filters" style="margin-bottom:12px;align-items:center;">
+    <input type="file" id="title-fix-file-input" accept=".csv" style="flex:1;font-size:13px;">
+    <button class="primary" id="title-fix-btn" style="flex:0 0 auto;">Fix Titles</button>
+  </div>
+  <div id="title-fix-results" style="margin-bottom:20px;"></div>
+
+  <div class="queue-header">
     <h2>Review queue</h2>
     <span id="queue-count">0 items</span>
   </div>
@@ -963,6 +973,49 @@ document.getElementById("csv-import-btn").addEventListener("click", async () => 
   } finally {
     btn.disabled = false;
     btn.textContent = "Import CSV";
+  }
+});
+
+document.getElementById("title-fix-btn").addEventListener("click", async () => {
+  const fileInput = document.getElementById("title-fix-file-input");
+  const btn = document.getElementById("title-fix-btn");
+  const statusEl = document.getElementById("title-fix-status");
+  const resultsEl = document.getElementById("title-fix-results");
+  if (!fileInput.files.length) {
+    alert("Choose a CSV file first.");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", fileInput.files[0]);
+
+  btn.disabled = true;
+  btn.textContent = "Matching…";
+  resultsEl.innerHTML = "";
+  try {
+    const res = await fetch("/api/bulk-fix-titles", { method: "POST", body: formData });
+    const data = await res.json();
+    if (data.status !== "ok") throw new Error(data.message || "Fix failed");
+
+    statusEl.textContent = `Found ${data.total_broken_found} "Unknown" entries · matched ${data.matched} · ${data.unmatched} left unmatched`;
+
+    if (data.match_details.length > 0) {
+      resultsEl.innerHTML = '<p class="field-label" style="margin:10px 0 6px;">Matches made (review before trusting — larger time gaps are less certain):</p>' +
+        data.match_details.map(m => `
+          <div style="font-size:12px;padding:6px 0;border-bottom:1px solid var(--line);">
+            ${m.date} → <strong>${m.corrected_name}</strong> ${m.corrected_job_or_wo ? '· ' + m.corrected_job_or_wo : ''}
+            <span style="color:var(--ink-soft);">(matched within ${Math.round(m.time_diff_seconds / 60)} min)</span>
+          </div>
+        `).join("");
+    }
+
+    fileInput.value = "";
+    loadDailyLogsFromDropbox();
+  } catch (err) {
+    alert("Fix failed: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Fix Titles";
   }
 });
 

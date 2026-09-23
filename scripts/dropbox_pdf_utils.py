@@ -234,10 +234,16 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
                     "dropbox_pdf_path": None,
                     "dropbox_txt_path": None,
                     "photo_count": 0,
+                    "uploaded_at": None,
                 }
 
             if ext == "pdf":
                 entries_by_key[key]["dropbox_pdf_path"] = entry.path_display
+                # Dropbox's own upload timestamp for this file — used to
+                # match "Unknown"-named entries to the right CSV row by
+                # closest submit time when a title correction is imported.
+                if getattr(entry, "client_modified", None):
+                    entries_by_key[key]["uploaded_at"] = entry.client_modified.isoformat() + "Z"
             elif ext == "txt":
                 entries_by_key[key]["dropbox_txt_path"] = entry.path_display
             elif ext in ("jpeg", "jpg", "png", "heic", "webp"):
