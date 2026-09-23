@@ -320,14 +320,112 @@ def _parse_daily_job_log_csv_row(row):
     }
 
 
+def _parse_management_log_csv(content):
+    """
+    Parses the Management Log CSV export positionally rather than by column
+    name — several columns (e.g. every 'How long did that take?') repeat
+    with the exact same header text, which would silently lose data under
+    a name-keyed dict. Also matches the real typo 'Next Projet:' on one slot.
+    """
+    reader = csv.reader(io.StringIO(content))
+    header = next(reader)
+
+    name_idx = None
+    date_idx = None
+    slot_cols = []  # (index, kind) for every classified project-slot column
+
+    for i, h in enumerate(header):
+        hl = h.lower().strip()
+        if hl.startswith("your name"):
+            name_idx = i
+        elif "date" in hl and name_idx is not None and date_idx is None and i <= name_idx + 2:
+            date_idx = i
+        else:
+            kind = _classify_field(h)
+            if kind:
+                slot_cols.append((i, kind))
+
+    entries = []
+    for row in reader:
+        if not row or (name_idx is not None and name_idx >= len(row)):
+            continue
+        name = (row[name_idx] or "").strip() if name_idx is not None else ""
+        raw_date = (row[date_idx] or "")[:10] if date_idx is not None and date_idx < len(row) else ""
+        try:
+            date_iso = datetime.date.fromisoformat(raw_date).isoformat() if raw_date else None
+        except ValueError:
+            date_iso = None
+        if not name or not date_iso:
+            continue
+
+        projects = []
+        current = None
+        for idx, kind in slot_cols:
+            if idx >= len(row):
+                continue
+            val = (row[idx] or "").strip()
+            if kind == "project":
+                if not val:
+                    current = None
+                    continue
+                current = {"project": val, "did": "", "duration": "", "next_action": ""}
+                projects.append(current)
+            elif kind == "did" and current is not None:
+                current["did"] = val
+            elif kind == "duration" and current is not None:
+                current["duration"] = val
+            elif kind == "next_action" and current is not None:
+                current["next_action"] = val
+            # "continuation" (the yes/no "any more projects?") is skipped
+
+        job_wo = None
+        for p in projects:
+            job_wo = _extract_job_number(p["project"])
+            if job_wo:
+                break
+        if not job_wo:
+            job_wo = "Daily Management Log"
+
+        lines = []
+        for p in projects:
+            if not (p["project"] or p["did"]):
+                continue
+            line = f"{p['project'] or 'Project'}: {p['did']}"
+            if p["duration"]:
+                line += f" ({p['duration']})"
+            next_clean = _clean_or_none(p["next_action"])
+            if next_clean:
+                line += f" — Next: {next_clean}"
+            lines.append(line)
+
+        entries.append({
+            "name": name,
+            "date": date_iso,
+            "job_or_wo": job_wo,
+            "text": "\n".join(lines),
+        })
+
+    return entries
+
+
+def _detect_csv_type(header_row):
+    joined = " | ".join(h.lower().replace("*", "") for h in header_row)
+    if "job number" in joined:
+        return "daily_job_log"
+    if "how long did that take" in joined and "next action" in joined:
+        return "management_log"
+    return "unknown"
+
+
 @app.route("/api/bulk-import-daily-logs", methods=["POST"])
 @require_role("admin")
 def bulk_import_daily_logs():
     """
-    Upload a Typeform CSV export of the Daily Job Log form to backfill
-    description text for existing entries — stored the same way as a
-    manual note, tagged 'CSV Import' so it's clear where it came from.
-    Safe to re-run: skips rows whose exact text was already imported.
+    Upload a Typeform CSV export (Daily Job Log or Management Log — the
+    type is auto-detected from the header row) to backfill description
+    text on existing entries. Stored the same way as a manual note, tagged
+    'CSV Import'. Safe to re-run: skips rows whose exact text was already
+    imported.
     """
     if "file" not in request.files:
         return jsonify({"status": "error", "message": "No file included in upload"}), 400
@@ -338,7 +436,21 @@ def bulk_import_daily_logs():
 
     try:
         content = file.read().decode("utf-8-sig")
-        reader = csv.DictReader(io.StringIO(content))
+
+        # Peek the header to figure out which form this export is from
+        header_row = next(csv.reader(io.StringIO(content)))
+        csv_type = _detect_csv_type(header_row)
+
+        if csv_type == "daily_job_log":
+            reader = csv.DictReader(io.StringIO(content))
+            parsed_rows = [_parse_daily_job_log_csv_row(row) for row in reader]
+        elif csv_type == "management_log":
+            parsed_rows = _parse_management_log_csv(content)
+        else:
+            return jsonify({
+                "status": "error",
+                "message": "Couldn't recognize this CSV's form type (no Job Number field, and no repeating project-slot pattern found). Let Claude know what form this is from so support for it can be added."
+            }), 400
 
         dbx = get_dropbox_client()
         all_notes = _read_json_from_dropbox(dbx, DAILY_LOG_NOTES_PATH, {})
@@ -347,8 +459,7 @@ def bulk_import_daily_logs():
         skipped_no_data = 0
         skipped_duplicate = 0
 
-        for row in reader:
-            parsed = _parse_daily_job_log_csv_row(row)
+        for parsed in parsed_rows:
             if not parsed["name"] or not parsed["date"] or not parsed["text"]:
                 skipped_no_data += 1
                 continue
@@ -370,6 +481,7 @@ def bulk_import_daily_logs():
         _write_json_to_dropbox(dbx, DAILY_LOG_NOTES_PATH, all_notes)
         return jsonify({
             "status": "ok",
+            "csv_type": csv_type,
             "imported": imported,
             "skipped_no_data": skipped_no_data,
             "skipped_duplicate": skipped_duplicate,
@@ -429,7 +541,8 @@ def _classify_field(field_title):
     was done, how long, next action, then a yes/no "any more projects?"
     check. The exact wording drifts slightly slot to slot (and Typeform
     embeds a {{field:UUID}} reference in some titles), so this matches on
-    the stable keyword rather than the exact title.
+    the stable keyword rather than the exact title. Also handles a real
+    typo in the live form — "Next Projet:" (missing the 'c') on one slot.
     """
     t = field_title.lower()
     if "how long" in t:
@@ -440,7 +553,7 @@ def _classify_field(field_title):
         return "did"
     if "any more" in t or "any other" in t:
         return "continuation"
-    if "project" in t:
+    if "project" in t or "projet" in t:
         return "project"
     return None
 
