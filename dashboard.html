@@ -745,40 +745,8 @@ async function loadDailyReports() {
           ${r.pdfUrl ? `<p style="margin:6px 0 0;"><a href="${r.pdfUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View PDF ↗</a></p>` : ''}
           ${r.notionUrl ? `<p style="margin:6px 0 0;"><a href="${r.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
           ${r.manualNotes.map(n => `<div style="font-size:12px;padding:6px 0;border-top:1px solid var(--line);"><strong>${n.author}:</strong> ${n.text}</div>`).join("")}
-          ${r.noteKey ? `
-            <div style="display:flex;gap:6px;margin-top:8px;">
-              <input type="text" placeholder="Add a note…" class="daily-log-note-input" data-note-idx="${el.id}-${i}">
-              <button class="ghost" type="button" data-note-submit-idx="${el.id}-${i}" data-note-date="${r.noteKey.date}" data-note-name="${r.noteKey.name}" data-note-job="${r.noteKey.job_or_wo || ''}">Add</button>
-            </div>
-          ` : ''}
         </div>
       `).join("");
-
-      el.querySelectorAll("[data-note-submit-idx]").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          const idx = btn.getAttribute("data-note-submit-idx");
-          const input = el.querySelector(`[data-note-idx="${idx}"]`);
-          const text = input.value.trim();
-          if (!text) return;
-          btn.disabled = true;
-          try {
-            await fetch("/api/daily-log-notes", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                date: btn.getAttribute("data-note-date"),
-                name: btn.getAttribute("data-note-name"),
-                job_or_wo: btn.getAttribute("data-note-job") || null,
-                text
-              })
-            });
-            loadDailyReports();
-          } catch (err) {
-            alert("Could not add note: " + err.message);
-            btn.disabled = false;
-          }
-        });
-      });
     };
 
     renderGroup(crewEl, crew, "No crew job logs in the last 5 days.");
