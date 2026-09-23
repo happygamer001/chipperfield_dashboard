@@ -7,7 +7,7 @@
   "crons": [
     {
       "path": "/api/upload-daily-logs",
-      "schedule": "0 12 * * *"
+      "schedule": "0 * * * *"
     }
   ]
 }

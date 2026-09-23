@@ -702,6 +702,7 @@ async function loadDailyReports() {
         tagClass: "ok",
         tagText: isMgmtLog ? "Management log" : "Job log",
         pdfUrl: l.dropbox_view_url || null,
+        photoUrls: l.photo_urls || [],
         notionUrl: null,
         manualNotes: l.manual_notes || [],
         noteKey: { date: l.date, name: l.name, job_or_wo: l.job_or_wo || null }
@@ -719,6 +720,7 @@ async function loadDailyReports() {
           tagClass: k.has_next_action ? "warn" : "ok",
           tagText: k.has_next_action ? "Follow-up needed" : "Management log",
           pdfUrl: null,
+          photoUrls: [],
           notionUrl: k.notionUrl,
           manualNotes: [],
           noteKey: null // Kevin's entries come from Notion, not Dropbox — no manual-note key for these
@@ -749,12 +751,35 @@ async function loadDailyReports() {
             </div>
             <span class="tag ${r.tagClass}">${r.tagText}</span>
           </div>
-          ${r.summary ? `<p class="summary">${snippet(r.summary)}</p>` : `<p class="summary" style="color:var(--ink-soft);font-style:italic;">No details captured for this entry.</p>`}
+          ${r.summary
+            ? `<p class="summary" id="summary-${el.id}-${i}">${snippet(r.summary)}</p>
+               <a href="#" class="toggle-details" data-toggle-idx="${i}" data-expanded="false" style="font-size:12px;color:var(--green-dark);">View full report</a>`
+            : `<p class="summary" style="color:var(--ink-soft);font-style:italic;">No details captured for this entry.</p>`}
+          ${r.photoUrls.length > 0 ? `<p style="margin:8px 0 0;font-size:12px;">${r.photoUrls.map((url, pi) => `<a href="${url}" target="_blank" rel="noopener" style="color:var(--green-dark);margin-right:10px;">Photo ${pi + 1} ↗</a>`).join('')}</p>` : ''}
           ${r.pdfUrl ? `<p style="margin:6px 0 0;"><a href="${r.pdfUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View PDF ↗</a></p>` : ''}
           ${r.notionUrl ? `<p style="margin:6px 0 0;"><a href="${r.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
           ${r.manualNotes.map(n => `<div style="font-size:12px;padding:6px 0;border-top:1px solid var(--line);"><strong>${n.author}:</strong> ${n.text}</div>`).join("")}
         </div>
       `).join("");
+
+      el.querySelectorAll("[data-toggle-idx]").forEach(link => {
+        link.addEventListener("click", (e) => {
+          e.preventDefault();
+          const idx = parseInt(link.getAttribute("data-toggle-idx"), 10);
+          const r = list[idx];
+          const p = document.getElementById(`summary-${el.id}-${idx}`);
+          const expanded = link.getAttribute("data-expanded") === "true";
+          if (expanded) {
+            p.textContent = snippet(r.summary);
+            link.textContent = "View full report";
+            link.setAttribute("data-expanded", "false");
+          } else {
+            p.textContent = r.summary;
+            link.textContent = "Show less";
+            link.setAttribute("data-expanded", "true");
+          }
+        });
+      });
     };
 
     renderGroup(crewEl, crew, "No crew job logs in the last 5 days.");
