@@ -13,6 +13,88 @@ in through, instead of the email path silently being lower quality.
 
 import re
 
+# Every field label we've seen across the three known forms (Daily Job
+# Log, Management Log, Fab Shop Log) plus real historical PDFs — used so a
+# line can be recognized as a field marker even with no bullet character
+# at all, or an unfamiliar one. Real files are inconsistent: some lines
+# use '*', some use '•', some use nothing.
+KNOWN_FIELD_LABELS = [
+    "Your Name", "Name", "Date", "Today's weather", "Crew",
+    "Today's temperature", "Start Time", "Job number", "Workorder #",
+    "Workorder Name", "Service work order?", "Equipment Used", "Equipment #",
+    "Mileage to work site", "Workorder Completed", "To do:",
+    "What did your team work on today?", "Materials Used",
+    "Productivity Issues", "Incident Report?", "Incident Report",
+    "Safety Incident", "Others on site?", "On Site", "Stop Time",
+    "Was any work completed today not included in the original scope?",
+    "Was any work completed today not included in original scope?",
+    "Who was working on additional work?", "Describe additional work",
+    "How long did it take?", "Site Photos?", "Upload up to 6 photos",
+    "What project did you work on today?", "How long did that take?",
+    "Did you work on any more projects?",
+]
+_KNOWN_LABELS_LOWER = {lbl.lower().rstrip("?: ") for lbl in KNOWN_FIELD_LABELS}
+
+
+def extract_starred_fields(text):
+    """
+    Extracts '<marker> Title' / value pairs from text that lists fields the
+    way Typeform's email notification (and PDFs built from it) do. Handles
+    three real-world marker styles seen in actual files: a leading '*', a
+    leading '•', or no marker at all (recognized by matching a known field
+    label directly) — real historical PDFs mix all three inconsistently.
+    Returns the same {'field': {'title': ..., 'id': None}, 'type': 'text',
+    'text': ...} shape the shared structured parsers expect.
+    """
+    # Skip anything before Typeform's own marker text, if present — more
+    # reliable than pattern-matching every email client's forward-header
+    # style, and this same literal line also appears in PDFs built from
+    # these emails, so it works for both input sources.
+    start_marker = re.search(r'has a new response:', text, re.IGNORECASE)
+    if start_marker:
+        text = text[start_marker.end():]
+
+    # Trim trailing footer text so it doesn't get glued onto the last
+    # field's value (there's no marker after the last field, so without
+    # this the footer would just become part of it).
+    footer_marker = re.search(
+        r'(Thanks for completing this typeform|Typeform sent you this email|Log in to view or download your responses)',
+        text, re.IGNORECASE
+    )
+    if footer_marker:
+        text = text[:footer_marker.start()]
+
+    lines = text.split("\n")
+    marker_indices = []
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        bulleted = re.match(r'^[\s>]*[\*•]\s*(.+)$', stripped)
+        if bulleted:
+            candidate = bulleted.group(1).strip()
+        else:
+            candidate = stripped
+        if candidate.lower().rstrip("?: ") in _KNOWN_LABELS_LOWER:
+            marker_indices.append((i, candidate))
+
+    answers = []
+    for idx, (line_i, title) in enumerate(marker_indices):
+        start = line_i + 1
+        end = marker_indices[idx + 1][0] if idx + 1 < len(marker_indices) else len(lines)
+        value = "\n".join(lines[start:end]).strip()
+        # Strip a leading '> ' quote-prefix from every line, in case the
+        # source got quote-wrapped by an email forward.
+        value = "\n".join(re.sub(r'^\s*>+\s?', '', ln) for ln in value.split("\n")).strip()
+        if title:
+            answers.append({
+                "field": {"title": title, "id": None},
+                "type": "text",
+                "text": value,
+            })
+    return answers
+
 
 def find_answer(answers, keywords):
     for ans in answers:
@@ -321,3 +403,79 @@ def parse_structured_answers(answers, log_name, log_date, learned_map=None):
 
     extra["form_type"] = form_type
     return job_wo, pdf_text, extra
+
+
+def legacy_regex_extract(text, original_filename=""):
+    """
+    Fallback for files where extract_starred_fields() finds no recognizable
+    field markers at all — genuinely old or differently-formatted content.
+    Adapted directly from the team's original fix_no_date_files.py script,
+    which was proven against real historical files, rather than
+    re-deriving these patterns from scratch.
+    Returns (date_iso_or_None, name, job_wo) — NOT yet YYMMDD-formatted;
+    caller applies its own date formatter.
+    """
+    combined_source = f"{original_filename}\n{text}"
+    raw_date = None
+
+    label_match = re.search(
+        r'(?:Today\'s\s*date|Date)\s*[:\n\r]*\s*(\d{1,2}[/\.-]\d{1,2}[/\.-]\d{2,4}|\d{4}-\d{2}-\d{2})',
+        text, re.IGNORECASE
+    )
+    if label_match:
+        found_val = label_match.group(1)
+        alt_m = re.match(r'^(\d{1,2})[/\.-](\d{1,2})[/\.-](\d{2,4})$', found_val)
+        if alt_m:
+            mm, dd, yy = alt_m.groups()
+            yy = f"20{yy}" if len(yy) == 2 else yy
+            raw_date = f"{yy}-{mm.zfill(2)}-{dd.zfill(2)}"
+        elif re.match(r'^\d{4}-\d{2}-\d{2}$', found_val):
+            raw_date = found_val
+
+    if not raw_date:
+        date_iso = re.search(r'\b(20\d{2}-\d{2}-\d{2})\b', combined_source)
+        if date_iso:
+            raw_date = date_iso.group(1)
+
+    if not raw_date:
+        date_8digit = re.search(r'\b(20\d{2})(\d{2})(\d{2})\b', combined_source)
+        if date_8digit:
+            raw_date = f"{date_8digit.group(1)}-{date_8digit.group(2)}-{date_8digit.group(3)}"
+
+    if not raw_date:
+        prefix_6digit = re.search(r'^\s*(\d{2})(\d{2})(\d{2})\b', original_filename)
+        if prefix_6digit:
+            yy, mm, dd = prefix_6digit.groups()
+            raw_date = f"20{yy}-{mm}-{dd}"
+
+    if not raw_date:
+        alt_date = re.search(r'\b(\d{1,2})[/\.-](\d{1,2})[/\.-](20\d{2}|\d{2})\b', combined_source)
+        if alt_date:
+            mm, dd, yy = alt_date.groups()
+            yy = f"20{yy}" if len(yy) == 2 else yy
+            raw_date = f"{yy}-{mm.zfill(2)}-{dd.zfill(2)}"
+
+    job_wo = ""
+    job_match = re.search(r'(?:^|[_\s])J(\d{2,5})(?:[_\s]|$)', combined_source, re.IGNORECASE)
+    wo_match = re.search(r'(?:^|[_\s])(WO|S)(\d{2,5})(?:[_\s]|$)', combined_source, re.IGNORECASE)
+    if job_match:
+        job_wo = f"J{job_match.group(1)}"
+    elif wo_match:
+        job_wo = f"{wo_match.group(1).upper()}{wo_match.group(2)}"
+    elif re.search(r'\boffice\b', combined_source, re.IGNORECASE):
+        job_wo = "Office"
+    elif re.search(r'\bshop\b', combined_source, re.IGNORECASE):
+        job_wo = "Shop"
+    elif re.search(r'Daily\s*Management\s*Log', combined_source, re.IGNORECASE):
+        job_wo = "Daily Management Log"
+    elif re.search(r'Equipment\s*Repair', combined_source, re.IGNORECASE):
+        job_wo = "Equipment Repair"
+
+    name_match = re.search(r'(?:Your\s*name|Name)\s*[:\n\r]*\s*([A-Za-z\s\.]+)', text, re.IGNORECASE)
+    name = None
+    if name_match:
+        candidate = name_match.group(1).split('\n')[0].strip()
+        if candidate and candidate.lower() not in ("j", "unknown", "none"):
+            name = candidate
+
+    return raw_date, name, job_wo

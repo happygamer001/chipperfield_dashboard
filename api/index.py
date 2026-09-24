@@ -39,7 +39,9 @@ from dropbox_pdf_utils import (  # noqa: E402
     format_date_for_jacque,
     upload_pdf_and_photos,
     get_recent_daily_logs,
+    extract_text_from_pdf_bytes,
     DAYS_TO_SHOW_DEFAULT,
+    DROPBOX_BASE_FOLDER,
 )
 from daily_log_uploader import run_gmail_djl_uploader  # noqa: E402
 import notion_utils  # noqa: E402
@@ -1974,5 +1976,124 @@ def kevin_management_form():
 
         items.sort(key=lambda i: i["date"] or "", reverse=True)
         return jsonify({"count": len(items), "items": items})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# Self-correcting filename tool — re-derives each PDF's real name/date/job
+# directly from its own already-written text content, no external CSV
+# needed. Adapted from the team's own original fix_no_date_files.py
+# script (structured extraction first, then its proven regex fallback).
+# ==========================================
+
+@app.route("/api/fix-filenames-from-content", methods=["POST"])
+@require_role("admin")
+def fix_filenames_from_content():
+    try:
+        dbx = get_dropbox_client()
+
+        # Discover year subfolders under the base Daily Job Logs folder
+        year_folders = []
+        try:
+            res = dbx.files_list_folder(DROPBOX_BASE_FOLDER)
+            entries = list(res.entries)
+            while res.has_more:
+                res = dbx.files_list_folder_continue(res.cursor)
+                entries.extend(res.entries)
+            for e in entries:
+                if isinstance(e, dropbox.files.FolderMetadata) and e.name.isdigit() and len(e.name) == 4:
+                    year_folders.append(e.name)
+        except Exception as e:
+            return jsonify({"status": "error", "message": f"Could not list base folder: {e}"}), 500
+
+        renamed = []
+        skipped_no_change = 0
+        skipped_no_date = 0
+        errors = []
+
+        for year in year_folders:
+            folder_path = f"{DROPBOX_BASE_FOLDER}/{year}"
+            try:
+                res = dbx.files_list_folder(folder_path)
+                entries = list(res.entries)
+                while res.has_more:
+                    res = dbx.files_list_folder_continue(res.cursor)
+                    entries.extend(res.entries)
+            except Exception as e:
+                errors.append(f"{year}: could not list folder ({e})")
+                continue
+
+            for entry in entries:
+                if not isinstance(entry, dropbox.files.FileMetadata):
+                    continue
+                if not entry.name.lower().endswith(".pdf"):
+                    continue  # scoped to PDFs only — renaming photos is riskier (segment order ambiguity)
+
+                try:
+                    _, res_dl = dbx.files_download(entry.path_display)
+                    pdf_bytes = res_dl.content
+                except Exception as e:
+                    errors.append(f"{entry.name}: download failed ({e})")
+                    continue
+
+                text = extract_text_from_pdf_bytes(pdf_bytes)
+
+                # Try structured extraction first
+                answers = form_parsers.extract_starred_fields(text)
+                has_real_titles = any(a["field"]["title"] for a in answers)
+
+                new_name = None
+                new_date = None
+                new_job_wo = None
+
+                if answers and has_real_titles:
+                    name_ans = form_parsers.find_answer(answers, ["your name", "name"])
+                    date_ans = form_parsers.find_answer(answers, ["date"])
+                    new_name = form_parsers._clean_or_none(form_parsers.answer_text(name_ans))
+                    raw_date_text = form_parsers.answer_text(date_ans) or ""
+                    new_date = format_date_for_jacque(raw_date_text) if raw_date_text else None
+                    new_job_wo, _pdf_text, _extra = form_parsers.parse_structured_answers(
+                        answers, new_name or "Unknown", new_date or "No_Date"
+                    )
+
+                if not new_name or not new_date or new_date == "No_Date":
+                    # Fall back to the proven regex approach
+                    raw_date, fallback_name, fallback_job_wo = form_parsers.legacy_regex_extract(text, entry.name)
+                    if not new_name:
+                        new_name = fallback_name
+                    if not new_date or new_date == "No_Date":
+                        new_date = format_date_for_jacque(raw_date) if raw_date else None
+                    if not new_job_wo:
+                        new_job_wo = fallback_job_wo
+
+                if not new_date or new_date == "No_Date" or not new_name:
+                    skipped_no_date += 1
+                    continue
+
+                parts = [new_date, new_name]
+                if new_job_wo:
+                    parts.append(new_job_wo)
+                new_filename = " | ".join(parts) + ".pdf"
+
+                if new_filename == entry.name:
+                    skipped_no_change += 1
+                    continue
+
+                to_path = f"{folder_path}/{new_filename}"
+                try:
+                    dbx.files_move_v2(entry.path_display, to_path, autorename=True)
+                    renamed.append({"from": entry.name, "to": new_filename})
+                except Exception as e:
+                    errors.append(f"{entry.name}: rename failed ({e})")
+
+        return jsonify({
+            "status": "ok",
+            "renamed_count": len(renamed),
+            "renamed": renamed,
+            "skipped_no_change": skipped_no_change,
+            "skipped_no_date": skipped_no_date,
+            "errors": errors,
+        })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

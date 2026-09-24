@@ -194,49 +194,14 @@ def parse_metadata_from_email(subject, body_text):
 
 def email_body_to_answers(body_text):
     """
-    Typeform's notification email lists each question as '* Question Title'
-    followed by the answer on the next line(s). Converts this into the
-    same {'field': {'title': ..., 'id': None}, 'type': 'text', 'text': ...}
-    shape the shared structured parsers (form_parsers.py) already expect
-    from the webhook — so both paths get identical parsing quality instead
-    of this one just dumping the raw cleaned body as one text blob.
-
-    Only looks at the body AFTER Typeform's "has a new response:" marker,
-    if present — this also fixes a real bug where forwarded-header
-    fragments (e.g. a stray "Subject: ..." line) were leaking into the
-    saved text, since anything before the marker is simply never examined.
+    Thin wrapper — the actual field-extraction logic now lives in the
+    shared form_parsers.extract_starred_fields(), which also handles the
+    '•' bullets and bullet-less field labels seen in real historical PDFs
+    (not just the '*' marker Typeform's live emails use), so the same
+    function works for both this email path and the PDF-content
+    self-correction tool.
     """
-    marker = re.search(r'has a new response:', body_text, re.IGNORECASE)
-    relevant = body_text[marker.end():] if marker else body_text
-
-    # Trim trailing footer text so it doesn't get glued onto the last
-    # field's value (there's no marker after the last '* Title', so
-    # without this the footer would just be treated as part of it).
-    footer_marker = re.search(
-        r'(Thanks for completing this typeform|Typeform sent you this email|Log in to view or download your responses)',
-        relevant, re.IGNORECASE
-    )
-    if footer_marker:
-        relevant = relevant[:footer_marker.start()]
-
-    matches = list(re.finditer(r'^[\s>]*\*\s*(.+?)\s*$', relevant, re.MULTILINE))
-    answers = []
-    for i, m in enumerate(matches):
-        title = m.group(1).strip()
-        start = m.end()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(relevant)
-        raw_value = relevant[start:end].strip()
-        # Strip a leading '> ' quote-prefix from every line, in case the
-        # whole message got quote-wrapped by a forward, not just the
-        # '* Title' marker lines.
-        value = "\n".join(re.sub(r'^\s*>+\s?', '', line) for line in raw_value.split("\n")).strip()
-        if title:
-            answers.append({
-                "field": {"title": title, "id": None},
-                "type": "text",
-                "text": value,
-            })
-    return answers
+    return form_parsers.extract_starred_fields(body_text)
 
 
 def clean_email_body_for_pdf(body_text):

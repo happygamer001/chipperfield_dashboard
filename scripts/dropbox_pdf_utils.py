@@ -413,3 +413,18 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
         del r["photo_paths"]  # internal only — URLs are what the frontend needs
 
     return results
+
+
+def extract_text_from_pdf_bytes(pdf_bytes):
+    """Extracts raw text from a PDF's pages using pypdf — used by the
+    self-correction tool to re-derive a file's real name/date/job from its
+    own already-written content, no external CSV needed."""
+    from pypdf import PdfReader
+    text = ""
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        for page in reader.pages:
+            text += (page.extract_text() or "") + "\n"
+    except Exception:
+        pass
+    return text
