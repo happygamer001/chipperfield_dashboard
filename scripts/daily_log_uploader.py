@@ -1,11 +1,11 @@
 """
-LEGACY / BACKUP PATH — as of the Typeform webhook going live (api/typeform-webhook.py),
-this script is no longer the primary way logs get into Dropbox. Typeform now posts
-submissions directly and in real time.
-
-Keep this around as a backup/backfill tool: if the webhook ever misses a submission
-(e.g. a Vercel outage), you can still run this manually to catch anything sitting in
-the inbox. It's no longer on the daily cron schedule.
+Gmail-scan path — runs hourly via Vercel Cron, alongside the Typeform
+webhook (api/typeform-webhook.py) which still handles real-time delivery.
+This is the more reliable/thorough of the two: Typeform's email
+notification always includes each question's full title, whereas the
+webhook payload sometimes omits it. Both paths now share the same
+structured parsing logic (scripts/form_parsers.py) so submissions get
+identical quality regardless of which one picked them up.
 """
 
 import imaplib
@@ -14,6 +14,7 @@ from email.header import decode_header
 import re
 import os
 import io
+import sys
 import datetime
 import dropbox
 import requests
@@ -21,6 +22,9 @@ from bs4 import BeautifulSoup
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+sys.path.append(os.path.dirname(__file__))
+import form_parsers  # noqa: E402
 
 # ==========================================
 # CONFIGURATION
@@ -188,6 +192,49 @@ def parse_metadata_from_email(subject, body_text):
     return log_date, log_name, job_wo
 
 
+def email_body_to_answers(body_text):
+    """
+    Typeform's notification email lists each question as '* Question Title'
+    followed by the answer on the next line(s). Converts this into the
+    same {'field': {'title': ..., 'id': None}, 'type': 'text', 'text': ...}
+    shape the shared structured parsers (form_parsers.py) already expect
+    from the webhook — so both paths get identical parsing quality instead
+    of this one just dumping the raw cleaned body as one text blob.
+
+    Only looks at the body AFTER Typeform's "has a new response:" marker,
+    if present — this also fixes a real bug where forwarded-header
+    fragments (e.g. a stray "Subject: ..." line) were leaking into the
+    saved text, since anything before the marker is simply never examined.
+    """
+    marker = re.search(r'has a new response:', body_text, re.IGNORECASE)
+    relevant = body_text[marker.end():] if marker else body_text
+
+    # Trim trailing footer text so it doesn't get glued onto the last
+    # field's value (there's no marker after the last '* Title', so
+    # without this the footer would just be treated as part of it).
+    footer_marker = re.search(
+        r'(Thanks for completing this typeform|Typeform sent you this email)',
+        relevant, re.IGNORECASE
+    )
+    if footer_marker:
+        relevant = relevant[:footer_marker.start()]
+
+    matches = list(re.finditer(r'^\*\s*(.+?)\s*$', relevant, re.MULTILINE))
+    answers = []
+    for i, m in enumerate(matches):
+        title = m.group(1).strip()
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(relevant)
+        value = relevant[start:end].strip()
+        if title:
+            answers.append({
+                "field": {"title": title, "id": None},
+                "type": "text",
+                "text": value,
+            })
+    return answers
+
+
 def clean_email_body_for_pdf(body_text):
     """Strips signature footer, forward headers, and top metadata."""
     clean = body_text
@@ -298,7 +345,21 @@ def run_gmail_djl_uploader():
                 else:
                     body_text = msg.get_payload(decode=True).decode(errors="ignore")
 
-                log_date, log_name, job_wo = parse_metadata_from_email(subject, body_text or body_html)
+                answers = email_body_to_answers(body_text or body_html)
+
+                if answers:
+                    name_ans = form_parsers.find_answer(answers, ["your name", "name"])
+                    date_ans = form_parsers.find_answer(answers, ["date"])
+                    log_name = form_parsers._clean_or_none(form_parsers.answer_text(name_ans)) or "Unknown"
+                    raw_date_text = form_parsers.answer_text(date_ans) or ""
+                    log_date = format_date_for_jacque(raw_date_text)
+                    job_wo, pdf_text, _extra = form_parsers.parse_structured_answers(answers, log_name, log_date)
+                else:
+                    # Safety net: no '* Title' fields found at all (an
+                    # unexpected email format) — fall back to the old
+                    # whole-body approach rather than losing the submission.
+                    log_date, log_name, job_wo = parse_metadata_from_email(subject, body_text or body_html)
+                    pdf_text = clean_email_body_for_pdf(body_text or body_html)
 
                 target_folder_path = get_year_subfolder(log_date)
                 existing_dropbox_files = get_existing_dropbox_files(dbx, target_folder_path)
@@ -311,8 +372,7 @@ def run_gmail_djl_uploader():
 
                 if pdf_filename not in existing_dropbox_files:
                     print(f"\n📄 Generating PDF for Log: {pdf_filename}")
-                    clean_text = clean_email_body_for_pdf(body_text or body_html)
-                    pdf_bytes = generate_pdf_from_text(pdf_filename.replace('.pdf', ''), clean_text)
+                    pdf_bytes = generate_pdf_from_text(pdf_filename.replace('.pdf', ''), pdf_text)
 
                     dest_pdf_path = f"{target_folder_path}/{pdf_filename}"
                     try:
@@ -327,7 +387,7 @@ def run_gmail_djl_uploader():
                         try:
                             txt_filename = pdf_filename[:-4] + ".txt"
                             dest_txt_path = f"{target_folder_path}/{txt_filename}"
-                            dbx.files_upload(clean_text.encode("utf-8"), dest_txt_path, mode=dropbox.files.WriteMode.overwrite)
+                            dbx.files_upload(pdf_text.encode("utf-8"), dest_txt_path, mode=dropbox.files.WriteMode.overwrite)
                             existing_dropbox_files.add(txt_filename)
                         except Exception as txt_err:
                             print(f"⚠️ Sidecar text upload error (non-critical): {txt_err}")
