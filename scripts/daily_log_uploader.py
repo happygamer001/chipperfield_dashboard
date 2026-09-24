@@ -213,7 +213,7 @@ def email_body_to_answers(body_text):
     # field's value (there's no marker after the last '* Title', so
     # without this the footer would just be treated as part of it).
     footer_marker = re.search(
-        r'(Thanks for completing this typeform|Typeform sent you this email)',
+        r'(Thanks for completing this typeform|Typeform sent you this email|Log in to view or download your responses)',
         relevant, re.IGNORECASE
     )
     if footer_marker:
@@ -240,11 +240,34 @@ def email_body_to_answers(body_text):
 
 
 def clean_email_body_for_pdf(body_text):
-    """Strips signature footer, forward headers, and top metadata."""
+    """Strips forward headers (any email client's style), signature footer, and top metadata."""
     clean = body_text
-    clean = re.sub(r'---------- Forwarded message --------[\s\S]*?To:.*?\n', '', clean)
+
+    # Skip everything before Typeform's own marker text — this is more
+    # reliable than pattern-matching every email client's specific forward
+    # header style (Gmail's "---------- Forwarded message ---------",
+    # Outlook's "From:...Sent:...To:...Subject:...", etc.), since it just
+    # anchors on text Typeform itself always includes, regardless of how
+    # the email got forwarded on top of that.
+    marker = re.search(r'has a new response:', clean, re.IGNORECASE)
+    if marker:
+        clean = clean[marker.end():]
+    else:
+        # No marker found — fall back to the old header-stripping patterns
+        # as a second line of defense, in case this isn't a Typeform email
+        # or the marker text is missing for some other reason.
+        clean = re.sub(r'---------- Forwarded message --------[\s\S]*?To:.*?\n', '', clean)
+        clean = re.sub(r'^From:.*?\n(?:.*?\n)*?Subject:.*?\n', '', clean, flags=re.IGNORECASE)
+
     clean = re.sub(r'Typeform sent you this email on behalf of a typeform creator[\s\S]*$', '', clean, flags=re.IGNORECASE)
     clean = re.sub(r'Thanks for completing this typeform[\s\S]*$', '', clean, flags=re.IGNORECASE)
+    clean = re.sub(r'Log in to view or download your responses[\s\S]*$', '', clean, flags=re.IGNORECASE)
+
+    # Strip a leading '> ' quote-prefix line by line, in case the whole
+    # message got quote-wrapped by the forward (same fix as the structured
+    # parser needed, for the same reason).
+    clean = "\n".join(re.sub(r'^\s*>+\s?', '', line) for line in clean.split("\n"))
+
     return clean.strip()
 
 
