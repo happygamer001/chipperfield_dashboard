@@ -1001,36 +1001,62 @@ document.getElementById("fix-filenames-btn").addEventListener("click", async () 
 
   btn.disabled = true;
   btn.textContent = "Scanning…";
-  statusEl.textContent = "Reading every PDF's content — this can take a little while for a large archive.";
   resultsEl.innerHTML = "";
+
+  const allRenamed = [];
+  const allErrors = [];
+  let totalSkippedNoChange = 0;
+  let totalSkippedNoDate = 0;
+  let startIndex = 0;
+  let total = null;
+
   try {
-    const res = await fetch("/api/fix-filenames-from-content", { method: "POST" });
-    let data;
-    try {
-      data = await res.json();
-    } catch (parseErr) {
-      throw new Error(`Server error (status ${res.status})`);
+    while (true) {
+      statusEl.textContent = total === null
+        ? "Listing files…"
+        : `Processing ${startIndex} of ${total}…`;
+
+      const res = await fetch("/api/fix-filenames-from-content", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ start_index: startIndex })
+      });
+      let data;
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        throw new Error(`Server error (status ${res.status})`);
+      }
+      if (data.status !== "ok") throw new Error(data.message || "Fix failed");
+
+      total = data.total;
+      allRenamed.push(...data.renamed);
+      allErrors.push(...data.errors);
+      totalSkippedNoChange += data.skipped_no_change;
+      totalSkippedNoDate += data.skipped_no_date;
+
+      if (data.done || data.total === 0) break;
+      startIndex = data.next_index;
     }
-    if (data.status !== "ok") throw new Error(data.message || "Fix failed");
 
-    statusEl.textContent = `Renamed ${data.renamed_count} · already correct ${data.skipped_no_change} · couldn't determine a date ${data.skipped_no_date}${data.errors.length ? ' · ' + data.errors.length + ' error(s)' : ''}`;
+    statusEl.textContent = `Done — ${total} file(s) scanned · renamed ${allRenamed.length} · already correct ${totalSkippedNoChange} · couldn't determine a date ${totalSkippedNoDate}${allErrors.length ? ' · ' + allErrors.length + ' error(s)' : ''}`;
 
-    if (data.renamed.length > 0) {
+    if (allRenamed.length > 0) {
       resultsEl.innerHTML = '<p class="field-label" style="margin:10px 0 6px;">Renamed:</p>' +
-        data.renamed.map(r => `
+        allRenamed.map(r => `
           <div style="font-size:12px;padding:6px 0;border-bottom:1px solid var(--line);">
             <span style="color:var(--ink-soft);">${r.from}</span> → <strong>${r.to}</strong>
           </div>
         `).join("");
     }
-    if (data.errors.length > 0) {
+    if (allErrors.length > 0) {
       resultsEl.innerHTML += '<p class="field-label" style="margin:10px 0 6px;color:var(--danger-text);">Errors:</p>' +
-        data.errors.map(e => `<div style="font-size:12px;color:var(--danger-text);padding:4px 0;">${e}</div>`).join("");
+        allErrors.map(e => `<div style="font-size:12px;color:var(--danger-text);padding:4px 0;">${e}</div>`).join("");
     }
 
     loadDailyLogsFromDropbox();
   } catch (err) {
-    statusEl.textContent = "Failed: " + err.message;
+    statusEl.textContent = "Failed: " + err.message + (allRenamed.length ? ` (${allRenamed.length} renamed before the error)` : "");
   } finally {
     btn.disabled = false;
     btn.textContent = "Fix Filenames";

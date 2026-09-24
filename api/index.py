@@ -30,6 +30,7 @@ from functools import wraps
 
 import requests
 import dropbox
+from concurrent.futures import ThreadPoolExecutor
 import openpyxl
 from flask import Flask, request, jsonify, session, send_from_directory
 
@@ -1985,110 +1986,148 @@ def kevin_management_form():
 # directly from its own already-written text content, no external CSV
 # needed. Adapted from the team's own original fix_no_date_files.py
 # script (structured extraction first, then its proven regex fallback).
+#
+# Processes in small batches with a continuation cursor rather than all
+# at once — with hundreds of PDFs across many months, doing everything in
+# one request blew past Vercel's 60s function limit and got killed
+# (FUNCTION_INVOCATION_TIMEOUT) before it could even respond. This can no
+# longer time out regardless of archive size: the frontend calls this
+# repeatedly, passing back the cursor each time, until done.
 # ==========================================
+
+def _collect_all_pdf_entries(dbx):
+    """Flat list of (folder_path, entry) for every PDF across all year
+    folders — just metadata listing, not downloading, so this stays fast
+    even for a large archive."""
+    entries_flat = []
+    try:
+        res = dbx.files_list_folder(DROPBOX_BASE_FOLDER)
+        base_entries = list(res.entries)
+        while res.has_more:
+            res = dbx.files_list_folder_continue(res.cursor)
+            base_entries.extend(res.entries)
+    except Exception:
+        return entries_flat
+
+    year_folders = sorted(
+        e.name for e in base_entries
+        if isinstance(e, dropbox.files.FolderMetadata) and e.name.isdigit() and len(e.name) == 4
+    )
+
+    for year in year_folders:
+        folder_path = f"{DROPBOX_BASE_FOLDER}/{year}"
+        try:
+            res = dbx.files_list_folder(folder_path)
+            year_entries = list(res.entries)
+            while res.has_more:
+                res = dbx.files_list_folder_continue(res.cursor)
+                year_entries.extend(res.entries)
+        except Exception:
+            continue
+        for e in year_entries:
+            if isinstance(e, dropbox.files.FileMetadata) and e.name.lower().endswith(".pdf"):
+                entries_flat.append((folder_path, e))
+
+    return entries_flat
+
+
+def _fix_one_pdf_filename(dbx, folder_path, entry):
+    """Downloads, re-parses, and renames a single PDF if needed. Returns
+    ('renamed', {...}) / ('skipped_no_change', None) /
+    ('skipped_no_date', None) / ('error', message)."""
+    try:
+        _, res_dl = dbx.files_download(entry.path_display)
+        pdf_bytes = res_dl.content
+    except Exception as e:
+        return ("error", f"{entry.name}: download failed ({e})")
+
+    text = extract_text_from_pdf_bytes(pdf_bytes)
+
+    answers = form_parsers.extract_starred_fields(text)
+    has_real_titles = any(a["field"]["title"] for a in answers)
+
+    new_name = None
+    new_date = None
+    new_job_wo = None
+
+    if answers and has_real_titles:
+        name_ans = form_parsers.find_answer(answers, ["your name", "name"])
+        date_ans = form_parsers.find_answer(answers, ["date"])
+        new_name = form_parsers._clean_or_none(form_parsers.answer_text(name_ans))
+        raw_date_text = form_parsers.answer_text(date_ans) or ""
+        new_date = format_date_for_jacque(raw_date_text) if raw_date_text else None
+        new_job_wo, _pdf_text, _extra = form_parsers.parse_structured_answers(
+            answers, new_name or "Unknown", new_date or "No_Date"
+        )
+
+    if not new_name or not new_date or new_date == "No_Date":
+        raw_date, fallback_name, fallback_job_wo = form_parsers.legacy_regex_extract(text, entry.name)
+        if not new_name:
+            new_name = fallback_name
+        if not new_date or new_date == "No_Date":
+            new_date = format_date_for_jacque(raw_date) if raw_date else None
+        if not new_job_wo:
+            new_job_wo = fallback_job_wo
+
+    if not new_date or new_date == "No_Date" or not new_name:
+        return ("skipped_no_date", None)
+
+    parts = [new_date, new_name]
+    if new_job_wo:
+        parts.append(new_job_wo)
+    new_filename = " | ".join(parts) + ".pdf"
+
+    if new_filename == entry.name:
+        return ("skipped_no_change", None)
+
+    to_path = f"{folder_path}/{new_filename}"
+    try:
+        dbx.files_move_v2(entry.path_display, to_path, autorename=True)
+        return ("renamed", {"from": entry.name, "to": new_filename})
+    except Exception as e:
+        return ("error", f"{entry.name}: rename failed ({e})")
+
 
 @app.route("/api/fix-filenames-from-content", methods=["POST"])
 @require_role("admin")
 def fix_filenames_from_content():
     try:
-        dbx = get_dropbox_client()
+        body = request.get_json(silent=True) or {}
+        start_index = max(0, int(body.get("start_index", 0)))
+        batch_size = 15  # keeps each request comfortably under the 60s limit
 
-        # Discover year subfolders under the base Daily Job Logs folder
-        year_folders = []
-        try:
-            res = dbx.files_list_folder(DROPBOX_BASE_FOLDER)
-            entries = list(res.entries)
-            while res.has_more:
-                res = dbx.files_list_folder_continue(res.cursor)
-                entries.extend(res.entries)
-            for e in entries:
-                if isinstance(e, dropbox.files.FolderMetadata) and e.name.isdigit() and len(e.name) == 4:
-                    year_folders.append(e.name)
-        except Exception as e:
-            return jsonify({"status": "error", "message": f"Could not list base folder: {e}"}), 500
+        dbx = get_dropbox_client()
+        all_entries = _collect_all_pdf_entries(dbx)
+        total = len(all_entries)
+        batch = all_entries[start_index:start_index + batch_size]
 
         renamed = []
         skipped_no_change = 0
         skipped_no_date = 0
         errors = []
 
-        for year in year_folders:
-            folder_path = f"{DROPBOX_BASE_FOLDER}/{year}"
-            try:
-                res = dbx.files_list_folder(folder_path)
-                entries = list(res.entries)
-                while res.has_more:
-                    res = dbx.files_list_folder_continue(res.cursor)
-                    entries.extend(res.entries)
-            except Exception as e:
-                errors.append(f"{year}: could not list folder ({e})")
-                continue
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(lambda item: _fix_one_pdf_filename(dbx, item[0], item[1]), batch))
 
-            for entry in entries:
-                if not isinstance(entry, dropbox.files.FileMetadata):
-                    continue
-                if not entry.name.lower().endswith(".pdf"):
-                    continue  # scoped to PDFs only — renaming photos is riskier (segment order ambiguity)
+        for kind, val in results:
+            if kind == "renamed":
+                renamed.append(val)
+            elif kind == "skipped_no_change":
+                skipped_no_change += 1
+            elif kind == "skipped_no_date":
+                skipped_no_date += 1
+            elif kind == "error":
+                errors.append(val)
 
-                try:
-                    _, res_dl = dbx.files_download(entry.path_display)
-                    pdf_bytes = res_dl.content
-                except Exception as e:
-                    errors.append(f"{entry.name}: download failed ({e})")
-                    continue
-
-                text = extract_text_from_pdf_bytes(pdf_bytes)
-
-                # Try structured extraction first
-                answers = form_parsers.extract_starred_fields(text)
-                has_real_titles = any(a["field"]["title"] for a in answers)
-
-                new_name = None
-                new_date = None
-                new_job_wo = None
-
-                if answers and has_real_titles:
-                    name_ans = form_parsers.find_answer(answers, ["your name", "name"])
-                    date_ans = form_parsers.find_answer(answers, ["date"])
-                    new_name = form_parsers._clean_or_none(form_parsers.answer_text(name_ans))
-                    raw_date_text = form_parsers.answer_text(date_ans) or ""
-                    new_date = format_date_for_jacque(raw_date_text) if raw_date_text else None
-                    new_job_wo, _pdf_text, _extra = form_parsers.parse_structured_answers(
-                        answers, new_name or "Unknown", new_date or "No_Date"
-                    )
-
-                if not new_name or not new_date or new_date == "No_Date":
-                    # Fall back to the proven regex approach
-                    raw_date, fallback_name, fallback_job_wo = form_parsers.legacy_regex_extract(text, entry.name)
-                    if not new_name:
-                        new_name = fallback_name
-                    if not new_date or new_date == "No_Date":
-                        new_date = format_date_for_jacque(raw_date) if raw_date else None
-                    if not new_job_wo:
-                        new_job_wo = fallback_job_wo
-
-                if not new_date or new_date == "No_Date" or not new_name:
-                    skipped_no_date += 1
-                    continue
-
-                parts = [new_date, new_name]
-                if new_job_wo:
-                    parts.append(new_job_wo)
-                new_filename = " | ".join(parts) + ".pdf"
-
-                if new_filename == entry.name:
-                    skipped_no_change += 1
-                    continue
-
-                to_path = f"{folder_path}/{new_filename}"
-                try:
-                    dbx.files_move_v2(entry.path_display, to_path, autorename=True)
-                    renamed.append({"from": entry.name, "to": new_filename})
-                except Exception as e:
-                    errors.append(f"{entry.name}: rename failed ({e})")
+        next_index = start_index + len(batch)
+        done = next_index >= total or len(batch) == 0
 
         return jsonify({
             "status": "ok",
+            "done": done,
+            "next_index": None if done else next_index,
+            "total": total,
+            "processed_so_far": next_index,
             "renamed_count": len(renamed),
             "renamed": renamed,
             "skipped_no_change": skipped_no_change,
