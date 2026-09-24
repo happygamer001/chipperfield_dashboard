@@ -219,13 +219,17 @@ def email_body_to_answers(body_text):
     if footer_marker:
         relevant = relevant[:footer_marker.start()]
 
-    matches = list(re.finditer(r'^\*\s*(.+?)\s*$', relevant, re.MULTILINE))
+    matches = list(re.finditer(r'^[\s>]*\*\s*(.+?)\s*$', relevant, re.MULTILINE))
     answers = []
     for i, m in enumerate(matches):
         title = m.group(1).strip()
         start = m.end()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(relevant)
-        value = relevant[start:end].strip()
+        raw_value = relevant[start:end].strip()
+        # Strip a leading '> ' quote-prefix from every line, in case the
+        # whole message got quote-wrapped by a forward, not just the
+        # '* Title' marker lines.
+        value = "\n".join(re.sub(r'^\s*>+\s?', '', line) for line in raw_value.split("\n")).strip()
         if title:
             answers.append({
                 "field": {"title": title, "id": None},
@@ -346,14 +350,23 @@ def run_gmail_djl_uploader():
                     body_text = msg.get_payload(decode=True).decode(errors="ignore")
 
                 answers = email_body_to_answers(body_text or body_html)
+                has_real_titles = any(a["field"]["title"] for a in answers)
 
-                if answers:
+                if answers and has_real_titles:
                     name_ans = form_parsers.find_answer(answers, ["your name", "name"])
                     date_ans = form_parsers.find_answer(answers, ["date"])
                     log_name = form_parsers._clean_or_none(form_parsers.answer_text(name_ans)) or "Unknown"
                     raw_date_text = form_parsers.answer_text(date_ans) or ""
                     log_date = format_date_for_jacque(raw_date_text)
                     job_wo, pdf_text, _extra = form_parsers.parse_structured_answers(answers, log_name, log_date)
+
+                    # Belt-and-suspenders: if the structured parse still
+                    # couldn't classify the form (so pdf_text would come
+                    # out as an unhelpful "Field (untitled): ..." dump),
+                    # that's strictly worse than the old script's readable
+                    # cleaned-text output — use that instead in this case.
+                    if _extra.get("form_type") == "unrecognized":
+                        pdf_text = clean_email_body_for_pdf(body_text or body_html)
                 else:
                     # Safety net: no '* Title' fields found at all (an
                     # unexpected email format) — fall back to the old
