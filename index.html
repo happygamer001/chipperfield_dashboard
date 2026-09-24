@@ -259,6 +259,14 @@
   <div id="fabshop-revenue-display"></div>
 
   <div class="queue-header">
+    <h2>Daily Job Logs</h2>
+    <span id="fetch-logs-status">Runs automatically every hour — use this to trigger it now</span>
+  </div>
+  <div class="filters" style="margin-bottom:20px;align-items:center;">
+    <button class="primary" id="fetch-logs-btn" style="flex:0 0 auto;">Fetch Daily Job Logs</button>
+  </div>
+
+  <div class="queue-header">
     <h2>Daily Job Log CSV import</h2>
     <span id="csv-import-status">Backfills description text on existing entries</span>
   </div>
@@ -944,6 +952,34 @@ document.getElementById("fabshop-upload-btn").addEventListener("click", async ()
   } finally {
     btn.disabled = false;
     btn.textContent = "Upload weekly file";
+  }
+});
+
+document.getElementById("fetch-logs-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("fetch-logs-btn");
+  const statusEl = document.getElementById("fetch-logs-status");
+
+  btn.disabled = true;
+  btn.textContent = "Fetching…";
+  statusEl.textContent = "Scanning the inbox — this can take a little while.";
+  try {
+    const res = await fetch("/api/upload-daily-logs");
+    let data;
+    try {
+      data = await res.json();
+    } catch (parseErr) {
+      throw new Error(`Server error (status ${res.status})`);
+    }
+    if (data.status !== "ok") throw new Error(data.message || "Fetch failed");
+
+    const s = data.summary || {};
+    statusEl.textContent = `Done — scanned ${s.scanned ?? 0}, uploaded ${s.pdfs_uploaded ?? 0} log(s) and ${s.photos_uploaded ?? 0} photo(s), skipped ${s.skipped ?? 0} already on file.`;
+    loadDailyLogsFromDropbox();
+  } catch (err) {
+    statusEl.textContent = "Failed: " + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Fetch Daily Job Logs";
   }
 });
 
