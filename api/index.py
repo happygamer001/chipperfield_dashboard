@@ -2152,18 +2152,36 @@ def fix_filenames_from_content():
         skipped_no_date = 0
         errors = []
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            results = list(executor.map(lambda item: _fix_one_pdf_filename(dbx, item[0], item[1]), batch))
-
-        for kind, val in results:
-            if kind == "renamed":
-                renamed.append(val)
-            elif kind == "skipped_no_change":
-                skipped_no_change += 1
-            elif kind == "skipped_no_date":
-                skipped_no_date += 1
-            elif kind == "error":
-                errors.append(val)
+        # A single malformed/unusual PDF can make pypdf hang indefinitely
+        # while parsing it — batching alone only limits how many files run
+        # per request, it never protected against ONE file stalling the
+        # whole batch forever. Give each file its own hard timeout so a
+        # bad file can never block the others or blow the function budget.
+        # Note: shutdown(wait=False) is deliberate — a plain 'with' block
+        # would still block on exit waiting for every thread to actually
+        # finish, even ones already given up on below, defeating the point.
+        executor = ThreadPoolExecutor(max_workers=5)
+        try:
+            future_to_item = {
+                executor.submit(_fix_one_pdf_filename, dbx, folder_path, entry): entry
+                for folder_path, entry in batch
+            }
+            for future in future_to_item:
+                entry = future_to_item[future]
+                try:
+                    results_item = future.result(timeout=8)
+                except Exception as e:
+                    results_item = ("error", f"{entry.name}: timed out or failed ({e})")
+                if results_item[0] == "renamed":
+                    renamed.append(results_item[1])
+                elif results_item[0] == "skipped_no_change":
+                    skipped_no_change += 1
+                elif results_item[0] == "skipped_no_date":
+                    skipped_no_date += 1
+                elif results_item[0] == "error":
+                    errors.append(results_item[1])
+        finally:
+            executor.shutdown(wait=False)
 
         next_index = start_index + len(batch)
         done = next_index >= total or len(batch) == 0

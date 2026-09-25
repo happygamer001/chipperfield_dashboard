@@ -9,6 +9,7 @@ identical quality regardless of which one picked them up.
 """
 
 import imaplib
+from concurrent.futures import ThreadPoolExecutor
 import email
 from email.header import decode_header
 import re
@@ -275,6 +276,156 @@ def extract_photo_urls_from_html(html_content):
 # MAIN EXECUTION
 # ==========================================
 
+def _process_one_djl_message(dbx, msg):
+    """
+    Processes a single already-fetched email message: parses it, uploads
+    the PDF/sidecar text and any photos. Pulled out of the main loop so it
+    can be run under a hard per-message timeout — email parsing (regex,
+    BeautifulSoup on unusual HTML) or an oversized photo download can
+    occasionally hang, and without a timeout one bad message could stall
+    the whole batch the same way one malformed PDF did for Fix Filenames.
+    Returns a delta dict: {"pdfs_uploaded", "photos_uploaded", "skipped"}.
+    """
+    delta = {"pdfs_uploaded": 0, "photos_uploaded": 0, "skipped": 0}
+
+    subject_header = msg["Subject"]
+    subject = ""
+    if subject_header:
+        decoded = decode_header(subject_header)[0]
+        if isinstance(decoded[0], bytes):
+            subject = decoded[0].decode(decoded[1] or "utf-8")
+        else:
+            subject = str(decoded[0])
+
+    if "Typeform" not in subject and "Daily" not in subject and "Log" not in subject:
+        return delta
+
+    body_text = ""
+    body_html = ""
+    email_attachments = []
+
+    if msg.is_multipart():
+        for part in msg.get_payload():
+            content_type = part.get_content_type()
+            content_disp = str(part.get("Content-Disposition"))
+
+            if content_type == "text/plain":
+                body_text += part.get_payload(decode=True).decode(errors="ignore")
+            elif content_type == "text/html":
+                body_html += part.get_payload(decode=True).decode(errors="ignore")
+            elif "attachment" in content_disp or content_type.startswith("image/"):
+                filename = part.get_filename()
+                if filename:
+                    email_attachments.append((filename, part.get_payload(decode=True)))
+    else:
+        body_text = msg.get_payload(decode=True).decode(errors="ignore")
+
+    answers = email_body_to_answers(body_text or body_html)
+    has_real_titles = any(a["field"]["title"] for a in answers)
+
+    if answers and has_real_titles:
+        name_ans = form_parsers.find_answer(answers, ["your name", "name"])
+        date_ans = form_parsers.find_answer(answers, ["date"])
+        log_name = form_parsers._clean_or_none(form_parsers.answer_text(name_ans)) or "Unknown"
+        raw_date_text = form_parsers.answer_text(date_ans) or ""
+        log_date = format_date_for_jacque(raw_date_text)
+        job_wo, pdf_text, _extra = form_parsers.parse_structured_answers(answers, log_name, log_date)
+
+        # Belt-and-suspenders: if the structured parse still couldn't
+        # classify the form (so pdf_text would come out as an unhelpful
+        # "Field (untitled): ..." dump), that's strictly worse than the
+        # old script's readable cleaned-text output — use that instead.
+        if _extra.get("form_type") == "unrecognized":
+            pdf_text = clean_email_body_for_pdf(body_text or body_html)
+    else:
+        # Safety net: no '* Title' fields found at all (an unexpected
+        # email format) — fall back to the old whole-body approach rather
+        # than losing the submission.
+        log_date, log_name, job_wo = parse_metadata_from_email(subject, body_text or body_html)
+        pdf_text = clean_email_body_for_pdf(body_text or body_html)
+
+    target_folder_path = get_year_subfolder(log_date)
+    existing_dropbox_files = get_existing_dropbox_files(dbx, target_folder_path)
+
+    # 1. PDF
+    parts = [log_date, log_name]
+    if job_wo:
+        parts.append(job_wo)
+    pdf_filename = " | ".join(parts) + ".pdf"
+
+    if pdf_filename not in existing_dropbox_files:
+        print(f"\n📄 Generating PDF for Log: {pdf_filename}")
+        pdf_bytes = generate_pdf_from_text(pdf_filename.replace('.pdf', ''), pdf_text)
+
+        dest_pdf_path = f"{target_folder_path}/{pdf_filename}"
+        try:
+            dbx.files_upload(pdf_bytes, dest_pdf_path, mode=dropbox.files.WriteMode.overwrite)
+            print(f"✅ Uploaded PDF Log: {dest_pdf_path}")
+            existing_dropbox_files.add(pdf_filename)
+            delta["pdfs_uploaded"] += 1
+
+            # Sidecar text file (same content, .txt extension) — this is
+            # what lets the dashboard show the actual description without
+            # anyone opening the PDF.
+            try:
+                txt_filename = pdf_filename[:-4] + ".txt"
+                dest_txt_path = f"{target_folder_path}/{txt_filename}"
+                dbx.files_upload(pdf_text.encode("utf-8"), dest_txt_path, mode=dropbox.files.WriteMode.overwrite)
+                existing_dropbox_files.add(txt_filename)
+            except Exception as txt_err:
+                print(f"⚠️ Sidecar text upload error (non-critical): {txt_err}")
+        except Exception as pdf_err:
+            print(f"⚠️ PDF upload error: {pdf_err}")
+    else:
+        print(f"Skipping PDF Log (already in Dropbox): {pdf_filename}")
+        delta["skipped"] += 1
+
+    # 2. Photos
+    photo_items = []
+    for att_name, att_bytes in email_attachments:
+        ext = os.path.splitext(att_name)[1].lower()
+        if ext in ['.jpg', '.jpeg', '.png', '.heic', '.webp']:
+            photo_items.append(('bytes', ext, att_bytes))
+
+    if body_html:
+        html_urls = extract_photo_urls_from_html(body_html)
+        for url in html_urls:
+            ext = os.path.splitext(url)[1].lower() or ".jpeg"
+            photo_items.append(('url', ext, url))
+
+    for idx, (p_type, ext, content) in enumerate(photo_items, start=1):
+        photo_ext = ".jpeg" if ext in ['.jpg', '.jpeg', '.png'] else ext
+
+        photo_parts = [log_date, log_name]
+        if job_wo:
+            photo_parts.append(job_wo)
+        photo_parts.append(f"Image{idx}")
+
+        photo_filename = " | ".join(photo_parts) + photo_ext
+
+        if photo_filename in existing_dropbox_files:
+            continue
+
+        print(f"🖼️ Uploading site photo: {photo_filename}")
+        try:
+            if p_type == 'bytes':
+                img_bytes = content
+            else:
+                resp = requests.get(content, timeout=20)
+                img_bytes = resp.content if resp.status_code == 200 else None
+
+            if img_bytes:
+                dest_photo_path = f"{target_folder_path}/{photo_filename}"
+                dbx.files_upload(img_bytes, dest_photo_path, mode=dropbox.files.WriteMode.overwrite)
+                print(f"✅ Photo uploaded: {dest_photo_path}")
+                existing_dropbox_files.add(photo_filename)
+                delta["photos_uploaded"] += 1
+        except Exception as img_err:
+            print(f"⚠️ Photo upload error: {img_err}")
+
+    return delta
+
+
 def run_gmail_djl_uploader(start_index=0, batch_size=10):
     """
     Processes a BATCH of matching emails, not all of them — fetching a
@@ -311,147 +462,28 @@ def run_gmail_djl_uploader(start_index=0, batch_size=10):
     batch_ids = all_email_ids[start_index:start_index + batch_size]
     summary["scanned"] = len(batch_ids)
 
-    for e_id in batch_ids:
-        _, msg_data = mail.fetch(e_id, '(RFC822)')
-        for response_part in msg_data:
-            if isinstance(response_part, tuple):
-                msg = email.message_from_bytes(response_part[1])
-
-                subject_header = msg["Subject"]
-                subject = ""
-                if subject_header:
-                    decoded = decode_header(subject_header)[0]
-                    if isinstance(decoded[0], bytes):
-                        subject = decoded[0].decode(decoded[1] or "utf-8")
-                    else:
-                        subject = str(decoded[0])
-
-                if "Typeform" not in subject and "Daily" not in subject and "Log" not in subject:
-                    continue
-
-                body_text = ""
-                body_html = ""
-                email_attachments = []
-
-                if msg.is_multipart():
-                    for part in msg.get_payload():
-                        content_type = part.get_content_type()
-                        content_disp = str(part.get("Content-Disposition"))
-
-                        if content_type == "text/plain":
-                            body_text += part.get_payload(decode=True).decode(errors="ignore")
-                        elif content_type == "text/html":
-                            body_html += part.get_payload(decode=True).decode(errors="ignore")
-                        elif "attachment" in content_disp or content_type.startswith("image/"):
-                            filename = part.get_filename()
-                            if filename:
-                                email_attachments.append((filename, part.get_payload(decode=True)))
-                else:
-                    body_text = msg.get_payload(decode=True).decode(errors="ignore")
-
-                answers = email_body_to_answers(body_text or body_html)
-                has_real_titles = any(a["field"]["title"] for a in answers)
-
-                if answers and has_real_titles:
-                    name_ans = form_parsers.find_answer(answers, ["your name", "name"])
-                    date_ans = form_parsers.find_answer(answers, ["date"])
-                    log_name = form_parsers._clean_or_none(form_parsers.answer_text(name_ans)) or "Unknown"
-                    raw_date_text = form_parsers.answer_text(date_ans) or ""
-                    log_date = format_date_for_jacque(raw_date_text)
-                    job_wo, pdf_text, _extra = form_parsers.parse_structured_answers(answers, log_name, log_date)
-
-                    # Belt-and-suspenders: if the structured parse still
-                    # couldn't classify the form (so pdf_text would come
-                    # out as an unhelpful "Field (untitled): ..." dump),
-                    # that's strictly worse than the old script's readable
-                    # cleaned-text output — use that instead in this case.
-                    if _extra.get("form_type") == "unrecognized":
-                        pdf_text = clean_email_body_for_pdf(body_text or body_html)
-                else:
-                    # Safety net: no '* Title' fields found at all (an
-                    # unexpected email format) — fall back to the old
-                    # whole-body approach rather than losing the submission.
-                    log_date, log_name, job_wo = parse_metadata_from_email(subject, body_text or body_html)
-                    pdf_text = clean_email_body_for_pdf(body_text or body_html)
-
-                target_folder_path = get_year_subfolder(log_date)
-                existing_dropbox_files = get_existing_dropbox_files(dbx, target_folder_path)
-
-                # 1. PDF
-                parts = [log_date, log_name]
-                if job_wo:
-                    parts.append(job_wo)
-                pdf_filename = " | ".join(parts) + ".pdf"
-
-                if pdf_filename not in existing_dropbox_files:
-                    print(f"\n📄 Generating PDF for Log: {pdf_filename}")
-                    pdf_bytes = generate_pdf_from_text(pdf_filename.replace('.pdf', ''), pdf_text)
-
-                    dest_pdf_path = f"{target_folder_path}/{pdf_filename}"
+    # IMAP fetch itself stays on the main thread (a single connection
+    # shouldn't be driven from multiple threads at once) — but everything
+    # AFTER the fetch (parsing, Dropbox uploads) runs under a hard
+    # per-message timeout, one message at a time, so a single slow/odd
+    # email can never stall the whole batch or blow the function's budget.
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        for e_id in batch_ids:
+            _, msg_data = mail.fetch(e_id, '(RFC822)')
+            for response_part in msg_data:
+                if isinstance(response_part, tuple):
+                    msg = email.message_from_bytes(response_part[1])
+                    future = executor.submit(_process_one_djl_message, dbx, msg)
                     try:
-                        dbx.files_upload(pdf_bytes, dest_pdf_path, mode=dropbox.files.WriteMode.overwrite)
-                        print(f"✅ Uploaded PDF Log: {dest_pdf_path}")
-                        existing_dropbox_files.add(pdf_filename)
-                        summary["pdfs_uploaded"] += 1
-
-                        # Sidecar text file (same content, .txt extension) —
-                        # this is what lets the dashboard show the actual
-                        # description without anyone opening the PDF.
-                        try:
-                            txt_filename = pdf_filename[:-4] + ".txt"
-                            dest_txt_path = f"{target_folder_path}/{txt_filename}"
-                            dbx.files_upload(pdf_text.encode("utf-8"), dest_txt_path, mode=dropbox.files.WriteMode.overwrite)
-                            existing_dropbox_files.add(txt_filename)
-                        except Exception as txt_err:
-                            print(f"⚠️ Sidecar text upload error (non-critical): {txt_err}")
-                    except Exception as pdf_err:
-                        print(f"⚠️ PDF upload error: {pdf_err}")
-                else:
-                    print(f"Skipping PDF Log (already in Dropbox): {pdf_filename}")
-                    summary["skipped"] += 1
-
-                # 2. Photos
-                photo_items = []
-                for att_name, att_bytes in email_attachments:
-                    ext = os.path.splitext(att_name)[1].lower()
-                    if ext in ['.jpg', '.jpeg', '.png', '.heic', '.webp']:
-                        photo_items.append(('bytes', ext, att_bytes))
-
-                if body_html:
-                    html_urls = extract_photo_urls_from_html(body_html)
-                    for url in html_urls:
-                        ext = os.path.splitext(url)[1].lower() or ".jpeg"
-                        photo_items.append(('url', ext, url))
-
-                for idx, (p_type, ext, content) in enumerate(photo_items, start=1):
-                    photo_ext = ".jpeg" if ext in ['.jpg', '.jpeg', '.png'] else ext
-
-                    photo_parts = [log_date, log_name]
-                    if job_wo:
-                        photo_parts.append(job_wo)
-                    photo_parts.append(f"Image{idx}")
-
-                    photo_filename = " | ".join(photo_parts) + photo_ext
-
-                    if photo_filename in existing_dropbox_files:
-                        continue
-
-                    print(f"🖼️ Uploading site photo: {photo_filename}")
-                    try:
-                        if p_type == 'bytes':
-                            img_bytes = content
-                        else:
-                            resp = requests.get(content, timeout=20)
-                            img_bytes = resp.content if resp.status_code == 200 else None
-
-                        if img_bytes:
-                            dest_photo_path = f"{target_folder_path}/{photo_filename}"
-                            dbx.files_upload(img_bytes, dest_photo_path, mode=dropbox.files.WriteMode.overwrite)
-                            print(f"✅ Photo uploaded: {dest_photo_path}")
-                            existing_dropbox_files.add(photo_filename)
-                            summary["photos_uploaded"] += 1
-                    except Exception as img_err:
-                        print(f"⚠️ Photo upload error: {img_err}")
+                        delta = future.result(timeout=25)
+                        summary["pdfs_uploaded"] += delta["pdfs_uploaded"]
+                        summary["photos_uploaded"] += delta["photos_uploaded"]
+                        summary["skipped"] += delta["skipped"]
+                    except Exception as e:
+                        print(f"⚠️ Message processing timed out or failed: {e}")
+    finally:
+        executor.shutdown(wait=False)
 
     mail.logout()
     print("\nGmail scan batch complete!")
