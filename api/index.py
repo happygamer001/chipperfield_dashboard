@@ -724,6 +724,21 @@ def process_submission(payload):
     if not answers:
         raise ValueError("Submission had no answers")
 
+    # Typeform's webhook payload does NOT embed a question's title inside
+    # answers[].field — that only ever has {id, type, ref}. The real
+    # titles live in a completely separate array, form_response.definition
+    # .fields[], keyed by that same field id. Every previous attempt to
+    # read a title straight off an answer was structurally looking in the
+    # wrong place — this was never a "title sometimes missing" problem.
+    # Build the id -> title lookup once and enrich every answer with its
+    # real title before any classification logic runs.
+    definition_fields = form_response.get("definition", {}).get("fields", [])
+    field_id_to_title = {f.get("id"): f.get("title") for f in definition_fields if f.get("id")}
+    for ans in answers:
+        field_id = ans.get("field", {}).get("id")
+        if field_id and field_id_to_title.get(field_id):
+            ans["field"]["title"] = field_id_to_title[field_id]
+
     dbx = get_dropbox_client()
     learned_map = _read_json_from_dropbox(dbx, FIELD_ID_ROLE_MAP_PATH, {})
 
