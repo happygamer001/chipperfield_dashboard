@@ -2094,7 +2094,8 @@ def fix_filenames_from_content():
     try:
         body = request.get_json(silent=True) or {}
         start_index = max(0, int(body.get("start_index", 0)))
-        batch_size = 15  # keeps each request comfortably under the 60s limit
+        batch_size = 5  # cut way down from 15 — real Dropbox latency in
+        # production is apparently higher than local testing could show
 
         dbx = get_dropbox_client()
         all_entries = _collect_all_pdf_entries(dbx)
@@ -2106,7 +2107,7 @@ def fix_filenames_from_content():
         skipped_no_date = 0
         errors = []
 
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=5) as executor:
             results = list(executor.map(lambda item: _fix_one_pdf_filename(dbx, item[0], item[1]), batch))
 
         for kind, val in results:
