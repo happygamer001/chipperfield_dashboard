@@ -200,12 +200,16 @@ def _parse_existing_filename(filename):
 
 def derive_correct_filename(dbx, folder_path, entry):
     """Downloads one PDF, re-derives its correct name from its own content.
-    Returns (new_filename_or_None, reason_if_skipped)."""
+    Returns (new_filename_or_None, reason_or_None, pdf_text_or_None).
+    pdf_text is only populated when the structured parser produced real
+    description text — the legacy regex and filename-fallback paths only
+    ever recover name/date/job, never a description, so nothing gets
+    written over an existing sidecar in those cases."""
     try:
         _, res_dl = dbx.files_download(entry.path_display)
         pdf_bytes = res_dl.content
     except Exception as e:
-        return None, f"download failed ({e})"
+        return None, f"download failed ({e})", None
 
     text = extract_text_from_pdf_bytes(pdf_bytes)
 
@@ -215,6 +219,7 @@ def derive_correct_filename(dbx, folder_path, entry):
     new_name = None
     new_date = None
     new_job_wo = None
+    pdf_text = None
 
     if answers and has_real_titles:
         name_ans = form_parsers.find_answer(answers, ["your name", "name"])
@@ -222,9 +227,16 @@ def derive_correct_filename(dbx, folder_path, entry):
         new_name = form_parsers._clean_or_none(form_parsers.answer_text(name_ans))
         raw_date_text = form_parsers.answer_text(date_ans) or ""
         new_date = format_date_for_jacque(raw_date_text) if raw_date_text else None
-        new_job_wo, _pdf_text, _extra = form_parsers.parse_structured_answers(
+        new_job_wo, extracted_text, extra = form_parsers.parse_structured_answers(
             answers, new_name or "Unknown", new_date or "No_Date"
         )
+        # Only trust this as real description text if the form was
+        # actually recognized — the "unrecognized" fallback inside
+        # parse_structured_answers produces an ugly "Field (untitled):"
+        # dump, which is strictly worse than leaving an existing sidecar
+        # untouched.
+        if extra.get("form_type") != "unrecognized" and extracted_text:
+            pdf_text = extracted_text
 
     if not new_name or not new_date or new_date == "No_Date":
         raw_date, fallback_name, fallback_job_wo = form_parsers.legacy_regex_extract(text, entry.name)
@@ -254,7 +266,7 @@ def derive_correct_filename(dbx, folder_path, entry):
                 new_job_wo = fb_job
 
     if not new_date or new_date == "No_Date" or not new_name:
-        return None, "couldn't determine a name/date from this file"
+        return None, "couldn't determine a name/date from this file", None
 
     parts = [new_date, new_name]
     if new_job_wo:
@@ -262,9 +274,9 @@ def derive_correct_filename(dbx, folder_path, entry):
     new_filename = " | ".join(parts) + ".pdf"
 
     if new_filename == entry.name:
-        return None, "already correct"
+        return None, "already correct", pdf_text
 
-    return new_filename, None
+    return new_filename, None, pdf_text
 
 
 def main():
@@ -291,35 +303,59 @@ def main():
     skipped_count = 0
     error_count = 0
 
+    sidecar_count = 0
+
     for i, (folder_path, entry) in enumerate(all_entries, start=1):
         print(f"[{i}/{total}] {entry.name} ... ", end="", flush=True)
 
-        new_filename, reason = derive_correct_filename(dbx, folder_path, entry)
+        new_filename, reason, pdf_text = derive_correct_filename(dbx, folder_path, entry)
 
-        if new_filename is None:
+        if new_filename is None and reason != "already correct":
             print(f"skip ({reason})")
-            if reason != "already correct":
-                error_count += 1
-            else:
-                skipped_count += 1
+            error_count += 1
             continue
 
-        if args.dry_run:
-            print(f"WOULD RENAME -> {new_filename}")
+        # Figure out the final path (renamed or unchanged) so the sidecar
+        # text, if we have any, lands next to the right PDF either way.
+        final_name = new_filename if new_filename else entry.name
+        txt_filename = final_name[:-4] + ".txt"
+        txt_path = f"{folder_path}/{txt_filename}"
+
+        if new_filename is None:
+            # already correct — no rename needed, but might still refresh the sidecar below
+            print("skip (already correct)", end="")
+            skipped_count += 1
+        elif args.dry_run:
+            print(f"WOULD RENAME -> {new_filename}", end="")
             renamed_count += 1
         else:
             to_path = f"{folder_path}/{new_filename}"
             try:
                 dbx.files_move_v2(entry.path_display, to_path, autorename=True)
-                print(f"renamed -> {new_filename}")
+                print(f"renamed -> {new_filename}", end="")
                 renamed_count += 1
             except Exception as e:
-                print(f"RENAME FAILED ({e})")
+                print(f" RENAME FAILED ({e})")
                 error_count += 1
+                continue
+
+        if pdf_text:
+            if args.dry_run:
+                print("  (would also refresh .txt description)")
+            else:
+                try:
+                    dbx.files_upload(pdf_text.encode("utf-8"), txt_path, mode=dropbox.files.WriteMode.overwrite)
+                    sidecar_count += 1
+                    print("  (description refreshed)")
+                except Exception as e:
+                    print(f"  (sidecar write failed: {e})")
+        else:
+            print()
 
     print(f"\n{'=' * 50}")
     print(f"Done. {renamed_count} {'would be renamed' if args.dry_run else 'renamed'}, "
-          f"{skipped_count} already correct, {error_count} error(s)/skipped.")
+          f"{skipped_count} already correct, {error_count} error(s)/skipped, "
+          f"{sidecar_count} description(s) {'would be refreshed' if args.dry_run else 'refreshed'}.")
 
 
 if __name__ == "__main__":
