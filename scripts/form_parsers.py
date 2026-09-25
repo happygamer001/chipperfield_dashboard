@@ -19,7 +19,7 @@ import re
 # at all, or an unfamiliar one. Real files are inconsistent: some lines
 # use '*', some use '•', some use nothing.
 KNOWN_FIELD_LABELS = [
-    "Your Name", "Name", "Date", "Today's weather", "Crew",
+    "Your Name", "Name", "Date", "Today's date", "Today's weather", "Crew",
     "Today's temperature", "Start Time", "Job number", "Workorder #",
     "Workorder Name", "Service work order?", "Equipment Used", "Equipment #",
     "Mileage to work site", "Workorder Completed", "To do:",
@@ -462,13 +462,13 @@ def legacy_regex_extract(text, original_filename=""):
         job_wo = f"J{job_match.group(1)}"
     elif wo_match:
         job_wo = f"{wo_match.group(1).upper()}{wo_match.group(2)}"
-    elif re.search(r'\boffice\b', combined_source, re.IGNORECASE):
+    elif re.search(r'\boffice\b', text, re.IGNORECASE):
         job_wo = "Office"
-    elif re.search(r'\bshop\b', combined_source, re.IGNORECASE):
+    elif re.search(r'\bshop\b', text, re.IGNORECASE):
         job_wo = "Shop"
-    elif re.search(r'Daily\s*Management\s*Log', combined_source, re.IGNORECASE):
+    elif re.search(r'Daily\s*Management\s*Log', text, re.IGNORECASE):
         job_wo = "Daily Management Log"
-    elif re.search(r'Equipment\s*Repair', combined_source, re.IGNORECASE):
+    elif re.search(r'Equipment\s*Repair', text, re.IGNORECASE):
         job_wo = "Equipment Repair"
 
     name_match = re.search(r'(?:Your\s*name|Name)\s*[:\n\r]*\s*([A-Za-z\s\.]+)', text, re.IGNORECASE)

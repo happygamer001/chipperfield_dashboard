@@ -1,37 +1,146 @@
 """
-Run this from your own terminal to retroactively fix Daily Job Log PDF
-filenames — re-derives each file's real Name/Date/Job straight from its
-own text content, the same logic the admin page's "Fix Filenames" button
-uses. The only difference is WHERE it runs: this has no 60-second
-function limit, so it can work through the entire archive in one go
-instead of needing to be batched to survive Vercel's timeout.
+Run this from your own terminal to:
+  1. Retroactively fix Daily Job Log PDF filenames — re-derives each
+     file's real Name/Date/Job straight from its own text content, the
+     same logic the admin page's "Fix Filenames" button uses.
+  2. Sync Kevin's Daily Management Form entries from Notion into Dropbox
+     as PDFs, matching everyone else's format, so his entries live
+     alongside the rest instead of only being reachable through the
+     separate Notion-specific dashboard endpoint.
+
+The only difference from running these via the website is WHERE this
+runs: your terminal has no 60-second function limit, so it can work
+through the entire archive in one go instead of needing to be batched to
+survive Vercel's timeout.
 
 SETUP (one time):
   1. Make sure you're in the project's scripts/ folder, or that
      scripts/ is on your Python path.
   2. Install dependencies if you haven't already:
        pip install dropbox pypdf reportlab requests beautifulsoup4
-  3. Set the same three Dropbox environment variables the deployed app
-     uses (get these from Vercel's project settings — Environment
-     Variables — or wherever they're stored):
+  3. Set these environment variables (get the values from Vercel's
+     project settings — Environment Variables):
        export DROPBOX_APP_KEY="..."
        export DROPBOX_APP_SECRET="..."
        export DROPBOX_REFRESH_TOKEN="..."
+       export NOTION_TOKEN="..."
 
 RUN:
-    python3 fix_filenames_local.py
-
-    Add --dry-run to see what WOULD be renamed without actually
-    renaming anything:
-    python3 fix_filenames_local.py --dry-run
+    python3 fix_filenames_local.py              # both passes
+    python3 fix_filenames_local.py --dry-run    # preview only, nothing changes
+    python3 fix_filenames_local.py --skip-kevin       # filename fix only
+    python3 fix_filenames_local.py --skip-filenames   # Kevin sync only
 """
 
 import sys
 import argparse
 import dropbox
 
-from dropbox_pdf_utils import get_dropbox_client, extract_text_from_pdf_bytes, format_date_for_jacque, DROPBOX_BASE_FOLDER
+from dropbox_pdf_utils import (
+    get_dropbox_client, extract_text_from_pdf_bytes, format_date_for_jacque,
+    DROPBOX_BASE_FOLDER, get_year_subfolder, generate_pdf_from_text,
+)
 import form_parsers
+import notion_utils
+
+NOTION_KEVIN_FORM_DATASOURCE_ID = "3ab4562c-e56f-8029-b87a-000b05352beb"
+
+_KEVIN_FORM_SLOT_FIELDS = [
+    ("1 What project did you work on today? ", "1 What did you do for this project? (1)", "1 How long did that take? (2) 1", "1 What is the next action for this project? (2) 1"),
+    ("2 What project did you work on today? (3)", "2 What did you do for this project? (2)", "2 How long did that take? (2)", "2 What is the next action for this project? (2)"),
+    ("3 What project did you work on today? (4)", "3 What did you do for this project? (3)", "3 How long did that take? (4) 1", "3 What is the next action for this project? (4) 1"),
+    ("4 What project did you work on today? (5)", "4 What did you do for this project? (4)", "4 How long did that take? (4)", "4 What is the next action for this project? (4)"),
+    ("5 What project did you work on today? (6)", "5 What did you do for this project? (5)", "5 How long did that take? (5)", "5 What is the next action for this project? (6)"),
+    ("6 What project did you work on today? (7)", "6 What did you do for this project? (6)", "6 How long did that take? (7)", "6 What is the next action for this project? (7)"),
+    ("7 What project did you work on today? (8)", "7 What did you do for this project? (7)", "7 How long did that take? (8)", "7 What is the next action for this project? (8)"),
+]
+
+
+def sync_kevin_notion_logs(dbx, dry_run=False):
+    """
+    Pulls Kevin's Daily Management Form entries straight from Notion (the
+    same data source the dashboard already reads) and files each one as a
+    PDF + .txt sidecar in Dropbox, matching the same naming convention as
+    every other Daily Management Log — so Kevin's entries live alongside
+    everyone else's instead of only being reachable through the separate
+    Notion-specific endpoint.
+    """
+    print("\n--- Syncing Kevin's Notion Daily Management Form entries ---")
+    pages = notion_utils.query_data_source(NOTION_KEVIN_FORM_DATASOURCE_ID, page_size=100)
+    print(f"Found {len(pages)} entries in Notion.\n")
+
+    synced = 0
+    skipped = 0
+    errors = 0
+
+    for page in pages:
+        props = page.get("properties", {})
+        raw_date = notion_utils.prop_date(props, "Date")
+        name = notion_utils.prop_people(props, "Name") or "Kevin"
+
+        if not raw_date:
+            print(f"  skip (no date on this entry)")
+            skipped += 1
+            continue
+
+        log_date = format_date_for_jacque(raw_date)
+
+        lines = []
+        for project_f, did_f, how_long_f, next_f in _KEVIN_FORM_SLOT_FIELDS:
+            project = notion_utils.prop_text(props, project_f)
+            did = notion_utils.prop_text(props, did_f)
+            how_long = notion_utils.prop_text(props, how_long_f)
+            next_action = notion_utils.prop_text(props, next_f)
+
+            if not (project or did):
+                continue
+
+            line = f"{project or 'Project'}: {did or ''}"
+            if how_long:
+                line += f" ({how_long})"
+            if next_action:
+                line += f" — Next: {next_action}"
+            lines.append(line)
+
+        pdf_text = "\n".join(lines)
+        if not pdf_text:
+            print(f"  [{log_date}] {name} ... skip (no project content on this entry)")
+            skipped += 1
+            continue
+
+        target_folder_path = get_year_subfolder(log_date)
+        pdf_filename = f"{log_date} | {name} | Daily Management Log.pdf"
+        dest_pdf_path = f"{target_folder_path}/{pdf_filename}"
+
+        # Skip if already synced (same de-dupe approach as everywhere else)
+        try:
+            dbx.files_get_metadata(dest_pdf_path)
+            print(f"  [{log_date}] {name} ... skip (already synced)")
+            skipped += 1
+            continue
+        except dropbox.exceptions.ApiError:
+            pass  # doesn't exist yet, proceed
+
+        if dry_run:
+            print(f"  [{log_date}] {name} ... WOULD SYNC -> {pdf_filename}")
+            synced += 1
+            continue
+
+        try:
+            pdf_bytes = generate_pdf_from_text(pdf_filename.replace(".pdf", ""), pdf_text)
+            dbx.files_upload(pdf_bytes, dest_pdf_path, mode=dropbox.files.WriteMode.overwrite)
+
+            txt_filename = pdf_filename[:-4] + ".txt"
+            dest_txt_path = f"{target_folder_path}/{txt_filename}"
+            dbx.files_upload(pdf_text.encode("utf-8"), dest_txt_path, mode=dropbox.files.WriteMode.overwrite)
+
+            print(f"  [{log_date}] {name} ... synced -> {pdf_filename}")
+            synced += 1
+        except Exception as e:
+            print(f"  [{log_date}] {name} ... FAILED ({e})")
+            errors += 1
+
+    print(f"\nKevin sync done: {synced} {'would be synced' if dry_run else 'synced'}, {skipped} skipped, {errors} error(s).")
 
 
 def collect_all_pdf_entries(dbx):
@@ -117,12 +226,20 @@ def derive_correct_filename(dbx, folder_path, entry):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Retroactively fix Daily Job Log PDF filenames")
-    parser.add_argument("--dry-run", action="store_true", help="Show what would be renamed without renaming")
+    parser = argparse.ArgumentParser(description="Retroactively fix Daily Job Log PDF filenames and/or sync Kevin's Notion logs")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would happen without actually changing anything")
+    parser.add_argument("--skip-filenames", action="store_true", help="Skip the filename-fixing pass")
+    parser.add_argument("--skip-kevin", action="store_true", help="Skip syncing Kevin's Notion entries")
     args = parser.parse_args()
 
     print("Connecting to Dropbox...")
     dbx = get_dropbox_client()
+
+    if not args.skip_kevin:
+        sync_kevin_notion_logs(dbx, dry_run=args.dry_run)
+
+    if args.skip_filenames:
+        return
 
     all_entries = collect_all_pdf_entries(dbx)
     total = len(all_entries)
