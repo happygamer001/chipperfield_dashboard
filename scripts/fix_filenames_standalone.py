@@ -14,7 +14,9 @@ SETUP (one time):
   1. Install dependencies:
        pip3 install dropbox pypdf reportlab requests beautifulsoup4
   2. Set these environment variables (get the values from Vercel's
-     project settings -> Environment Variables):
+     project settings -> Environment Variables). Watch for stray spaces
+     inside the quotes when you paste -- that alone will cause an
+     "invalid_client" error from Dropbox:
        export DROPBOX_APP_KEY="..."
        export DROPBOX_APP_SECRET="..."
        export DROPBOX_REFRESH_TOKEN="..."
@@ -789,6 +791,30 @@ def collect_all_pdf_entries(dbx):
     return entries_flat
 
 
+def _parse_existing_filename(filename):
+    """
+    Best-effort parse of an ALREADY-formatted filename's own segments —
+    used ONLY as a last resort when content-based extraction finds
+    nothing at all. Returns (date_yymmdd, name, job_wo) or (None, None,
+    None) if the filename doesn't look like a valid parseable date/name.
+    """
+    stem = filename[:-4] if filename.lower().endswith(".pdf") else filename
+    parts = [p.strip() for p in stem.split("|") if p.strip()]
+    if len(parts) < 2:
+        return None, None, None
+
+    date_part = parts[0]
+    name_part = parts[1]
+    job_part = parts[2] if len(parts) > 2 else ""
+
+    if not (len(date_part) == 6 and date_part.isdigit()):
+        return None, None, None
+    if not name_part or name_part.lower() in ("unknown", "no_date"):
+        return None, None, None
+
+    return date_part, name_part, job_part
+
+
 def derive_correct_filename(dbx, folder_path, entry):
     """Downloads one PDF, re-derives its correct name from its own content.
     Returns (new_filename_or_None, reason_if_skipped)."""
@@ -825,6 +851,24 @@ def derive_correct_filename(dbx, folder_path, entry):
             new_date = format_date_for_jacque(raw_date) if raw_date else None
         if not new_job_wo:
             new_job_wo = fallback_job_wo
+
+    if not new_date or new_date == "No_Date" or not new_name:
+        # Last resort: content gave us nothing usable at all — check
+        # whether the EXISTING filename already has a valid-looking
+        # name/date sitting in it (adapted from the team's original
+        # fix_no_date_files.py, which had this same safety net). This
+        # only fires when content extraction found nothing, so it can't
+        # override or contaminate a real content-based result — it just
+        # stops a perfectly fine existing filename from being skipped
+        # with an alarming "couldn't determine" message.
+        fb_date, fb_name, fb_job = _parse_existing_filename(entry.name)
+        if fb_date and fb_name:
+            if not new_date or new_date == "No_Date":
+                new_date = fb_date
+            if not new_name:
+                new_name = fb_name
+            if not new_job_wo:
+                new_job_wo = fb_job
 
     if not new_date or new_date == "No_Date" or not new_name:
         return None, "couldn't determine a name/date from this file"
