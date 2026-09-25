@@ -970,19 +970,40 @@ document.getElementById("fetch-logs-btn").addEventListener("click", async () => 
 
   btn.disabled = true;
   btn.textContent = "Fetching…";
-  statusEl.textContent = "Scanning the inbox — this can take a little while.";
-  try {
-    const res = await fetch("/api/upload-daily-logs");
-    let data;
-    try {
-      data = await res.json();
-    } catch (parseErr) {
-      throw new Error(`Server error (status ${res.status})`);
-    }
-    if (data.status !== "ok") throw new Error(data.message || "Fetch failed");
 
-    const s = data.summary || {};
-    statusEl.textContent = `Done — scanned ${s.scanned ?? 0}, uploaded ${s.pdfs_uploaded ?? 0} log(s) and ${s.photos_uploaded ?? 0} photo(s), skipped ${s.skipped ?? 0} already on file.`;
+  const combined = { scanned: 0, pdfs_uploaded: 0, photos_uploaded: 0, skipped: 0 };
+  let startIndex = 0;
+  let total = null;
+
+  try {
+    while (true) {
+      statusEl.textContent = total === null ? "Listing emails…" : `Scanning ${startIndex} of ${total}…`;
+
+      const res = await fetch("/api/upload-daily-logs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ start_index: startIndex })
+      });
+      let data;
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        throw new Error(`Server error (status ${res.status})`);
+      }
+      if (data.status !== "ok") throw new Error(data.message || "Fetch failed");
+
+      total = data.total;
+      const s = data.summary || {};
+      combined.scanned += s.scanned ?? 0;
+      combined.pdfs_uploaded += s.pdfs_uploaded ?? 0;
+      combined.photos_uploaded += s.photos_uploaded ?? 0;
+      combined.skipped += s.skipped ?? 0;
+
+      if (data.done || total === 0) break;
+      startIndex = data.next_index;
+    }
+
+    statusEl.textContent = `Done — scanned ${combined.scanned}, uploaded ${combined.pdfs_uploaded} log(s) and ${combined.photos_uploaded} photo(s), skipped ${combined.skipped} already on file.`;
     loadDailyLogsFromDropbox();
   } catch (err) {
     statusEl.textContent = "Failed: " + err.message;

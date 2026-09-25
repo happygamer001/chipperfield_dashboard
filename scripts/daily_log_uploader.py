@@ -275,7 +275,15 @@ def extract_photo_urls_from_html(html_content):
 # MAIN EXECUTION
 # ==========================================
 
-def run_gmail_djl_uploader():
+def run_gmail_djl_uploader(start_index=0, batch_size=10):
+    """
+    Processes a BATCH of matching emails, not all of them — fetching a
+    message's full content over IMAP is the expensive part, and doing
+    that for every email in the whole search window in one call is what
+    started timing out as volume grew (same class of problem the
+    Fix Filenames tool hit, fixed the same way here: batch + continuation
+    cursor, with the caller looping until done).
+    """
     email_user = _require_env("EMAIL_USER")
     email_pass = _require_env("EMAIL_PASS")
 
@@ -290,16 +298,20 @@ def run_gmail_djl_uploader():
 
     search_query = f'(SINCE "{search_since_date}")'
     status, messages = mail.search(None, search_query)
-    email_ids = messages[0].split()
+    all_email_ids = messages[0].split()
+    total = len(all_email_ids)
 
-    summary = {"scanned": len(email_ids), "pdfs_uploaded": 0, "photos_uploaded": 0, "skipped": 0}
+    summary = {"scanned": 0, "pdfs_uploaded": 0, "photos_uploaded": 0, "skipped": 0}
 
-    if not email_ids:
+    if not all_email_ids:
         print("No emails found.")
         mail.logout()
-        return summary
+        return {"summary": summary, "done": True, "next_index": None, "total": 0}
 
-    for e_id in email_ids:
+    batch_ids = all_email_ids[start_index:start_index + batch_size]
+    summary["scanned"] = len(batch_ids)
+
+    for e_id in batch_ids:
         _, msg_data = mail.fetch(e_id, '(RFC822)')
         for response_part in msg_data:
             if isinstance(response_part, tuple):
@@ -442,10 +454,24 @@ def run_gmail_djl_uploader():
                         print(f"⚠️ Photo upload error: {img_err}")
 
     mail.logout()
-    print("\nGmail scan and upload complete!")
-    return summary
+    print("\nGmail scan batch complete!")
+
+    next_index = start_index + len(batch_ids)
+    done = next_index >= total
+
+    return {
+        "summary": summary,
+        "done": done,
+        "next_index": None if done else next_index,
+        "total": total,
+    }
 
 
 if __name__ == "__main__":
-    result = run_gmail_djl_uploader()
-    print(result)
+    start_index = 0
+    while True:
+        result = run_gmail_djl_uploader(start_index=start_index)
+        print(result)
+        if result["done"]:
+            break
+        start_index = result["next_index"]

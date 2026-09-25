@@ -26,6 +26,7 @@ import hmac
 import hashlib
 import base64
 import datetime
+import time
 from functools import wraps
 
 import requests
@@ -794,12 +795,41 @@ def typeform_webhook():
 # /api/upload-daily-logs (legacy/backup manual trigger)
 # ==========================================
 
-@app.route("/api/upload-daily-logs", methods=["GET"])
+@app.route("/api/upload-daily-logs", methods=["GET", "POST"])
 @require_role_or_cron("admin")
 def upload_daily_logs():
     try:
-        summary = run_gmail_djl_uploader()
-        return jsonify({"status": "ok", "summary": summary})
+        if request.method == "POST":
+            # Admin button — processes exactly one batch; the frontend
+            # loops itself, showing live progress between calls.
+            body = request.get_json(silent=True) or {}
+            start_index = int(body.get("start_index", 0))
+            result = run_gmail_djl_uploader(start_index=start_index, batch_size=10)
+            return jsonify({"status": "ok", **result})
+        else:
+            # GET (the hourly Cron trigger, or a manual browser visit) —
+            # can't be interactively driven the way the button's POST loop
+            # is, so this loops through batches itself, server-side,
+            # stopping once done or once it's used up a safe chunk of the
+            # function's time budget (whatever's left gets caught on the
+            # next hourly run).
+            start_time = time.time()
+            start_index = 0
+            combined_summary = {"scanned": 0, "pdfs_uploaded": 0, "photos_uploaded": 0, "skipped": 0}
+            total = 0
+            done = True
+            while True:
+                result = run_gmail_djl_uploader(start_index=start_index, batch_size=10)
+                for k in combined_summary:
+                    combined_summary[k] += result["summary"][k]
+                total = result["total"]
+                done = result["done"]
+                if done:
+                    break
+                start_index = result["next_index"]
+                if time.time() - start_time > 45:  # safety margin under the 60s limit
+                    break
+            return jsonify({"status": "ok", "summary": combined_summary, "done": done, "total": total})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
