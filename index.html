@@ -167,6 +167,21 @@
     padding: 10px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; margin-top: 4px;
   }
   #login-error { color: var(--danger-text); font-size: 12px; margin-top: 8px; min-height: 16px; }
+
+  /* ---- Log file opening + preview ---- */
+  .lf-links { margin: 8px 0 0; font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .lf-links a { color: var(--green-dark); text-decoration: none; }
+  .lf-overlay { position: fixed; inset: 0; background: rgba(20,24,20,.55); z-index: 1000; display: flex; align-items: flex-end; justify-content: center; }
+  .lf-modal { background: var(--surface, #fff); width: 100%; max-width: 720px; max-height: 92vh; overflow-y: auto; border-radius: 18px 18px 0 0; padding: 18px 18px 24px; }
+  @media (min-width: 760px) { .lf-overlay { align-items: center; } .lf-modal { border-radius: 18px; } }
+  .lf-modal h3 { margin: 0 0 2px; font-size: 17px; }
+  .lf-modal .lf-sub { margin: 0 0 12px; font-size: 12px; color: var(--ink-soft); }
+  .lf-text { white-space: pre-wrap; font-size: 14px; line-height: 1.5; margin: 0 0 14px; }
+  .lf-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin: 0 0 14px; }
+  .lf-photos img { width: 100%; height: 110px; object-fit: cover; border-radius: 10px; cursor: pointer; background: var(--line, #eee); }
+  .lf-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .lf-actions button { padding: 9px 14px; border-radius: 10px; border: 1px solid var(--line, #ddd); background: var(--surface, #fff); color: inherit; font-size: 13px; cursor: pointer; }
+  .lf-actions button.primary { background: var(--green-dark); color: #fff; border-color: var(--green-dark); }
 </style>
 </head>
 <body>
@@ -640,11 +655,9 @@ function renderQueue() {
         </div>
       `;
     } else {
-      const dbxLine = item.dropboxViewUrl
-        ? `<p style="margin:0 0 10px;"><a href="${item.dropboxViewUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View PDF ↗</a></p>`
-        : (item.dropboxPdfPath
-            ? `<p class="field-label">Source file</p><input type="text" value="${item.dropboxPdfPath}" readonly>`
-            : "");
+      const dbxLine = item.dropboxPdfPath
+        ? logFileLinksHtml({ title: item.title, subtitle: item.subtitle || "", summary: item.fullText || item.summary || "", pdfPath: item.dropboxPdfPath, photoPaths: item.photoPaths || [] })
+        : "";
       const notionLine = item.notionUrl
         ? `<p style="margin:0 0 10px;"><a href="${item.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>`
         : "";
@@ -1232,8 +1245,9 @@ async function loadDailyLogsFromDropbox() {
         tagClass: isMgmtLog ? "ok" : (hasJob ? "ok" : "warn"),
         tagText: isMgmtLog ? "Management log" : (hasJob ? "On track" : "Unmatched"),
         summary: "",
+        fullText: log.summary || "",
         dropboxPdfPath: log.dropbox_pdf_path,
-        dropboxViewUrl: log.dropbox_view_url,
+        photoPaths: log.photo_paths || [],
         status: "pending"
       });
     });
@@ -1415,5 +1429,102 @@ document.getElementById("logout-btn").addEventListener("click", async () => {
 checkSession();
 </script>
 
+
+<script>
+/* ---- Opening Daily Job Log files (PDFs, photos) on click ----
+   Links are made when someone taps, not when the page loads. The file then
+   comes straight from Dropbox in a new tab; nothing passes through Vercel. */
+const LOG_PREVIEWS = [];
+function logFileRegister(entry) { LOG_PREVIEWS.push(entry); return LOG_PREVIEWS.length - 1; }
+function logFileAttr(path) { return encodeURIComponent(path); }
+
+async function logFileLinks(paths, mode) {
+  const res = await fetch("/api/log-links", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paths, mode })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.status !== "ok") throw new Error(data.message || ("Server error (" + res.status + ")"));
+  return data.links || {};
+}
+
+async function openLogFile(path, mode) {
+  // Open the tab right away (inside the tap) so phone pop-up blockers allow it.
+  const w = window.open("", "_blank");
+  if (w) { try { w.document.write("<p style='font-family:sans-serif;padding:24px;color:#555'>Opening file…</p>"); } catch (e) {} }
+  try {
+    const links = await logFileLinks([path], mode || "view");
+    const link = links[path];
+    if (!link || !link.url) throw new Error("No link returned");
+    if (w) { w.location.href = link.url; } else { window.location.href = link.url; }
+  } catch (err) {
+    if (w) w.close();
+    alert("Couldn't open that file right now (" + err.message + "). Please try again in a moment.");
+  }
+}
+
+function closeLogPreview() { const o = document.getElementById("lf-overlay"); if (o) o.remove(); }
+
+async function showLogPreview(idx) {
+  const e = LOG_PREVIEWS[idx];
+  if (!e) return;
+  closeLogPreview();
+  const overlay = document.createElement("div");
+  overlay.id = "lf-overlay"; overlay.className = "lf-overlay";
+  const modal = document.createElement("div"); modal.className = "lf-modal";
+  const h = document.createElement("h3"); h.textContent = e.title || "";
+  const sub = document.createElement("p"); sub.className = "lf-sub"; sub.textContent = e.subtitle || "";
+  const txt = document.createElement("p"); txt.className = "lf-text";
+  txt.textContent = e.summary || "No details captured for this entry.";
+  const photos = document.createElement("div"); photos.className = "lf-photos";
+  const actions = document.createElement("div"); actions.className = "lf-actions";
+  const mk = (label, cls, fn) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.addEventListener("click", fn); actions.appendChild(b); };
+  if (e.pdfPath) {
+    mk("Open PDF", "primary", () => openLogFile(e.pdfPath, "view"));
+    mk("Download", "", () => openLogFile(e.pdfPath, "download"));
+  }
+  mk("Close", "", closeLogPreview);
+  modal.append(h, sub, txt, photos, actions);
+  overlay.appendChild(modal);
+  overlay.addEventListener("click", ev => { if (ev.target === overlay) closeLogPreview(); });
+  document.body.appendChild(overlay);
+
+  if ((e.photoPaths || []).length) {
+    try {
+      const links = await logFileLinks(e.photoPaths, "temp");
+      e.photoPaths.forEach(p => {
+        const l = links[p]; if (!l || !l.url) return;
+        const img = document.createElement("img"); img.src = l.url; img.loading = "lazy"; img.alt = "Site photo";
+        img.addEventListener("click", () => window.open(l.url, "_blank"));
+        photos.appendChild(img);
+      });
+    } catch (err) { /* photos are optional in the preview */ }
+  }
+}
+
+
+function logFileLinksHtml(entry) {
+  // Preview / Open PDF / Download for one log entry (needs entry.pdfPath, entry.photoPaths).
+  if (!entry.pdfPath && !(entry.photoPaths || []).length) return "";
+  const idx = logFileRegister(entry);
+  const parts = [`<a href="#" data-preview="${idx}">Preview</a>`];
+  if (entry.pdfPath) {
+    parts.push(`<a href="#" data-open-path="${logFileAttr(entry.pdfPath)}" data-open-mode="view">Open PDF ↗</a>`);
+    parts.push(`<a href="#" data-open-path="${logFileAttr(entry.pdfPath)}" data-open-mode="download">Download</a>`);
+  }
+  (entry.photoPaths || []).forEach((p, i) => {
+    parts.push(`<a href="#" data-open-path="${logFileAttr(p)}" data-open-mode="view">Photo ${i + 1} ↗</a>`);
+  });
+  return `<div class="lf-links">${parts.join("")}</div>`;
+}
+
+document.addEventListener("click", ev => {
+  const open = ev.target.closest("[data-open-path]");
+  if (open) { ev.preventDefault(); openLogFile(decodeURIComponent(open.dataset.openPath), open.dataset.openMode || "view"); return; }
+  const prev = ev.target.closest("[data-preview]");
+  if (prev) { ev.preventDefault(); showLogPreview(parseInt(prev.dataset.preview, 10)); }
+});
+document.addEventListener("keydown", ev => { if (ev.key === "Escape") closeLogPreview(); });
+</script>
 </body>
 </html>
