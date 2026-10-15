@@ -12,6 +12,11 @@ in through, instead of the email path silently being lower quality.
 """
 
 import re
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import djl_titles  # shared title rules (copied from the local pipeline script)
 
 # Every field label we've seen across the three known forms (Daily Job
 # Log, Management Log, Fab Shop Log) plus real historical PDFs — used so a
@@ -176,34 +181,14 @@ def _clean_or_none(text):
 
 def _extract_job_numbers(text):
     """
-    Pulls ALL Job/Work Order numbers out of free text (not just the first),
-    so a field like '21764, 21761, shop' produces two tags, not one.
-    A 5-digit number starting with '516' is Chipperfield's Work Order
-    numbering convention — tagged WO instead of J.
+    Job/Work Order tags for a free-text answer, using the SAME rules as
+    Chicken's local daily_job_logs.py (see djl_titles.py): 4 digits -> J####,
+    5 digits -> WO#####, several numbers -> all of them, J516 placeholder
+    dropped when a real WO is present.
     """
     if not text:
         return []
-    tags = []
-    seen = set()
-
-    for m in re.finditer(r'\bJ\s*(\d{3,5})\b', text, re.IGNORECASE):
-        tag = f"J{m.group(1)}"
-        if tag not in seen:
-            tags.append(tag)
-            seen.add(tag)
-    for m in re.finditer(r'\b(WO|S)\s*(\d{3,5})\b', text, re.IGNORECASE):
-        tag = f"{m.group(1).upper()}{m.group(2)}"
-        if tag not in seen:
-            tags.append(tag)
-            seen.add(tag)
-    for m in re.finditer(r'\b(\d{3,5})\b', text):
-        num = m.group(1)
-        tag = f"WO{num}" if (len(num) == 5 and num.startswith("516")) else f"J{num}"
-        if tag not in seen:
-            tags.append(tag)
-            seen.add(tag)
-
-    return tags
+    return djl_titles.id_tags(text)
 
 
 def _extract_job_number(text):

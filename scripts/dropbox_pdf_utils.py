@@ -11,12 +11,18 @@ Used by:
 import os
 import re
 import io
+import json
+import time
 import datetime
 import dropbox
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import djl_titles
 
 
 def require_env(name):
@@ -118,13 +124,10 @@ def build_filenames(log_date_yymmdd, log_name, job_wo):
     pdf_filename = " | ".join(parts) + ".pdf"
 
     def photo_filename(idx, ext=".jpeg"):
-        # Job/WO comes BEFORE name for photos (opposite of the report
-        # filename) — lets Calvin scan filenames to see which job a photo
-        # belongs to at a glance without opening it.
-        photo_parts = [log_date_yymmdd]
+        # Same order as the local pipeline script: date | name | job | ImageN
+        photo_parts = [log_date_yymmdd, log_name]
         if job_wo:
             photo_parts.append(job_wo)
-        photo_parts.append(log_name)
         photo_parts.append(f"Image{idx}")
         return " | ".join(photo_parts) + ext
 
@@ -286,7 +289,10 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
             # PDF/TXT: this convention has always been "name, then job/WO"
             segs = parsed["segments"]
             name = segs[0]
-            job_wo = segs[1] if len(segs) > 1 else ""
+            raw_job_wo = segs[1] if len(segs) > 1 else ""
+            # Titles written under the old rule (any non-516 5-digit number
+            # labeled J) are shown under the current rule (5 digits = WO).
+            job_wo = djl_titles.normalize_identifier(raw_job_wo)
             ext = parsed["ext"]
 
             key = (parsed["date"], name, job_wo)
@@ -303,6 +309,16 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
                 }
 
             if ext == "pdf":
+                existing_pdf = entries_by_key[key].get("dropbox_pdf_path")
+                # Same log under both an old-rule and a new-rule title (e.g.
+                # J21764 and WO21764): show one card, keep the new-rule file.
+                if existing_pdf and entries_by_key[key].get("_raw_job") == job_wo:
+                    continue
+                if existing_pdf and raw_job_wo != job_wo:
+                    continue
+                entries_by_key[key]["_raw_job"] = raw_job_wo
+                entries_by_key[key]["pdf_id"] = getattr(entry, "id", None)
+                entries_by_key[key]["pdf_rev"] = getattr(entry, "rev", None)
                 entries_by_key[key]["dropbox_pdf_path"] = entry.path_display
                 # Dropbox's own upload timestamp for this file — used to
                 # match "Unknown"-named entries to the right CSV row by
@@ -310,7 +326,8 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
                 if getattr(entry, "client_modified", None):
                     entries_by_key[key]["uploaded_at"] = entry.client_modified.isoformat() + "Z"
             elif ext == "txt":
-                entries_by_key[key]["dropbox_txt_path"] = entry.path_display
+                if not entries_by_key[key].get("dropbox_txt_path") or raw_job_wo == job_wo:
+                    entries_by_key[key]["dropbox_txt_path"] = entry.path_display
 
     # Second pass: match each photo to its report by comparing segments as
     # an unordered set — correctly handles both the old photo convention
@@ -318,7 +335,7 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
     # needing to know which is which, and without ever misreading the
     # "ImageN" suffix as a job/WO value the way the old single regex did.
     for entry, parsed, log_date in photo_files:
-        segs = parsed["segments"]
+        segs = [djl_titles.normalize_identifier(x) for x in parsed["segments"]]
         seg_set = frozenset(segs)
         date_str = parsed["date"]
 
@@ -357,62 +374,210 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
     results = list(entries_by_key.values())
     results.sort(key=lambda r: r["date"], reverse=True)
 
-    # All of this is independent I/O (one Dropbox API call each) that was
-    # previously done one at a time — with several entries each having
-    # several photos, that serialized into 16-32+ SECOND page loads and
-    # was likely starving other concurrent requests on the same server
-    # process. Run everything in parallel instead.
-    def _fetch_temp_link(path):
-        try:
-            return dbx.files_get_temporary_link(path).link
-        except Exception:
-            return None
-
-    def _fetch_txt_content(path):
-        try:
-            _, res = dbx.files_download(path)
-            return res.content.decode("utf-8", errors="ignore").strip()
-        except Exception:
-            return None
-
-    jobs = []  # (result_dict, kind, extra) — extra is a photo index for photo jobs
-    for r in results:
-        if r["dropbox_pdf_path"]:
-            jobs.append((r, "pdf", None))
-        if r["dropbox_txt_path"]:
-            jobs.append((r, "txt", None))
-        for i, path in enumerate(r.get("photo_paths", [])):
-            jobs.append((r, "photo", i))
-        r["dropbox_view_url"] = None
-        r["summary"] = None
-        r["photo_urls"] = [None] * len(r.get("photo_paths", []))
-
-    with ThreadPoolExecutor(max_workers=16) as executor:
-        future_to_job = {}
-        for r, kind, extra in jobs:
-            if kind == "pdf":
-                future = executor.submit(_fetch_temp_link, r["dropbox_pdf_path"])
-            elif kind == "txt":
-                future = executor.submit(_fetch_txt_content, r["dropbox_txt_path"])
-            else:
-                future = executor.submit(_fetch_temp_link, r["photo_paths"][extra])
-            future_to_job[future] = (r, kind, extra)
-
-        for future in as_completed(future_to_job):
-            r, kind, extra = future_to_job[future]
-            value = future.result()
-            if kind == "pdf":
-                r["dropbox_view_url"] = value
-            elif kind == "txt":
-                r["summary"] = value
-            else:
-                r["photo_urls"][extra] = value
+    # No Dropbox links are made here any more. PDFs and photos are opened on
+    # click through /api/log-links, so loading the dashboard is one folder
+    # listing plus a cached-text lookup instead of one API call per file.
+    _attach_summaries(dbx, results)
 
     for r in results:
-        r["photo_urls"] = [u for u in r["photo_urls"] if u]  # drop any that failed
-        del r["photo_paths"]  # internal only — URLs are what the frontend needs
+        r.pop("_raw_job", None)
+        r["has_pdf"] = bool(r.get("dropbox_pdf_path"))
+        r["photo_paths"] = sorted(r.get("photo_paths", []))
+        r["photo_count"] = len(r["photo_paths"])
+        r.pop("pdf_id", None)
+        r.pop("pdf_rev", None)
 
     return results
+
+
+# ==========================================
+# SAVED LOG TEXT (read each PDF once, remember it)
+# ==========================================
+
+LOG_TEXT_CACHE_PATH = os.environ.get(
+    "LOG_TEXT_CACHE_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/log_text_cache.json"
+)
+MAX_NEW_EXTRACTIONS = int(os.environ.get("MAX_NEW_EXTRACTIONS", "12"))
+EXTRACTION_BUDGET_SECONDS = 20
+MAX_CACHE_ENTRIES = 3000
+
+
+def _read_cache(dbx):
+    try:
+        _, res = dbx.files_download(LOG_TEXT_CACHE_PATH)
+        data = json.loads(res.content.decode("utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_cache(dbx, cache):
+    try:
+        if len(cache) > MAX_CACHE_ENTRIES:
+            newest = sorted(cache.items(), key=lambda kv: kv[1].get("date", ""), reverse=True)[:MAX_CACHE_ENTRIES]
+            cache = dict(newest)
+        dbx.files_upload(json.dumps(cache).encode("utf-8"), LOG_TEXT_CACHE_PATH,
+                         mode=dropbox.files.WriteMode.overwrite)
+    except Exception:
+        pass  # cache is an optimization only
+
+
+def _strip_title_line(text):
+    """The PDF's first line repeats the filename ('261007 | Jon | WO21787')."""
+    lines = (text or "").strip().split("\n")
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    if lines and re.match(r'^\s*(\d{6}|No_Date)\s*\|', lines[0]):
+        lines.pop(0)
+    return "\n".join(lines).strip()
+
+
+def _extract_log_text(dbx, r):
+    """Text for one log: sidecar .txt if present, else the PDF's own text."""
+    if r.get("dropbox_txt_path"):
+        try:
+            _, res = dbx.files_download(r["dropbox_txt_path"])
+            text = res.content.decode("utf-8", errors="ignore").strip()
+            if text:
+                return text
+        except Exception:
+            pass
+    if r.get("dropbox_pdf_path"):
+        try:
+            _, res = dbx.files_download(r["dropbox_pdf_path"])
+            return _strip_title_line(extract_text_from_pdf_bytes(res.content))
+        except Exception:
+            return None
+    return None
+
+
+def _attach_summaries(dbx, results):
+    """Sets r['summary'] from the saved-text cache (keyed by Dropbox file id,
+    so a rename doesn't lose it). Anything not cached yet is read once, in
+    parallel, within a time budget; the rest fill in on later loads/cron."""
+    cache = _read_cache(dbx)
+    missing = []
+    for r in results:
+        r["summary"] = None
+        fid = r.get("pdf_id")
+        if not fid:
+            if r.get("dropbox_txt_path"):
+                missing.append(r)  # sidecar-only: read, don't cache
+            continue
+        c = cache.get(fid)
+        if c and c.get("rev") == r.get("pdf_rev") and c.get("text"):
+            r["summary"] = c["text"]
+        else:
+            missing.append(r)
+
+    if not missing:
+        return
+
+    changed = False
+    ex = ThreadPoolExecutor(max_workers=8)
+    futures = {ex.submit(_extract_log_text, dbx, r): r for r in missing[:MAX_NEW_EXTRACTIONS]}
+    deadline = time.time() + EXTRACTION_BUDGET_SECONDS
+    try:
+        for fut in as_completed(futures, timeout=max(1, deadline - time.time())):
+            r = futures[fut]
+            try:
+                text = fut.result()
+            except Exception:
+                text = None
+            if text:
+                r["summary"] = text
+                if r.get("pdf_id"):
+                    cache[r["pdf_id"]] = {"rev": r.get("pdf_rev"), "text": text, "date": r.get("date", "")}
+                    changed = True
+    except Exception:
+        pass  # time budget hit - remaining logs are picked up next time
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
+
+    if changed:
+        _write_cache(dbx, cache)
+
+
+# ==========================================
+# OPENING FILES ON CLICK
+# ==========================================
+
+def _safe_log_path(path):
+    """Only files inside the Daily Job Logs folder may be linked."""
+    if not path or ".." in path:
+        return False
+    return path.lower().startswith(DROPBOX_BASE_FOLDER.lower() + "/")
+
+
+def get_file_link(dbx, path, mode="view"):
+    """
+    mode 'view'     permanent link that opens the file in the browser
+    mode 'download' permanent link that downloads it
+    mode 'temp'     4-hour direct link (used for photos shown inline)
+    Permanent links are created once and reused. If Dropbox won't make a
+    public one (team policy), falls back to a 4-hour temporary link, which
+    needs no Dropbox sign-in. Returns {"url", "kind"}.
+    """
+    if not _safe_log_path(path):
+        raise ValueError("Path not allowed")
+
+    if mode != "temp":
+        try:
+            link = None
+            existing = dbx.sharing_list_shared_links(path=path, direct_only=True).links
+            for l in existing:
+                if _link_is_public(l):
+                    link = l
+                    break
+            if link is None:
+                try:
+                    settings = dropbox.sharing.SharedLinkSettings(
+                        requested_visibility=dropbox.sharing.RequestedVisibility.public)
+                    link = dbx.sharing_create_shared_link_with_settings(path, settings)
+                except dropbox.exceptions.ApiError:
+                    link = dbx.sharing_create_shared_link_with_settings(path)
+            if link is not None and _link_is_public(link):
+                return {"url": _with_param(link.url, "dl", "1" if mode == "download" else "0",
+                                           raw=(mode == "view")), "kind": "permanent"}
+        except Exception:
+            pass  # fall through to a temporary link
+
+    url = dbx.files_get_temporary_link(path).link
+    return {"url": url, "kind": "temporary"}
+
+
+def _link_is_public(link):
+    try:
+        return link.link_permissions.resolved_visibility.is_public()
+    except Exception:
+        return False
+
+
+def _with_param(url, key, value, raw=False):
+    from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+    parts = urlsplit(url)
+    q = [(k, v) for k, v in parse_qsl(parts.query) if k not in ("dl", "raw")]
+    if raw:
+        q.append(("raw", "1"))
+    else:
+        q.append((key, value))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(q), parts.fragment))
+
+
+def get_file_links(dbx, paths, mode="view"):
+    """Several links at once, in parallel. Failed ones come back as None."""
+    out = {}
+
+    def one(p):
+        try:
+            return get_file_link(dbx, p, mode)
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for p, res in zip(paths, ex.map(one, paths)):
+            out[p] = res
+    return out
 
 
 def extract_text_from_pdf_bytes(pdf_bytes):

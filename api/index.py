@@ -41,6 +41,7 @@ from dropbox_pdf_utils import (  # noqa: E402
     format_date_for_jacque,
     upload_pdf_and_photos,
     get_recent_daily_logs,
+    get_file_links,
     extract_text_from_pdf_bytes,
     DAYS_TO_SHOW_DEFAULT,
     DROPBOX_BASE_FOLDER,
@@ -260,6 +261,27 @@ def recent_logs():
             log["manual_notes"] = _notes_for_log(all_notes, log)
 
         return jsonify({"days": days, "count": len(logs), "logs": logs})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/log-links", methods=["POST"])
+@require_role("admin", "calvin")
+def log_links():
+    """Links for log files, made when someone clicks (not when the page
+    loads). Body: {"paths": [...], "mode": "view" | "download" | "temp"}.
+    The browser then fetches the file straight from Dropbox - nothing passes
+    through this server."""
+    try:
+        body = request.get_json(force=True) or {}
+        paths = body.get("paths") or ([body["path"]] if body.get("path") else [])
+        mode = body.get("mode", "view")
+        if mode not in ("view", "download", "temp"):
+            return jsonify({"status": "error", "message": "Bad mode"}), 400
+        if not paths or len(paths) > 30:
+            return jsonify({"status": "error", "message": "Between 1 and 30 paths required"}), 400
+        links = get_file_links(get_dropbox_client(), paths, mode)
+        return jsonify({"status": "ok", "links": links})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
