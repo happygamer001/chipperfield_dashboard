@@ -279,6 +279,16 @@
   <div id="fabshop-revenue-display"></div>
 
   <div class="queue-header">
+    <h2>Import Fab Shop days</h2>
+    <span id="fabshop-import-status">Paste typed-up tab sheets (JSON). Days already on file are skipped.</span>
+  </div>
+  <div class="filters" style="margin-bottom:20px;align-items:flex-start;flex-direction:column;gap:8px;">
+    <textarea id="fabshop-import-text" rows="6" placeholder='{"entries":[{"date":"2026-10-05","employees":[{"name":"Jon","billable":4,"non_billable":5.5,"mgt_design":0}],"description":"...","estimated_value":1000,"value_note":"21774, 21764","completed_by":"Jerron"}]}' style="width:100%;font-size:12px;font-family:monospace;"></textarea>
+    <label style="font-size:13px;"><input type="checkbox" id="fabshop-import-overwrite"> Replace days that already exist</label>
+    <button class="primary" id="fabshop-import-btn">Import days</button>
+  </div>
+
+  <div class="queue-header">
     <h2>Daily Job Logs</h2>
     <span id="fetch-logs-status">Runs automatically every hour — use this to trigger it now</span>
   </div>
@@ -979,6 +989,34 @@ document.getElementById("fabshop-upload-btn").addEventListener("click", async ()
   } finally {
     btn.disabled = false;
     btn.textContent = "Upload weekly file";
+  }
+});
+
+document.getElementById("fabshop-import-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("fabshop-import-btn");
+  const statusEl = document.getElementById("fabshop-import-status");
+  let body;
+  try {
+    body = JSON.parse(document.getElementById("fabshop-import-text").value);
+    if (Array.isArray(body)) body = { entries: body };
+  } catch (e) {
+    alert("That isn't valid JSON: " + e.message);
+    return;
+  }
+  body.overwrite = document.getElementById("fabshop-import-overwrite").checked;
+  btn.disabled = true;
+  btn.textContent = "Importing…";
+  try {
+    const res = await fetch("/api/fabshop-portal/import-entries", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (data.status !== "ok") throw new Error(data.message || "Import failed");
+    statusEl.textContent = `Added ${data.added.length}, replaced ${data.replaced.length}, skipped ${data.skipped.length}` + (data.errors.length ? `, ${data.errors.length} error(s): ` + data.errors.join("; ") : "");
+    if (!data.errors.length) document.getElementById("fabshop-import-text").value = "";
+  } catch (err) {
+    alert("Import failed: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Import days";
   }
 });
 

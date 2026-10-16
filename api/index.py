@@ -49,6 +49,7 @@ from dropbox_pdf_utils import (  # noqa: E402
 from daily_log_uploader import run_gmail_djl_uploader  # noqa: E402
 import notion_utils  # noqa: E402
 import form_parsers  # noqa: E402
+import djl_titles  # noqa: E402
 
 app = Flask(__name__)
 # Falls back to a fixed dev key so the app doesn't crash if this isn't set yet —
@@ -1473,7 +1474,7 @@ def fabshop_revenue():
 # open. Revisit adding a lightweight role gate here once real usage starts.
 # ==========================================
 
-DEFAULT_FABSHOP_EMPLOYEES = ["Jon", "Jerron", "Josh", "Caleb"]
+DEFAULT_FABSHOP_EMPLOYEES = ["Jon", "Jerron", "Josh", "Caleb", "Jason"]
 
 
 @app.route("/api/fabshop-portal/employees", methods=["GET"])
@@ -1519,47 +1520,97 @@ def fabshop_portal_remove_employee():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+def _build_fabshop_entry(body, preserved_notes=None):
+    """One Daily Tab entry in its stored shape. Raises ValueError if the date is missing."""
+    date = body.get("date")
+    if not date:
+        raise ValueError("Date is required")
+    employees = body.get("employees", []) or []
+    totals = {"billable": 0.0, "non_billable": 0.0, "mgt_design": 0.0}
+    for emp in employees:
+        totals["billable"] += float(emp.get("billable") or 0)
+        totals["non_billable"] += float(emp.get("non_billable") or 0)
+        totals["mgt_design"] += float(emp.get("mgt_design") or 0)
+    return {
+        "date": date,
+        "employees": employees,
+        "totals": totals,
+        "description": body.get("description") or "",
+        "new_leads": body.get("new_leads") or "",
+        "problems": body.get("problems") or "",
+        "estimated_value": float(body.get("estimated_value") or 0),
+        # What was written beside the dollar amount, e.g. "21774, 21764" or "covered labor (21728)"
+        "value_note": (body.get("value_note") or "").strip(),
+        "completed_by": body.get("completed_by") or "",
+        "submitted_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "notes": preserved_notes or [],
+    }
+
+
 @app.route("/api/fabshop-portal/daily-tab", methods=["POST"])
 def fabshop_portal_submit_daily_tab():
     try:
         body = request.get_json(force=True)
-        date = body.get("date")
-        if not date:
+        if not body.get("date"):
             return jsonify({"status": "error", "message": "Date is required"}), 400
-
-        employees = body.get("employees", [])
-        totals = {"billable": 0, "non_billable": 0, "mgt_design": 0}
-        for emp in employees:
-            totals["billable"] += float(emp.get("billable") or 0)
-            totals["non_billable"] += float(emp.get("non_billable") or 0)
-            totals["mgt_design"] += float(emp.get("mgt_design") or 0)
 
         dbx = get_dropbox_client()
         entries = _read_json_from_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, [])
 
         # Preserve any existing comments/notes on this date if resubmitting
-        existing = next((e for e in entries if e.get("date") == date), None)
-        preserved_notes = existing.get("notes", []) if existing else []
+        existing = next((e for e in entries if e.get("date") == body["date"]), None)
+        entry = _build_fabshop_entry(body, existing.get("notes", []) if existing else [])
 
-        entry = {
-            "date": date,
-            "employees": employees,
-            "totals": totals,
-            "description": body.get("description") or "",
-            "new_leads": body.get("new_leads") or "",
-            "problems": body.get("problems") or "",
-            "estimated_value": float(body.get("estimated_value") or 0),
-            "completed_by": body.get("completed_by") or "",
-            "submitted_at": datetime.datetime.utcnow().isoformat() + "Z",
-            "notes": preserved_notes,
-        }
-
-        entries = [e for e in entries if e.get("date") != date]  # replace same-day resubmission
+        entries = [e for e in entries if e.get("date") != entry["date"]]  # replace same-day resubmission
         entries.append(entry)
         entries.sort(key=lambda e: e["date"])
         _write_json_to_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, entries)
 
         return jsonify({"status": "ok", "entry": entry})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-portal/import-entries", methods=["POST"])
+@require_role("admin")
+def fabshop_portal_import_entries():
+    """Admin-only bulk add of Daily Tab entries (e.g. typed up from paper
+    sheets). Body: {"entries": [...same fields as a Daily Tab submit...],
+    "overwrite": false}. Dates that already have an entry are skipped unless
+    overwrite is true; comments on a replaced date are kept."""
+    try:
+        body = request.get_json(force=True) or {}
+        incoming = body.get("entries")
+        if not isinstance(incoming, list) or not incoming:
+            return jsonify({"status": "error", "message": "Send {\"entries\": [ ... ]}"}), 400
+        if len(incoming) > 400:
+            return jsonify({"status": "error", "message": "At most 400 entries per import"}), 400
+        overwrite = bool(body.get("overwrite"))
+
+        dbx = get_dropbox_client()
+        entries = _read_json_from_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, [])
+        by_date = {e.get("date"): e for e in entries}
+
+        added, replaced, skipped, errors = [], [], [], []
+        for raw in incoming:
+            try:
+                d = datetime.date.fromisoformat(str(raw.get("date")))
+                raw = dict(raw, date=d.isoformat())
+                if raw["date"] in by_date and not overwrite:
+                    skipped.append(raw["date"])
+                    continue
+                prev = by_date.get(raw["date"])
+                entry = _build_fabshop_entry(raw, prev.get("notes", []) if prev else [])
+                entry["source"] = "import"
+                (replaced if prev else added).append(entry["date"])
+                by_date[entry["date"]] = entry
+            except Exception as err:
+                errors.append(f"{raw.get('date') if isinstance(raw, dict) else raw}: {err}")
+
+        merged = sorted(by_date.values(), key=lambda e: e["date"])
+        if added or replaced:
+            _write_json_to_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, merged)
+        return jsonify({"status": "ok", "added": added, "replaced": replaced, "skipped": skipped, "errors": errors})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -1673,6 +1724,215 @@ def fabshop_portal_evaluation_data():
         dbx = get_dropbox_client()
         data = _merge_fabshop_data(dbx)
         return jsonify(data)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Calvin's Fab Shop screen: Summary (line graph) + Weekly Breakdown (day cards)
+# ---------------------------------------------------------------------------
+
+# Places named in a Daily Tab's notes that mean hours went somewhere else.
+FABSHOP_ELSEWHERE_PATTERNS = [
+    (re.compile(r"\bmci\b|mc\s?cook concrete|cement plant|concrete plant", re.IGNORECASE), "McCook Concrete (MCI)", "mci"),
+    (re.compile(r"gravel pit", re.IGNORECASE), "Gravel pit", "other"),
+]
+
+
+def _hm(hours):
+    """Decimal hours -> 'H:MM' (rounded to the minute)."""
+    minutes = int(round(float(hours or 0) * 60))
+    return f"{minutes // 60}:{minutes % 60:02d}"
+
+
+def _pct_split(billable, non_billable, mgt):
+    total = billable + non_billable + mgt
+    if total <= 0:
+        return {"billable": 0.0, "non_billable": 0.0, "mgt_design": 0.0}
+    return {
+        "billable": round(billable / total * 100, 1),
+        "non_billable": round(non_billable / total * 100, 1),
+        "mgt_design": round(mgt / total * 100, 1),
+    }
+
+
+def _monday_of(date_str):
+    d = datetime.date.fromisoformat(date_str)
+    return (d - datetime.timedelta(days=d.weekday())).isoformat()
+
+
+def _fabshop_day_card(day, live_entry):
+    """One day for the Weekly Breakdown. `day` is a row from
+    _merge_fabshop_data()['daily']; `live_entry` is the portal/import entry
+    for that date if there is one (it carries who did what, notes, leads)."""
+    b = float(day.get("billable_hours") or 0)
+    nb = float(day.get("non_billable_hours") or 0)
+    m = float(day.get("mgt_design_hours") or 0)
+    value = float(day.get("estimated_value") or 0)
+    card = {
+        "date": day["date"],
+        "source": "portal" if live_entry else "excel",
+        "total_hm": _hm(b + nb + m),
+        "billable_hm": _hm(b), "non_billable_hm": _hm(nb), "mgt_design_hm": _hm(m),
+        "billable": b, "non_billable": nb, "mgt_design": m,
+        "split": _pct_split(b, nb, m),
+        "value": value,
+        "value_pending": value <= 0,
+        "value_note": "",
+        "wo_tags": [],
+        "elsewhere": [],
+        "people": [],
+        "description": "",
+        "new_leads": "",
+        "problems": "",
+        "completed_by": "",
+        "notes": [],
+    }
+    if live_entry:
+        note = (live_entry.get("value_note") or "").strip()
+        text = f"{live_entry.get('description') or ''} {note}"
+        people = []
+        for emp in live_entry.get("employees", []) or []:
+            tot = sum(float(emp.get(k) or 0) for k in ("billable", "non_billable", "mgt_design"))
+            if emp.get("name"):
+                people.append({"name": emp["name"], "total_hm": _hm(tot)})
+        card.update({
+            "value_note": note,
+            "wo_tags": live_entry.get("wo_tags") or djl_titles.id_tags(note),
+            "elsewhere": [{"label": label, "kind": kind}
+                          for pat, label, kind in FABSHOP_ELSEWHERE_PATTERNS if pat.search(text)],
+            "people": people,
+            "description": live_entry.get("description") or "",
+            "new_leads": live_entry.get("new_leads") or "",
+            "problems": live_entry.get("problems") or "",
+            "completed_by": live_entry.get("completed_by") or "",
+            "notes": live_entry.get("notes") or [],
+        })
+    return card
+
+
+@app.route("/api/fabshop-weekly", methods=["GET"])
+@require_role("admin", "calvin")
+def fabshop_weekly():
+    """One week of day cards (newest first) plus the week's totals.
+    ?week=YYYY-MM-DD (any date; snapped to its Monday). Default: latest week with data."""
+    try:
+        dbx = get_dropbox_client()
+        merged = _merge_fabshop_data(dbx)
+        daily = [d for d in merged["daily"] if d.get("date")]
+        if not daily:
+            return jsonify({"has_data": False})
+
+        live_by_date = {e.get("date"): e for e in _read_json_from_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, [])}
+        mondays = sorted({_monday_of(d["date"]) for d in daily})
+
+        week = mondays[-1]
+        requested = request.args.get("week")
+        if requested:
+            try:
+                snapped = _monday_of(requested)
+                if snapped in mondays:
+                    week = snapped
+            except ValueError:
+                pass
+
+        i = mondays.index(week)
+        days = [d for d in daily if _monday_of(d["date"]) == week]
+        cards = sorted((_fabshop_day_card(d, live_by_date.get(d["date"])) for d in days),
+                       key=lambda c: c["date"], reverse=True)
+
+        b = sum(c["billable"] for c in cards)
+        nb = sum(c["non_billable"] for c in cards)
+        m = sum(c["mgt_design"] for c in cards)
+        start = datetime.date.fromisoformat(week)
+        end = start + datetime.timedelta(days=4)
+        if any(datetime.date.fromisoformat(c["date"]).weekday() >= 5 for c in cards):
+            end = start + datetime.timedelta(days=6)
+
+        return jsonify({
+            "has_data": True,
+            "week": week,
+            "week_label": f"{start.strftime('%b')} {start.day} \u2013 {end.strftime('%b')} {end.day}, {end.year}",
+            "prev_week": mondays[i - 1] if i > 0 else None,
+            "next_week": mondays[i + 1] if i < len(mondays) - 1 else None,
+            "summary": {
+                "total_hm": _hm(b + nb + m),
+                "billable_hm": _hm(b), "non_billable_hm": _hm(nb), "mgt_design_hm": _hm(m),
+                "split": _pct_split(b, nb, m),
+                "value": sum(c["value"] for c in cards),
+                "pending_days": sum(1 for c in cards if c["value_pending"]),
+            },
+            "days": cards,
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-summary", methods=["GET"])
+@require_role("admin", "calvin")
+def fabshop_summary():
+    """Line-graph data. ?range=week (the latest week with data, one point per
+    day) or ?range=6m (26 weeks ending at the latest week with data, one
+    point per week). A day/week with no data is null (a break in the line),
+    never zero."""
+    try:
+        rng = request.args.get("range", "week")
+        if rng not in ("week", "6m"):
+            return jsonify({"status": "error", "message": "range must be week or 6m"}), 400
+
+        dbx = get_dropbox_client()
+        daily = [d for d in _merge_fabshop_data(dbx)["daily"] if d.get("date")]
+        if not daily:
+            return jsonify({"has_data": False, "range": rng, "points": []})
+
+        by_date = {d["date"]: d for d in daily}
+        latest_week = datetime.date.fromisoformat(_monday_of(daily[-1]["date"]))
+        first_date = daily[0]["date"]
+        last_date = daily[-1]["date"]
+
+        def point(label, key, rows):
+            if not rows:
+                return {"label": label, "key": key, "pending": False, "value": None, "billable": None, "total_hours": None}
+            val = round(sum(float(r.get("estimated_value") or 0) for r in rows), 2)
+            return {
+                "label": label, "key": key,
+                # Hours on file but no dollar value yet: not $0, so leave a break in the line
+                "pending": val <= 0,
+                "value": val if val > 0 else None,
+                "billable": round(sum(float(r.get("billable_hours") or 0) for r in rows), 2),
+                "total_hours": round(sum(float(r.get("total_man_hours") or 0) for r in rows), 2),
+            }
+
+        points, gaps = [], []
+        if rng == "week":
+            for n in range(5):
+                d = latest_week + datetime.timedelta(days=n)
+                row = by_date.get(d.isoformat())
+                points.append(point(d.strftime("%a ") + f"{d.month}/{d.day}", d.isoformat(), [row] if row else []))
+        else:
+            weeks = [latest_week - datetime.timedelta(weeks=n) for n in range(25, -1, -1)]
+            by_week = {}
+            for d in daily:
+                by_week.setdefault(_monday_of(d["date"]), []).append(d)
+            for w in weeks:
+                points.append(point(f"{w.month}/{w.day}", w.isoformat(), by_week.get(w.isoformat(), [])))
+            run_start = None
+            for idx, pt in enumerate(points + [{"value": 1, "key": None}]):
+                if pt["value"] is None:
+                    run_start = idx if run_start is None else run_start
+                elif run_start is not None:
+                    if idx - run_start >= 4:  # a month or more with nothing on file
+                        gaps.append({"from": points[run_start]["key"], "to": points[idx - 1]["key"], "weeks": idx - run_start})
+                    run_start = None
+
+        have = [p for p in points if p["value"] is not None]
+        return jsonify({
+            "has_data": True, "range": rng, "points": points, "gaps": gaps,
+            "first_data_date": first_date, "last_data_date": last_date,
+            "total_value": round(sum(p["value"] for p in have), 2),
+            "periods_with_data": len(have),
+            "average_value": round(sum(p["value"] for p in have) / len(have), 2) if have else None,
+        })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 

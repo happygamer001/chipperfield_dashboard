@@ -132,10 +132,64 @@
   .lf-actions button.primary { background: var(--green-dark); color: #fff; border-color: var(--green-dark); }
 
   /* ---- Scroll to top button ---- */
+
+  /* Fab Shop: Summary + Weekly Breakdown */
+  .fw-eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--green-dark); font-weight: 700; margin: 0; }
+  .fw-weeknav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 2px 0 12px; }
+  .fw-weeknav .lbl { font-size: 14px; color: var(--ink-soft); }
+  .fw-weeknav button { min-width: 44px; min-height: 44px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); font-size: 18px; cursor: pointer; }
+  .fw-weeknav button:disabled { opacity: .35; cursor: default; }
+  .fw-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .fw-box { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px; }
+  .fw-tile-lbl { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
+  .fw-tile-val { font-size: 26px; font-weight: 700; margin-top: 2px; }
+  .fw-split { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+  .fw-split h3 { margin: 0; font-size: 13px; font-weight: 700; }
+  .fw-bar { display: flex; height: 18px; border-radius: 9px; overflow: hidden; background: var(--line); }
+  .fw-bar.sm { height: 12px; border-radius: 6px; }
+  .fw-seg-b { background: #3f6a24; } .fw-seg-n { background: #d9d4b0; } .fw-seg-m { background: #6f93ab; }
+  .fw-legend { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .fw-legend > div { display: flex; justify-content: space-between; }
+  .fw-dot { display: inline-block; width: 10px; height: 10px; border-radius: 5px; margin-right: 8px; }
+  .fw-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .fw-chip { min-height: 38px; padding: 0 14px; display: inline-flex; align-items: center; border-radius: 19px; border: 1px solid var(--line); background: transparent; color: var(--ink); font-size: 14px; cursor: pointer; font-family: inherit; }
+  .fw-chip.active { background: var(--green-dark); border-color: var(--green-dark); color: #fff; font-weight: 600; }
+  [data-theme="dark"] .fw-chip.active { color: #121410; }
+  .fw-day { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px; display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+  .fw-day-top { display: flex; justify-content: space-between; align-items: baseline; }
+  .fw-day-name { font-size: 17px; font-weight: 700; }
+  .fw-day-total { font-size: 14px; color: var(--ink-soft); }
+  .fw-day-total strong { color: var(--ink); }
+  .fw-people { font-size: 14px; color: var(--ink-soft); }
+  .fw-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .fw-pill { min-height: 28px; padding: 0 10px; display: inline-flex; align-items: center; border-radius: 14px; font-size: 13px; font-weight: 600; }
+  .fw-pill.wo { background: #e8f0df; color: #2f4f1a; }
+  .fw-pill.mci { background: #1b4f75; color: #fff; }
+  .fw-pill.other { background: #fdf0dc; color: #7a4305; }
+  .fw-pill.lead { background: #fde8e8; color: #8a1f1f; }
+  .fw-pill.pending { background: var(--warn-bg); color: var(--warn-text); }
+  .fw-text { font-size: 14px; line-height: 1.45; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .fw-more { font-size: 13px; color: var(--green-dark); font-weight: 600; background: none; border: 0; padding: 6px 0; text-align: left; cursor: pointer; font-family: inherit; min-height: 32px; }
+  .fw-leadbox { background: #fef6f6; border: 1px solid #f1cccc; border-radius: 10px; padding: 8px 10px; font-size: 13px; color: #3a1a1a; }
+  .fw-probbox { background: var(--warn-bg); border-radius: 10px; padding: 8px 10px; font-size: 13px; color: var(--warn-text); }
+  .fw-notes { font-size: 12px; color: var(--ink-soft); }
+  .fw-foot { border-top: 1px solid var(--line); padding-top: 8px; display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+  .fw-foot .muted { color: var(--ink-soft); }
+  .fw-row { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; min-height: 44px; margin-bottom: 14px; cursor: pointer; width: 100%; text-align: left; color: var(--ink); font-family: inherit; font-size: 15px; }
+  .fw-row .muted { color: var(--ink-soft); font-size: 14px; }
+  .fw-row .chev { color: var(--ink-soft); font-size: 18px; }
+  .fw-foot-note { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
+  .fw-range { display: flex; gap: 8px; margin-bottom: 12px; }
+  .fw-chartwrap { position: relative; height: 260px; }
+  .fw-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+  .fw-explain { font-size: 13px; color: var(--ink-soft); line-height: 1.5; margin: 0 0 8px; }
+  .fw-gap { background: var(--warn-bg); color: var(--warn-text); border-radius: 10px; padding: 8px 10px; font-size: 13px; margin-bottom: 8px; }
+
   .to-top { position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); width: 46px; height: 46px; border-radius: 50%; border: 1px solid var(--line); background: var(--green-dark); color: #fff; font-size: 22px; line-height: 1; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.25); opacity: 0; transform: translateY(12px); pointer-events: none; transition: opacity .2s ease, transform .2s ease; z-index: 900; display: flex; align-items: center; justify-content: center; }
   .to-top.show { opacity: 1; transform: none; pointer-events: auto; }
   .to-top:focus-visible { outline: 3px solid var(--green-dark); outline-offset: 3px; }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
 
@@ -260,26 +314,40 @@
 <div id="company-fabshop" style="display:none;">
   <main>
     <p class="logout-link back-link" style="margin:0 0 16px;">← Back to companies</p>
-    <p class="section-heading" style="margin-top:0;">Fab Shop</p>
+    <p class="fw-eyebrow">Chipperfield Ag</p>
+    <p class="section-heading" style="margin-top:2px;">Fab Shop</p>
     <p class="section-sub" id="fabshop-status">Loading…</p>
     <div class="lookup-tabs" id="fabshop-tabs">
-      <div class="lookup-tab active" data-tab="weekly">Weekly (last 4 weeks)</div>
-      <div class="lookup-tab" data-tab="daily">Daily (last 5 days)</div>
+      <div class="lookup-tab active" data-tab="summary">Summary</div>
+      <div class="lookup-tab" data-tab="weekly">Weekly Breakdown</div>
+      <div class="lookup-tab" data-tab="logs">Logs &amp; Leads</div>
     </div>
-    <div id="fabshop-weekly-display"></div>
-    <div id="fabshop-daily-display" style="display:none;"></div>
 
-    <p class="section-heading">Daily Team Log</p>
-    <p class="section-sub">From the shop's own daily Typeform, most recent first.</p>
-    <div id="fabshop-log-display" class="daily-report-grid"></div>
+    <div id="fabshop-summary-display">
+      <div class="fw-range" id="fw-range">
+        <button class="fw-chip active" data-range="week">Past week</button>
+        <button class="fw-chip" data-range="6m">6 months</button>
+      </div>
+      <div class="fw-box">
+        <div class="fw-tile-lbl" id="fw-chart-title">Value of work completed</div>
+        <div class="fw-chartwrap"><canvas id="fw-chart" role="img" aria-label="Line graph of the value of work completed"></canvas></div>
+      </div>
+      <div class="fw-stats" id="fw-stats"></div>
+      <div id="fw-gaps"></div>
+      <p class="fw-explain" id="fw-explain"></p>
+    </div>
 
-    <p class="section-heading">Fab Shop Daily Tab</p>
-    <p class="section-sub">Submitted through the Fab Shop portal, most recent first.</p>
-    <div id="fabshop-portal-entries-display"></div>
+    <div id="fabshop-weekly-display" style="display:none;"></div>
 
-    <p class="section-heading">Fab Shop Sales Leads</p>
-    <p class="section-sub">From the Sales Intake Tracker.</p>
-    <div id="fabshop-leads-display"></div>
+    <div id="fabshop-logs-display" style="display:none;">
+      <p class="section-heading">Daily Team Log</p>
+      <p class="section-sub">From the shop's own daily Typeform, most recent first.</p>
+      <div id="fabshop-log-display" class="daily-report-grid"></div>
+
+      <p class="section-heading">Fab Shop Sales Leads</p>
+      <p class="section-sub">From the Sales Intake Tracker.</p>
+      <div id="fabshop-leads-display"></div>
+    </div>
   </main>
 </div>
 </div>
@@ -399,9 +467,9 @@ function showApp() {
   document.getElementById("login-screen").style.display = "none";
   document.getElementById("app-content").style.display = "block";
   loadDashboard();
-  loadFabshopRevenue();
+  loadFabshopSummary("week");
+  loadFabshopWeekly(null);
   loadFabshopDailyLog();
-  loadFabshopPortalEntries();
   loadFabshopLeads();
   loadDailyReports();
   loadCurrentJobs();
@@ -410,7 +478,7 @@ function showApp() {
   loadBatchReports();
   showLookupTab("workorder");
   runCustomerSearch(); // Gravel Sales under McCook Concrete — loads once up front
-  showFabshopTab("weekly");
+  showFabshopTab("summary");
   showCompany(null); // land on the picker
 }
 
@@ -430,11 +498,13 @@ document.querySelectorAll("#lookup-tabs .lookup-tab").forEach(el => {
 });
 
 function showFabshopTab(tab) {
+  document.getElementById("fabshop-summary-display").style.display = (tab === "summary") ? "block" : "none";
   document.getElementById("fabshop-weekly-display").style.display = (tab === "weekly") ? "block" : "none";
-  document.getElementById("fabshop-daily-display").style.display = (tab === "daily") ? "block" : "none";
+  document.getElementById("fabshop-logs-display").style.display = (tab === "logs") ? "block" : "none";
   document.querySelectorAll("#fabshop-tabs .lookup-tab").forEach(el => {
     el.classList.toggle("active", el.getAttribute("data-tab") === tab);
   });
+  if (tab === "summary" && fwChart) fwChart.resize();
 }
 
 document.querySelectorAll("#fabshop-tabs .lookup-tab").forEach(el => {
@@ -654,52 +724,6 @@ document.getElementById("vendor-search-btn").addEventListener("click", runVendor
 document.getElementById("vendor-search-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") runVendorSearch();
 });
-
-function renderFabshopRevenue(data) {
-  const weeklyEl = document.getElementById("fabshop-weekly-display");
-  const dailyEl = document.getElementById("fabshop-daily-display");
-  const statusEl = document.getElementById("fabshop-status");
-
-  if (!data.uploaded_at) {
-    statusEl.textContent = "No data uploaded yet";
-    weeklyEl.innerHTML = '<div class="empty">Nothing here yet.</div>';
-    dailyEl.innerHTML = '<div class="empty">Nothing here yet.</div>';
-    return;
-  }
-
-  statusEl.textContent = "Last updated: " + new Date(data.uploaded_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-
-  const recentWeeks = (data.weekly || []).slice(-4).reverse();
-  const recentDays = (data.daily || []).slice(-5).reverse();
-
-  weeklyEl.innerHTML = recentWeeks.length === 0
-    ? '<div class="empty">No weekly data yet.</div>'
-    : recentWeeks.map(w => `
-      <div class="item">
-        <div class="item-top">
-          <div>
-            <p class="item-title">Week of ${w.week_of}</p>
-            <p class="item-sub">${w.billable_hours.toFixed(1)} billable hrs · ${w.total_man_hours.toFixed(1)} total man-hrs</p>
-          </div>
-          <span class="tag ${w.total_revenue > 0 ? 'ok' : 'warn'}">$${w.total_revenue.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
-        </div>
-      </div>
-    `).join("");
-
-  dailyEl.innerHTML = recentDays.length === 0
-    ? '<div class="empty">No daily data yet.</div>'
-    : recentDays.map(d => `
-      <div class="item">
-        <div class="item-top">
-          <div>
-            <p class="item-title">${d.date}</p>
-            <p class="item-sub">${d.billable_hours.toFixed(1)} billable · ${d.non_billable_hours.toFixed(1)} non-billable · ${d.mgt_design_hours.toFixed(1)} mgt/design hrs</p>
-          </div>
-          <span class="tag ${d.estimated_value > 0 ? 'ok' : 'warn'}">$${(d.estimated_value || 0).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
-        </div>
-      </div>
-    `).join("");
-}
 
 async function loadDailyReports() {
   const crewEl = document.getElementById("crew-logs-display");
@@ -967,46 +991,6 @@ async function loadFabshopDailyLog() {
   }
 }
 
-async function loadFabshopPortalEntries() {
-  const el = document.getElementById("fabshop-portal-entries-display");
-  el.innerHTML = '<div class="empty">Loading…</div>';
-
-  try {
-    const res = await fetch("/api/fabshop-portal/daily-entries");
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || "Failed to load");
-
-    const entries = (data.entries || []).slice(0, 10);
-    if (entries.length === 0) {
-      el.innerHTML = '<div class="empty">No Daily Tab submissions yet.</div>';
-      return;
-    }
-
-    el.innerHTML = entries.map(e => {
-      const notesHtml = (e.notes || []).map(n => `
-        <div style="font-size:12px;padding:4px 0;color:var(--ink-soft);">${n.author}: ${n.text}</div>
-      `).join("");
-      return `
-        <div class="item">
-          <div class="item-top">
-            <div>
-              <p class="item-title">${e.date}</p>
-              <p class="item-sub">Billable ${e.totals.billable} · Non-billable ${e.totals.non_billable} · MGT/Design ${e.totals.mgt_design} · by ${e.completed_by || 'unknown'}</p>
-            </div>
-            <span class="tag ok">$${(e.estimated_value || 0).toLocaleString()}</span>
-          </div>
-          ${e.description ? `<p class="summary">${e.description}</p>` : ''}
-          ${e.new_leads ? `<p class="summary" style="color:var(--ink-soft);">New leads: ${e.new_leads}</p>` : ''}
-          ${e.problems ? `<p class="summary" style="color:var(--danger-text);">Problems: ${e.problems}</p>` : ''}
-          ${notesHtml}
-        </div>
-      `;
-    }).join("");
-  } catch (err) {
-    el.innerHTML = '<div class="empty">Could not load Daily Tab submissions: ' + err.message + '</div>';
-  }
-}
-
 async function loadFabshopLeads() {
   const el = document.getElementById("fabshop-leads-display");
   el.innerHTML = '<div class="empty">Loading…</div>';
@@ -1039,15 +1023,219 @@ async function loadFabshopLeads() {
   }
 }
 
-async function loadFabshopRevenue() {
+// ---------- Fab Shop: Summary (line graph) ----------
+let fwChart = null;
+let fwRange = "week";
+let fwWeek = null;
+let fwDays = [];
+let fwFilter = "all";
+let fwOpen = {};   // date -> true when an older/collapsed day is expanded
+let fwFull = {};   // date -> true when "View full tab" is open
+
+function fwEsc(t) {
+  return String(t == null ? "" : t).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function fwMoney(n) { return "$" + Math.round(n || 0).toLocaleString(); }
+function fwDay(dateStr, long) {
+  const d = new Date(dateStr + "T12:00:00");
+  return d.toLocaleDateString("en-US", long ? { weekday: "short", month: "short", day: "numeric" } : { weekday: "short", month: "numeric", day: "numeric" });
+}
+
+document.querySelectorAll("#fw-range .fw-chip").forEach(btn => {
+  btn.addEventListener("click", () => loadFabshopSummary(btn.getAttribute("data-range")));
+});
+
+async function loadFabshopSummary(range) {
+  fwRange = range;
+  document.querySelectorAll("#fw-range .fw-chip").forEach(b => b.classList.toggle("active", b.getAttribute("data-range") === range));
+  const statusEl = document.getElementById("fabshop-status");
   try {
-    const res = await fetch("/api/fabshop-revenue");
+    const res = await fetch("/api/fabshop-summary?range=" + encodeURIComponent(range));
     const data = await res.json();
-    renderFabshopRevenue(data);
+    if (!res.ok) throw new Error(data.message || "Failed to load");
+    if (!data.has_data) {
+      statusEl.textContent = "No Fab Shop data yet";
+      document.getElementById("fw-stats").innerHTML = "";
+      document.getElementById("fw-gaps").innerHTML = "";
+      document.getElementById("fw-explain").textContent = "Nothing on file yet.";
+      if (fwChart) { fwChart.destroy(); fwChart = null; }
+      return;
+    }
+    statusEl.textContent = "Data on file through " + fwDay(data.last_data_date, true);
+    renderFabshopSummary(data);
   } catch (err) {
-    document.getElementById("fabshop-status").textContent = "Could not load revenue data";
+    statusEl.textContent = "Could not load Fab Shop summary";
+    document.getElementById("fw-explain").textContent = err.message;
   }
 }
+
+function renderFabshopSummary(data) {
+  const isWeek = data.range === "week";
+  document.getElementById("fw-chart-title").textContent = isWeek ? "Value of work completed, by day" : "Value of work completed, by week";
+  const css = getComputedStyle(document.documentElement);
+  const green = css.getPropertyValue("--green-dark").trim() || "#4d7a2f";
+  const grid = css.getPropertyValue("--line").trim() || "#e2e3dc";
+  const soft = css.getPropertyValue("--ink-soft").trim() || "#5b5f56";
+
+  if (fwChart) fwChart.destroy();
+  fwChart = new Chart(document.getElementById("fw-chart"), {
+    type: "line",
+    data: {
+      labels: data.points.map(p => p.label),
+      datasets: [{
+        data: data.points.map(p => p.value),
+        borderColor: green, backgroundColor: green, borderWidth: 3,
+        pointRadius: isWeek ? 5 : 3, pointHoverRadius: 7, tension: 0.25,
+        spanGaps: false, // a missing day/week is a break in the line, never a zero
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => c.parsed.y == null ? (data.points[c.dataIndex].pending ? "Value pending" : "No data") : fwMoney(c.parsed.y) } },
+      },
+      scales: {
+        x: { ticks: { color: soft, maxRotation: 0, autoSkip: true, maxTicksLimit: isWeek ? 5 : 7 }, grid: { display: false } },
+        y: { beginAtZero: true, ticks: { color: soft, callback: v => "$" + Number(v).toLocaleString() }, grid: { color: grid } },
+      },
+    },
+  });
+
+  const unit = isWeek ? "day" : "week";
+  document.getElementById("fw-stats").innerHTML = `
+    <div class="fw-box"><div class="fw-tile-lbl">${isWeek ? "Value this week" : "Value, 6 months"}</div><div class="fw-tile-val">${fwMoney(data.total_value)}</div></div>
+    <div class="fw-box"><div class="fw-tile-lbl">Average per ${unit}</div><div class="fw-tile-val">${data.average_value == null ? "—" : fwMoney(data.average_value)}</div></div>`;
+
+  document.getElementById("fw-gaps").innerHTML = (data.gaps || []).map(g =>
+    `<div class="fw-gap">No data on file for ${g.weeks} weeks (${fwDay(g.from, false).replace(/^\w+ /, "")} to ${fwDay(g.to, false).replace(/^\w+ /, "")}). The line breaks there; it does not mean $0.</div>`
+  ).join("");
+
+  document.getElementById("fw-explain").textContent = isWeek
+    ? "Each point is one day's estimated value of work completed, from the Daily Tab. Days with no tab on file, or with the value still pending, are left blank."
+    : "Each point is one week's estimated value, starting from earlier history and the Daily Tab. Earlier history is still being added, so gaps show where no data is on file yet. Days marked pending have no dollar value, so a week with pending days can read low.";
+}
+
+// ---------- Fab Shop: Weekly Breakdown ----------
+async function loadFabshopWeekly(week) {
+  const el = document.getElementById("fabshop-weekly-display");
+  el.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const res = await fetch("/api/fabshop-weekly" + (week ? "?week=" + encodeURIComponent(week) : ""));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Failed to load");
+    if (!data.has_data) { el.innerHTML = '<div class="empty">No Fab Shop days on file yet.</div>'; return; }
+    fwWeek = data; fwDays = data.days; fwFilter = "all"; fwOpen = {}; fwFull = {};
+    renderFabshopWeekly();
+  } catch (err) {
+    el.innerHTML = '<div class="empty">Could not load the weekly breakdown: ' + fwEsc(err.message) + '</div>';
+  }
+}
+
+function fwSnippet(text) {
+  const t = (text || "").trim();
+  if (t.length <= 130) return { text: t, cut: false };
+  const cut = t.slice(0, 130).replace(/\s+\S*$/, "");
+  return { text: cut + "…", cut: true };
+}
+
+function fwCategoryBar(day, cls) {
+  const sp = day.split;
+  if (!(sp.billable + sp.non_billable + sp.mgt_design > 0)) return "";
+  return `<div class="fw-bar ${cls || ""}" role="img" aria-label="Billable ${day.billable_hm}, non-billable ${day.non_billable_hm}, management and design ${day.mgt_design_hm}">
+    <div class="fw-seg-b" style="width:${sp.billable}%"></div><div class="fw-seg-n" style="width:${sp.non_billable}%"></div><div class="fw-seg-m" style="width:${sp.mgt_design}%"></div></div>`;
+}
+
+function fwDayCard(day) {
+  const pills = []
+    .concat(day.wo_tags.map(t => `<span class="fw-pill wo">${fwEsc(t)}</span>`))
+    .concat(day.elsewhere.map(e => `<span class="fw-pill ${e.kind === "mci" ? "mci" : "other"}">→ ${fwEsc(e.label)}</span>`))
+    .concat(day.new_leads ? ['<span class="fw-pill lead">New lead</span>'] : [])
+    .concat(day.value_pending ? ['<span class="fw-pill pending">Value pending</span>'] : []);
+  const full = !!fwFull[day.date];
+  const snip = fwSnippet(day.description);
+  const people = day.people.map(p => `${fwEsc(p.name)} ${p.total_hm}`).join(" · ");
+  const woText = day.wo_tags.length ? day.wo_tags.join(", ") : "";
+  const notes = (day.notes || []).map(n => `<div class="fw-notes">${fwEsc(n.author)}: ${fwEsc(n.text)}</div>`).join("");
+  const excelOnly = day.source === "excel";
+  return `
+  <div class="fw-day" data-date="${day.date}">
+    <div class="fw-day-top"><div class="fw-day-name">${fwDay(day.date, true)}</div><div class="fw-day-total"><strong>${day.total_hm}</strong> total</div></div>
+    ${people ? `<div class="fw-people">${people}</div>` : ""}
+    ${fwCategoryBar(day, "sm")}
+    ${full ? `<div class="fw-people">Billable ${day.billable_hm} · Non-billable ${day.non_billable_hm} · Mgt/design ${day.mgt_design_hm}</div>` : ""}
+    ${pills.length ? `<div class="fw-pills">${pills.join("")}</div>` : ""}
+    ${day.description ? `<p class="fw-text">${fwEsc(full ? day.description : snip.text)}</p>` : ""}
+    ${excelOnly ? '<p class="fw-text" style="color:var(--ink-soft);">Totals only. This day came from the Excel upload, so there is no tab text on file.</p>' : ""}
+    ${(snip.cut || day.problems || day.notes.length || day.new_leads.length > 0) && !excelOnly ? `<button class="fw-more" data-fw-full="${day.date}">${full ? "Hide full tab" : "View full tab"}</button>` : ""}
+    ${day.new_leads ? `<div class="fw-leadbox"><strong>Lead:</strong> ${fwEsc(day.new_leads)}</div>` : ""}
+    ${full && day.problems ? `<div class="fw-probbox"><strong>Problems:</strong> ${fwEsc(day.problems)}</div>` : ""}
+    ${full ? notes : ""}
+    <div class="fw-foot">
+      <span>Value ${day.value_pending ? "<strong>pending</strong>" : `<strong>${fwMoney(day.value)}</strong>`}${woText ? ` <span class="muted">· ${fwEsc(woText)}</span>` : ""}</span>
+      ${day.completed_by ? `<span class="muted">by ${fwEsc(day.completed_by)}</span>` : ""}
+    </div>
+  </div>`;
+}
+
+function fwCollapsedRow(day) {
+  const bits = [day.total_hm, day.value_pending ? "value pending" : fwMoney(day.value)];
+  if (day.wo_tags.length) bits.push(day.wo_tags.join(", "));
+  return `<button class="fw-row" data-fw-open="${day.date}"><span><strong>${fwDay(day.date, true)}</strong> <span class="muted">· ${fwEsc(bits.join(" · "))}</span></span><span class="chev">›</span></button>`;
+}
+
+function renderFabshopWeekly() {
+  const el = document.getElementById("fabshop-weekly-display");
+  const w = fwWeek, sm = w.summary, sp = sm.split;
+  const filters = {
+    all: d => true,
+    elsewhere: d => d.elsewhere.length > 0,
+    leads: d => !!d.new_leads,
+    pending: d => d.value_pending,
+  };
+  const labels = { all: "All days", elsewhere: "Hours charged elsewhere", leads: "New leads", pending: "Value pending" };
+  const shown = fwDays.filter(filters[fwFilter]);
+
+  const dayHtml = shown.map((d, i) =>
+    (i < 3 || fwOpen[d.date]) ? fwDayCard(d) : fwCollapsedRow(d)
+  ).join("") || '<div class="empty">No days match this filter.</div>';
+
+  el.innerHTML = `
+    <div class="fw-weeknav">
+      <button data-fw-week="${w.prev_week || ""}" ${w.prev_week ? "" : "disabled"} aria-label="Previous week">‹</button>
+      <div class="lbl">Week of ${fwEsc(w.week_label)}</div>
+      <button data-fw-week="${w.next_week || ""}" ${w.next_week ? "" : "disabled"} aria-label="Next week">›</button>
+    </div>
+    <div class="fw-tiles">
+      <div class="fw-box"><div class="fw-tile-lbl">Hours logged</div><div class="fw-tile-val">${sm.total_hm}</div></div>
+      <div class="fw-box"><div class="fw-tile-lbl">Value priced</div><div class="fw-tile-val">${fwMoney(sm.value)}</div></div>
+    </div>
+    <div class="fw-box fw-split">
+      <h3>Where the week's hours went</h3>
+      <div class="fw-bar" role="img" aria-label="Billable ${sm.billable_hm}, non-billable ${sm.non_billable_hm}, management and design ${sm.mgt_design_hm}">
+        <div class="fw-seg-b" style="width:${sp.billable}%"></div><div class="fw-seg-n" style="width:${sp.non_billable}%"></div><div class="fw-seg-m" style="width:${sp.mgt_design}%"></div>
+      </div>
+      <div class="fw-legend">
+        <div><span><span class="fw-dot" style="background:#3f6a24"></span>Billable</span><span><strong>${sm.billable_hm}</strong> · ${sp.billable}%</span></div>
+        <div><span><span class="fw-dot" style="background:#d9d4b0;border:1px solid #b5ae7c"></span>Non-billable</span><span><strong>${sm.non_billable_hm}</strong> · ${sp.non_billable}%</span></div>
+        <div><span><span class="fw-dot" style="background:#6f93ab"></span>Management / design</span><span><strong>${sm.mgt_design_hm}</strong> · ${sp.mgt_design}%</span></div>
+      </div>
+    </div>
+    <div class="fw-chips" id="fw-filters">
+      ${Object.keys(labels).map(k => `<button class="fw-chip ${fwFilter === k ? "active" : ""}" data-fw-filter="${k}">${labels[k]}</button>`).join("")}
+    </div>
+    ${dayHtml}
+    <div class="fw-foot-note">Hours are not split between jobs. Tags come from the WO numbers on the value line and from places named in the notes (MCI, gravel pit). Days marked pending don't have a dollar value yet, so they are left out of "Value priced". When accounting's numbers arrive, a day's value can be filled in.</div>`;
+}
+
+document.getElementById("fabshop-weekly-display").addEventListener("click", (e) => {
+  const t = e.target.closest("[data-fw-week],[data-fw-filter],[data-fw-open],[data-fw-full]");
+  if (!t) return;
+  if (t.hasAttribute("data-fw-week")) { const wk = t.getAttribute("data-fw-week"); if (wk) loadFabshopWeekly(wk); return; }
+  if (t.hasAttribute("data-fw-filter")) { fwFilter = t.getAttribute("data-fw-filter"); renderFabshopWeekly(); return; }
+  if (t.hasAttribute("data-fw-open")) { fwOpen[t.getAttribute("data-fw-open")] = true; renderFabshopWeekly(); return; }
+  if (t.hasAttribute("data-fw-full")) { const d = t.getAttribute("data-fw-full"); fwFull[d] = !fwFull[d]; renderFabshopWeekly(); }
+});
 
 document.getElementById("login-btn").addEventListener("click", async () => {
   const role = document.getElementById("login-role").value;
