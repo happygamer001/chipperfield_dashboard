@@ -111,6 +111,16 @@
   .employee-row { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr auto; gap: 8px; align-items: end; margin-bottom: 8px; }
   .employee-row label { margin: 0 0 4px; }
   @media (max-width: 640px) { .employee-row { grid-template-columns: 1fr 1fr; } }
+  .emp-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+  .emp-card.closed { opacity: .45; pointer-events: none; }
+  .emp-total { font-size: 12px; color: var(--ink-soft); margin: 2px 0 8px; }
+  .emp-total.bad { color: var(--danger-text); font-weight: 600; }
+  .radio-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .radio-row label { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 8px 12px; min-height: 40px; border: 1px solid var(--line); border-radius: 20px; font-size: 14px; cursor: pointer; }
+  .radio-row input { width: auto; margin: 0; }
+  .radio-row label:has(input:checked) { background: #e8f0df; border-color: #4d7a2f; font-weight: 600; }
+  .emp-reason { display: none; margin-top: 4px; }
+  .emp-card[data-status="out"] .emp-reason, .emp-card[data-status="left_early"] .emp-reason { display: block; }
 
   .chart-toggle { display: flex; gap: 8px; margin-bottom: 16px; }
   .chart-toggle button.active { background: var(--green); border-color: var(--green-dark); color: #0f1a08; font-weight: 600; }
@@ -165,7 +175,12 @@
       <label>Date</label>
       <input type="date" id="dt-date">
 
+      <label style="display:flex;align-items:center;gap:10px;margin:12px 0;font-size:15px;">
+        <input type="checkbox" id="dt-shop-closed" style="width:auto;margin:0;"> Entire fab shop out today
+      </label>
+
       <p class="section-heading">Employees</p>
+      <p class="section-sub">Enter time as h:mm (5:30). Decimals like 5.5 also work. Pick Out or Left early to give a reason.</p>
       <div id="employee-rows"></div>
       <div id="employee-quick-add" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;"></div>
       <button class="ghost" id="add-employee-row-btn" type="button">+ Add other employee</button>
@@ -179,7 +194,10 @@
       <p class="section-heading">Problems</p>
       <textarea id="dt-problems" placeholder="Any problems today?"></textarea>
 
-      <p class="section-heading">Estimated value of work completed</p>
+      <p class="section-heading">Value, WO / job numbers, notes</p>
+      <p class="section-sub">Write anything, the way the paper sheet does: "Med value", "21774, 21764", "J123", "safety".</p>
+      <input type="text" id="dt-value-note" placeholder="e.g. Med value (21774)">
+      <label style="margin-top:10px;">Dollar value (optional, fill in when known)</label>
       <input type="number" id="dt-estimated-value" placeholder="$">
 
       <p class="section-heading">Tab completed by</p>
@@ -301,38 +319,133 @@ document.getElementById("back-to-landing").addEventListener("click", () => {
 let ROSTER = [];
 let employeeRowCount = 0;
 
-function addEmployeeRow(prefillName) {
+const ABSENCE_REASONS = ["PTO", "Sick", "Family", "Appointment", "Holiday", "Other"];
+
+// "5:30" -> 5.5, "5.5" -> 5.5, "5h 30m" -> 5.5, "" -> 0, bad input -> NaN
+function parseHM(text) {
+  const t = (text || "").trim().toLowerCase();
+  if (!t) return 0;
+  let m = t.match(/^(\d+):(\d{1,2})$/);
+  if (m) return +m[2] > 59 ? NaN : Math.round((+m[1] + +m[2] / 60) * 10000) / 10000;
+  m = t.match(/^(\d+)\s*h(?:rs?|ours?)?\s*(?:(\d{1,2})\s*m(?:ins?)?)?$/);
+  if (m) return +(m[2] || 0) > 59 ? NaN : Math.round((+m[1] + +(m[2] || 0) / 60) * 10000) / 10000;
+  if (/^(\d+\.?\d*|\.\d+)$/.test(t)) return Math.round(parseFloat(t) * 10000) / 10000;
+  return NaN;
+}
+function fmtHM(hours) {
+  const mins = Math.round((hours || 0) * 60);
+  return Math.floor(mins / 60) + ":" + String(mins % 60).padStart(2, "0");
+}
+function esc(t) { return String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;"); }
+
+function addEmployeeRow(prefillName, prefill) {
   const container = document.getElementById("employee-rows");
   const rowId = "emp-row-" + (employeeRowCount++);
   const div = document.createElement("div");
-  div.className = "employee-row";
+  div.className = "emp-card";
   div.id = rowId;
+  div.dataset.status = "present";
 
-  const optionsHtml = ROSTER.map(n => `<option value="${n}" ${n === prefillName ? "selected" : ""}>${n}</option>`).join("");
+  const optionsHtml = ROSTER.map(n => `<option value="${esc(n)}" ${n === prefillName ? "selected" : ""}>${esc(n)}</option>`).join("");
+  const reasonsHtml = ABSENCE_REASONS.map((r, i) =>
+    `<label><input type="radio" name="rs-${rowId}" value="${r}"> ${r}</label>`).join("");
 
   div.innerHTML = `
-    <div>
-      <label>Name</label>
-      <select data-role="emp-name">${optionsHtml || '<option value="">No roster yet</option>'}</select>
+    <div class="employee-row">
+      <div>
+        <label>Name</label>
+        <select data-role="emp-name">${optionsHtml || '<option value="">No roster yet</option>'}</select>
+      </div>
+      <div>
+        <label>Billable</label>
+        <input type="text" inputmode="text" autocomplete="off" data-role="emp-billable" placeholder="0:00">
+      </div>
+      <div>
+        <label>Non-Billable</label>
+        <input type="text" inputmode="text" autocomplete="off" data-role="emp-nonbillable" placeholder="0:00">
+      </div>
+      <div>
+        <label>MGT/Design</label>
+        <input type="text" inputmode="text" autocomplete="off" data-role="emp-mgt" placeholder="0:00">
+      </div>
+      <div>
+        <button class="danger" type="button" data-role="emp-remove">×</button>
+      </div>
     </div>
-    <div>
-      <label>Billable</label>
-      <input type="number" step="0.1" data-role="emp-billable" placeholder="0">
+    <div class="emp-total" data-role="emp-total">Total 0:00</div>
+    <div class="radio-row" data-role="status-row">
+      <label><input type="radio" name="st-${rowId}" value="present" checked> Present</label>
+      <label><input type="radio" name="st-${rowId}" value="out"> Out</label>
+      <label><input type="radio" name="st-${rowId}" value="left_early"> Left early</label>
     </div>
-    <div>
-      <label>Non-Billable</label>
-      <input type="number" step="0.1" data-role="emp-nonbillable" placeholder="0">
-    </div>
-    <div>
-      <label>MGT/Design</label>
-      <input type="number" step="0.1" data-role="emp-mgt" placeholder="0">
-    </div>
-    <div>
-      <button class="danger" type="button" onclick="document.getElementById('${rowId}').remove()">×</button>
+    <div class="emp-reason">
+      <div class="radio-row">${reasonsHtml}</div>
+      <input type="text" data-role="emp-reason-detail" placeholder="Details (optional)">
     </div>
   `;
   container.appendChild(div);
+
+  const upd = () => updateEmpTotal(div);
+  div.querySelectorAll('[data-role^="emp-b"],[data-role="emp-nonbillable"],[data-role="emp-mgt"]').forEach(i => i.addEventListener("input", upd));
+  div.querySelectorAll(`input[name="st-${rowId}"]`).forEach(r => r.addEventListener("change", () => { div.dataset.status = r.value; }));
+  div.querySelector('[data-role="emp-remove"]').addEventListener("click", () => div.remove());
+
+  if (prefill) {
+    const hm = v => (v ? fmtHM(v) : "");
+    div.querySelector('[data-role="emp-billable"]').value = hm(prefill.billable);
+    div.querySelector('[data-role="emp-nonbillable"]').value = hm(prefill.non_billable);
+    div.querySelector('[data-role="emp-mgt"]').value = hm(prefill.mgt_design);
+    if (prefill.absence) {
+      div.dataset.status = prefill.absence.type;
+      div.querySelector(`input[name="st-${rowId}"][value="${prefill.absence.type}"]`).checked = true;
+      const known = ABSENCE_REASONS.find(r => (prefill.absence.reason || "").toLowerCase().startsWith(r.toLowerCase()));
+      const pick = known || "Other";
+      div.querySelector(`input[name="rs-${rowId}"][value="${pick}"]`).checked = true;
+      div.querySelector('[data-role="emp-reason-detail"]').value = prefill.absence.reason || "";
+    }
+  }
+  updateEmpTotal(div);
+  return div;
 }
+
+function updateEmpTotal(card) {
+  const vals = ["emp-billable", "emp-nonbillable", "emp-mgt"].map(r => parseHM(card.querySelector(`[data-role="${r}"]`).value));
+  const el = card.querySelector('[data-role="emp-total"]');
+  if (vals.some(v => Number.isNaN(v))) { el.textContent = "Use h:mm like 5:30 (minutes 0-59) or decimals like 5.5"; el.className = "emp-total bad"; return; }
+  const t = vals.reduce((a, b) => a + b, 0);
+  el.className = "emp-total";
+  el.textContent = `Total ${fmtHM(t)} (${(Math.round(t * 100) / 100)} hrs)`;
+}
+
+document.getElementById("dt-shop-closed").addEventListener("change", e => {
+  document.querySelectorAll("#employee-rows .emp-card").forEach(c => c.classList.toggle("closed", e.target.checked));
+});
+
+// Reopening a date that already has an entry loads it, so resubmitting never wipes anything
+let ENTRY_CACHE = null;
+async function loadEntryForDate() {
+  const date = document.getElementById("dt-date").value;
+  if (!date) return;
+  try {
+    if (!ENTRY_CACHE) ENTRY_CACHE = (await (await fetch("/api/fabshop-portal/daily-entries")).json()).entries || [];
+  } catch (e) { return; }
+  const entry = ENTRY_CACHE.find(e => e.date === date);
+  const rows = document.getElementById("employee-rows");
+  if (!entry) return;
+  rows.innerHTML = "";
+  const abs = {}; (entry.absences || []).forEach(a => { abs[a.name] = a; });
+  (entry.employees || []).forEach(emp => addEmployeeRow(emp.name, Object.assign({}, emp, { absence: abs[emp.name] })));
+  (entry.absences || []).filter(a => a.name !== "Entire fab shop" && !(entry.employees || []).some(e => e.name === a.name))
+    .forEach(a => addEmployeeRow(a.name, { absence: a }));
+  document.getElementById("dt-description").value = entry.description || "";
+  document.getElementById("dt-new-leads").value = entry.new_leads || "";
+  document.getElementById("dt-problems").value = entry.problems || "";
+  document.getElementById("dt-value-note").value = entry.value_note || "";
+  document.getElementById("dt-estimated-value").value = entry.estimated_value || "";
+  document.getElementById("dt-completed-by").value = entry.completed_by || "";
+  const closed = document.getElementById("dt-shop-closed"); closed.checked = !!entry.shop_closed; closed.dispatchEvent(new Event("change"));
+}
+document.getElementById("dt-date").addEventListener("change", loadEntryForDate);
 
 document.getElementById("add-employee-row-btn").addEventListener("click", () => addEmployeeRow());
 
@@ -405,24 +518,39 @@ document.getElementById("submit-daily-tab-btn").addEventListener("click", async 
     return;
   }
 
-  const employees = [];
-  document.querySelectorAll("#employee-rows .employee-row").forEach(row => {
-    const name = row.querySelector('[data-role="emp-name"]').value;
+  const employees = [], absences = [];
+  const shopClosed = document.getElementById("dt-shop-closed").checked;
+  let bad = null;
+  document.querySelectorAll("#employee-rows .emp-card").forEach(card => {
+    const name = card.querySelector('[data-role="emp-name"]').value;
     if (!name) return;
-    employees.push({
-      name,
-      billable: parseFloat(row.querySelector('[data-role="emp-billable"]').value) || 0,
-      non_billable: parseFloat(row.querySelector('[data-role="emp-nonbillable"]').value) || 0,
-      mgt_design: parseFloat(row.querySelector('[data-role="emp-mgt"]').value) || 0,
-    });
+    const hrs = ["emp-billable", "emp-nonbillable", "emp-mgt"].map(r => parseHM(card.querySelector(`[data-role="${r}"]`).value));
+    if (hrs.some(h => Number.isNaN(h))) { bad = name; return; }
+    employees.push({ name, billable: hrs[0], non_billable: hrs[1], mgt_design: hrs[2] });
+    const st = card.dataset.status;
+    if (!shopClosed && (st === "out" || st === "left_early")) {
+      const picked = card.querySelector('input[name^="rs-"]:checked');
+      const detail = card.querySelector('[data-role="emp-reason-detail"]').value.trim();
+      const reason = [picked ? picked.value : "", detail && detail !== (picked ? picked.value : "") ? detail : ""].filter(Boolean).join(": ");
+      absences.push({ name, type: st, reason });
+    }
   });
+  if (bad) {
+    statusEl.textContent = "Check " + bad + "'s hours. Use h:mm like 5:30.";
+    statusEl.style.color = "var(--danger-text)";
+    return;
+  }
+  if (shopClosed) absences.push({ name: "Entire fab shop", type: "out", reason: "everyone gone" });
 
   const payload = {
     date,
-    employees,
+    employees: shopClosed ? [] : employees,
+    absences,
+    shop_closed: shopClosed,
     description: document.getElementById("dt-description").value,
     new_leads: document.getElementById("dt-new-leads").value,
     problems: document.getElementById("dt-problems").value,
+    value_note: document.getElementById("dt-value-note").value,
     estimated_value: parseFloat(document.getElementById("dt-estimated-value").value) || 0,
     completed_by: document.getElementById("dt-completed-by").value,
   };
@@ -437,6 +565,7 @@ document.getElementById("submit-daily-tab-btn").addEventListener("click", async 
     });
     const data = await res.json();
     if (data.status !== "ok") throw new Error(data.message || "Submit failed");
+    ENTRY_CACHE = null;
     statusEl.textContent = "Submitted — Calvin's dashboard updated.";
     statusEl.style.color = "var(--ok-text)";
     loadRecentEntries();
@@ -472,7 +601,7 @@ async function loadRecentEntries() {
             <p class="item-title">${e.date}</p>
             <p class="item-sub">Billable ${e.totals.billable} · Non-billable ${e.totals.non_billable} · MGT/Design ${e.totals.mgt_design}</p>
           </div>
-          <span class="tag ok">$${(e.estimated_value || 0).toLocaleString()}</span>
+          <span class="tag ok">${e.estimated_value ? "$" + e.estimated_value.toLocaleString() : (e.value_note ? e.value_note : "no value")}</span>
         </div>
         ${e.description ? `<p class="summary">${e.description}</p>` : ''}
         ${e.new_leads ? `<p class="summary" style="color:var(--ink-soft);">New leads: ${e.new_leads}</p>` : ''}
