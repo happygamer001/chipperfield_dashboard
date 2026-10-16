@@ -168,6 +168,16 @@
   .fw-pill.other { background: #fdf0dc; color: #7a4305; }
   .fw-pill.lead { background: #fde8e8; color: #8a1f1f; }
   .fw-pill.pending { background: var(--warn-bg); color: var(--warn-text); }
+  .fw-pill.out { background: #fde8e8; color: #8a1f1f; }
+  .fw-pill.early { background: var(--warn-bg); color: var(--warn-text); }
+  .fw-pill.holiday { background: #e6e9f5; color: #2c3a73; }
+  .fw-closed { padding: 8px 12px; border-radius: 10px; background: #fde8e8; color: #8a1f1f; font-weight: 700; font-size: 14px; }
+  .fw-offday { padding: 10px 14px; border: 1px dashed var(--line); border-radius: 12px; font-size: 14px; color: var(--ink-soft); display: flex; justify-content: space-between; gap: 8px; }
+  .fw-offday.holiday { background: #eef0f9; color: #2c3a73; border-color: #c9cfe8; }
+  .fw-impact h3 { margin: 0 0 8px; font-size: 16px; }
+  .fw-impact table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .fw-impact td, .fw-impact th { padding: 6px 4px; text-align: left; border-bottom: 1px solid var(--line); }
+  .fw-impact td:not(:first-child), .fw-impact th:not(:first-child) { text-align: right; }
   .fw-text { font-size: 14px; line-height: 1.45; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   .fw-more { font-size: 13px; color: var(--green-dark); font-weight: 600; background: none; border: 0; padding: 6px 0; text-align: left; cursor: pointer; font-family: inherit; min-height: 32px; }
   .fw-leadbox { background: #fef6f6; border: 1px solid #f1cccc; border-radius: 10px; padding: 8px 10px; font-size: 13px; color: #3a1a1a; }
@@ -335,6 +345,7 @@
       <div class="fw-stats" id="fw-stats"></div>
       <div id="fw-gaps"></div>
       <p class="fw-explain" id="fw-explain"></p>
+      <div id="fw-impact"></div>
     </div>
 
     <div id="fabshop-weekly-display" style="display:none;"></div>
@@ -468,6 +479,7 @@ function showApp() {
   document.getElementById("app-content").style.display = "block";
   loadDashboard();
   loadFabshopSummary("week");
+  loadFabshopImpact();
   loadFabshopWeekly(null);
   loadFabshopDailyLog();
   loadFabshopLeads();
@@ -1093,7 +1105,7 @@ function renderFabshopSummary(data) {
       responsive: true, maintainAspectRatio: false,
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: { label: c => c.parsed.y == null ? (data.points[c.dataIndex].pending ? "Value pending" : "No data") : fwMoney(c.parsed.y) } },
+        tooltip: { callbacks: { label: c => c.parsed.y == null ? (data.points[c.dataIndex].pending ? "No dollar value" : "No data") : fwMoney(c.parsed.y) } },
       },
       scales: {
         x: { ticks: { color: soft, maxRotation: 0, autoSkip: true, maxTicksLimit: isWeek ? 5 : 7 }, grid: { display: false } },
@@ -1112,8 +1124,43 @@ function renderFabshopSummary(data) {
   ).join("");
 
   document.getElementById("fw-explain").textContent = isWeek
-    ? "Each point is one day's estimated value of work completed, from the Daily Tab. Days with no tab on file, or with the value still pending, are left blank."
-    : "Each point is one week's estimated value, starting from earlier history and the Daily Tab. Earlier history is still being added, so gaps show where no data is on file yet. Days marked pending have no dollar value, so a week with pending days can read low.";
+    ? "Each point is one day's estimated value of work completed, from the Daily Tab. Days with no tab on file, or with no dollar value written, are left blank."
+    : "Each point is one week's estimated value, starting from earlier history and the Daily Tab. Earlier history is still being added, so gaps show where no data is on file yet. Days with no dollar value are left out, so a week with several can read low.";
+}
+
+// ---------- Fab Shop: holiday + absence impact ----------
+async function loadFabshopImpact() {
+  const el = document.getElementById("fw-impact");
+  try {
+    const res = await fetch("/api/fabshop-impact");
+    const d = await res.json();
+    if (!res.ok || !d.has_data) { el.innerHTML = ""; return; }
+    const a = d.absences, h = d.holidays, c = d.shop_closed;
+    const rows = a.by_reason.map(r => `<tr><td>${fwEsc(r.reason)}</td><td>${r.days}</td><td>${r.est_hours}</td></tr>`).join("");
+    const ppl = a.by_person.map(p => `<tr><td>${fwEsc(p.name)}</td><td>${p.out}</td><td>${p.left_early}</td><td>${p.est_hours}</td></tr>`).join("");
+    const closedTxt = c.days.map(x => `${fwDay(x.date, true)}${x.note ? " (“" + fwEsc(x.note) + "”)" : ""}`).join("; ");
+    const hol = h.days.map(x => `<div class="fw-offday holiday"><span>${fwDay(x.date, true)} · ${fwEsc(x.name)}</span><span>${x.worked ? "worked" : "closed"}</span></div>`).join("");
+    const recent = d.recent_events.slice(0, 12).map(e =>
+      `<div class="fw-offday"><span>${fwDay(e.date, true)} · ${fwEsc(e.name)} ${e.type === "left_early" ? "left early" : "out"}</span><span>${fwEsc(e.reason || "no reason written")}</span></div>`).join("");
+    el.innerHTML = `
+    <p class="section-heading" style="margin-top:20px;">Holidays &amp; absences</p>
+    <p class="section-sub">Since ${fwDay(d.coverage_from, true)}, when daily hours by person began. Hours and dollars lost are estimates.</p>
+    <div class="fw-stats">
+      <div class="fw-box"><div class="fw-tile-lbl">Est. hours lost</div><div class="fw-tile-val">${Math.round(d.total_est_hours).toLocaleString()}</div></div>
+      <div class="fw-box"><div class="fw-tile-lbl">Est. value of that time</div><div class="fw-tile-val">${fwMoney(d.total_est_value)}</div></div>
+    </div>
+    <div class="fw-box fw-impact"><h3>Entire fab shop out</h3>
+      <p class="fw-text">${c.count} day${c.count === 1 ? "" : "s"}: ${closedTxt || "none"}. About ${c.est_hours} hours, ${fwMoney(c.est_value)}.</p></div>
+    <div class="fw-box fw-impact"><h3>Absences</h3>
+      <p class="fw-text">${a.person_days_out} person-days out and ${a.person_days_left_early} left early or short. About ${a.est_hours} hours, ${fwMoney(a.est_value)}.</p>
+      <table><tr><th>Reason</th><th>Days</th><th>Est. hrs</th></tr>${rows}</table>
+      <table style="margin-top:12px;"><tr><th>Person</th><th>Out</th><th>Early</th><th>Est. hrs</th></tr>${ppl}</table></div>
+    <div class="fw-box fw-impact"><h3>Holidays</h3>
+      <p class="fw-text">${h.count} holiday weekdays closed: about ${h.est_hours} crew hours, ${fwMoney(h.est_value)}.</p>
+      <div style="display:grid;gap:6px;">${hol}</div></div>
+    <div class="fw-box fw-impact"><h3>Most recent</h3><div style="display:grid;gap:6px;">${recent}</div></div>
+    <p class="fw-explain">${fwEsc(d.estimate_note)} Caleb W. is part-time and is not counted as absent. ${d.no_tab_days.count} other weekdays have no sheet on file; those are not counted as absences.</p>`;
+  } catch (err) { el.innerHTML = ""; }
 }
 
 // ---------- Fab Shop: Weekly Breakdown ----------
@@ -1146,12 +1193,20 @@ function fwCategoryBar(day, cls) {
     <div class="fw-seg-b" style="width:${sp.billable}%"></div><div class="fw-seg-n" style="width:${sp.non_billable}%"></div><div class="fw-seg-m" style="width:${sp.mgt_design}%"></div></div>`;
 }
 
+function fwValueLabel(day) {
+  if (!day.value_pending) return fwMoney(day.value);
+  return day.value_note ? "“" + day.value_note + "”" : "not written";
+}
+
 function fwDayCard(day) {
   const pills = []
     .concat(day.wo_tags.map(t => `<span class="fw-pill wo">${fwEsc(t)}</span>`))
     .concat(day.elsewhere.map(e => `<span class="fw-pill ${e.kind === "mci" ? "mci" : "other"}">→ ${fwEsc(e.label)}</span>`))
     .concat(day.new_leads ? ['<span class="fw-pill lead">New lead</span>'] : [])
-    .concat(day.value_pending ? ['<span class="fw-pill pending">Value pending</span>'] : []);
+    .concat(day.holiday ? [`<span class="fw-pill holiday">Holiday: ${fwEsc(day.holiday)}</span>`] : [])
+    .concat((day.absences || []).filter(a => a.name !== "Entire fab shop").map(a =>
+      `<span class="fw-pill ${a.type === "left_early" ? "early" : "out"}">${fwEsc(a.name)} ${a.type === "left_early" ? "left early" : "out"}${a.reason && a.reason !== "not listed" ? " (" + fwEsc(a.reason) + ")" : ""}</span>`))
+    .concat(day.value_pending && day.value_note ? [`<span class="fw-pill pending">Written note: ${fwEsc(day.value_note)}</span>`] : []);
   const full = !!fwFull[day.date];
   const snip = fwSnippet(day.description);
   const people = day.people.map(p => `${fwEsc(p.name)} ${p.total_hm}`).join(" · ");
@@ -1161,25 +1216,26 @@ function fwDayCard(day) {
   return `
   <div class="fw-day" data-date="${day.date}">
     <div class="fw-day-top"><div class="fw-day-name">${fwDay(day.date, true)}</div><div class="fw-day-total"><strong>${day.total_hm}</strong> total</div></div>
+    ${day.shop_closed ? '<div class="fw-closed">Entire fab shop out</div>' : ""}
     ${people ? `<div class="fw-people">${people}</div>` : ""}
-    ${fwCategoryBar(day, "sm")}
+    ${day.shop_closed ? "" : fwCategoryBar(day, "sm")}
     ${full ? `<div class="fw-people">Billable ${day.billable_hm} · Non-billable ${day.non_billable_hm} · Mgt/design ${day.mgt_design_hm}</div>` : ""}
     ${pills.length ? `<div class="fw-pills">${pills.join("")}</div>` : ""}
     ${day.description ? `<p class="fw-text">${fwEsc(full ? day.description : snip.text)}</p>` : ""}
-    ${excelOnly ? '<p class="fw-text" style="color:var(--ink-soft);">Totals only. This day came from the Excel upload, so there is no tab text on file.</p>' : ""}
+    ${day.no_notes ? '<p class="fw-text" style="color:var(--ink-soft);">No notes available</p>' : ""}
     ${(snip.cut || day.problems || day.notes.length || day.new_leads.length > 0) && !excelOnly ? `<button class="fw-more" data-fw-full="${day.date}">${full ? "Hide full tab" : "View full tab"}</button>` : ""}
     ${day.new_leads ? `<div class="fw-leadbox"><strong>Lead:</strong> ${fwEsc(day.new_leads)}</div>` : ""}
     ${full && day.problems ? `<div class="fw-probbox"><strong>Problems:</strong> ${fwEsc(day.problems)}</div>` : ""}
     ${full ? notes : ""}
     <div class="fw-foot">
-      <span>Value ${day.value_pending ? "<strong>pending</strong>" : `<strong>${fwMoney(day.value)}</strong>`}${woText ? ` <span class="muted">· ${fwEsc(woText)}</span>` : ""}</span>
+      <span>Value <strong>${fwEsc(fwValueLabel(day))}</strong>${woText ? ` <span class="muted">· ${fwEsc(woText)}</span>` : ""}</span>
       ${day.completed_by ? `<span class="muted">by ${fwEsc(day.completed_by)}</span>` : ""}
     </div>
   </div>`;
 }
 
 function fwCollapsedRow(day) {
-  const bits = [day.total_hm, day.value_pending ? "value pending" : fwMoney(day.value)];
+  const bits = [day.total_hm, fwValueLabel(day)];
   if (day.wo_tags.length) bits.push(day.wo_tags.join(", "));
   return `<button class="fw-row" data-fw-open="${day.date}"><span><strong>${fwDay(day.date, true)}</strong> <span class="muted">· ${fwEsc(bits.join(" · "))}</span></span><span class="chev">›</span></button>`;
 }
@@ -1193,12 +1249,16 @@ function renderFabshopWeekly() {
     leads: d => !!d.new_leads,
     pending: d => d.value_pending,
   };
-  const labels = { all: "All days", elsewhere: "Hours charged elsewhere", leads: "New leads", pending: "Value pending" };
+  const labels = { all: "All days", elsewhere: "Hours charged elsewhere", leads: "New leads", pending: "No dollar value" };
   const shown = fwDays.filter(filters[fwFilter]);
 
-  const dayHtml = shown.map((d, i) =>
-    (i < 3 || fwOpen[d.date]) ? fwDayCard(d) : fwCollapsedRow(d)
-  ).join("") || '<div class="empty">No days match this filter.</div>';
+  const items = shown.map((d, i) => ({ date: d.date, html: (i < 3 || fwOpen[d.date]) ? fwDayCard(d) : fwCollapsedRow(d) }));
+  if (fwFilter === "all") {
+    (w.off_days || []).forEach(o => items.push({ date: o.date, html:
+      `<div class="fw-offday ${o.holiday ? "holiday" : ""}"><span><strong>${fwDay(o.date, true)}</strong></span><span>${fwEsc(o.label)}</span></div>` }));
+    items.sort((x, y) => y.date.localeCompare(x.date));
+  }
+  const dayHtml = items.map(x => x.html).join("") || '<div class="empty">No days match this filter.</div>';
 
   el.innerHTML = `
     <div class="fw-weeknav">
@@ -1225,7 +1285,7 @@ function renderFabshopWeekly() {
       ${Object.keys(labels).map(k => `<button class="fw-chip ${fwFilter === k ? "active" : ""}" data-fw-filter="${k}">${labels[k]}</button>`).join("")}
     </div>
     ${dayHtml}
-    <div class="fw-foot-note">Hours are not split between jobs. Tags come from the WO numbers on the value line and from places named in the notes (MCI, gravel pit). Days marked pending don't have a dollar value yet, so they are left out of "Value priced". When accounting's numbers arrive, a day's value can be filled in.</div>`;
+    <div class="fw-foot-note">Hours are not split between jobs. Tags come from the WO numbers on the value line and from places named in the notes (MCI, gravel pit). Days without a dollar value show what was written beside the value line, and are left out of "Value priced". Days with no tab on file are shown as holidays or "No tab on file". Caleb W. is part-time.</div>`;
 }
 
 document.getElementById("fabshop-weekly-display").addEventListener("click", (e) => {

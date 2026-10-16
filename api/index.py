@@ -1544,7 +1544,24 @@ def _build_fabshop_entry(body, preserved_notes=None):
         "completed_by": body.get("completed_by") or "",
         "submitted_at": datetime.datetime.utcnow().isoformat() + "Z",
         "notes": preserved_notes or [],
+        # Who was out / left early and why (used for Calvin's attendance impact)
+        "absences": _clean_absences(body.get("absences")),
+        "attendance_ok": [str(n) for n in (body.get("attendance_ok") or [])][:10],
+        "shop_closed": bool(body.get("shop_closed")),
     }
+
+
+def _clean_absences(raw):
+    out = []
+    for a in (raw or [])[:20]:
+        if not isinstance(a, dict) or not a.get("name"):
+            continue
+        out.append({
+            "name": str(a["name"])[:60],
+            "type": "left_early" if a.get("type") == "left_early" else "out",
+            "reason": str(a.get("reason") or "")[:120],
+        })
+    return out
 
 
 @app.route("/api/fabshop-portal/daily-tab", methods=["POST"])
@@ -1735,8 +1752,112 @@ def fabshop_portal_evaluation_data():
 # Places named in a Daily Tab's notes that mean hours went somewhere else.
 FABSHOP_ELSEWHERE_PATTERNS = [
     (re.compile(r"\bmci\b|mc\s?cook concrete|cement plant|concrete plant", re.IGNORECASE), "McCook Concrete (MCI)", "mci"),
+    (re.compile(r"concrete truck|drove concrete|drive concrete|driving concrete", re.IGNORECASE), "McCook Concrete (MCI)", "mci"),
     (re.compile(r"gravel pit", re.IGNORECASE), "Gravel pit", "other"),
 ]
+
+
+# ---- Holidays, attendance and impact ---------------------------------------
+FABSHOP_COVERAGE_START = "2025-08-18"   # per-person hours begin here
+FABSHOP_JOSH_LAST_DAY = "2026-02-27"
+FABSHOP_PART_TIMERS = {"Caleb": "Caleb W. (part-time)"}
+
+
+def _display_name(name):
+    return FABSHOP_PART_TIMERS.get(name, name)
+
+
+def _holiday_name(d):
+    """Shop holiday for a date, or ''. Observed rules for the US holidays the
+    shop takes, plus Dec 24/26/31 which it also closes for."""
+    if isinstance(d, str):
+        d = datetime.date.fromisoformat(d)
+    y, m, day = d.year, d.month, d.day
+    if m == 1 and day == 1:
+        return "New Year's Day"
+    if m == 5 and d.weekday() == 0 and day + 7 > 31:
+        return "Memorial Day"
+    jul4 = datetime.date(y, 7, 4)
+    obs = jul4 - datetime.timedelta(days=1) if jul4.weekday() == 5 else (
+        jul4 + datetime.timedelta(days=1) if jul4.weekday() == 6 else jul4)
+    if d == obs:
+        return "Independence Day (observed)" if obs != jul4 else "Independence Day"
+    if m == 9 and d.weekday() == 0 and day <= 7:
+        return "Labor Day"
+    if m == 11 and d.weekday() == 3 and 22 <= day <= 28:
+        return "Thanksgiving"
+    if m == 11 and d.weekday() == 4 and 23 <= day <= 29:
+        return "Day after Thanksgiving"
+    if m == 12 and day in (24, 25, 26):
+        return {24: "Christmas Eve", 25: "Christmas Day", 26: "Day after Christmas"}[day]
+    if m == 12 and day == 31:
+        return "New Year's Eve"
+    return ""
+
+
+def _core_roster(date_str):
+    """Full-time crew expected on a date (part-timers are never 'absent')."""
+    if date_str < FABSHOP_COVERAGE_START:
+        return []
+    crew = ["Jon", "Jerron"]
+    if "2025-09-22" <= date_str <= FABSHOP_JOSH_LAST_DAY:
+        crew.append("Josh")
+    return crew
+
+
+def _entry_hours_by_person(entry):
+    return {e.get("name"): sum(float(e.get(k) or 0) for k in ("billable", "non_billable", "mgt_design"))
+            for e in entry.get("employees", []) or [] if e.get("name")}
+
+
+def _entry_absences(entry):
+    """Explicit absences plus implied ones (core crew with no hours and no
+    explanation). Returns (list, shop_closed)."""
+    date = entry["date"]
+    hours = _entry_hours_by_person(entry)
+    total = sum(hours.values())
+    explicit = [dict(a) for a in (entry.get("absences") or [])]
+    if entry.get("shop_closed") or any(a["name"] == "Entire fab shop" for a in explicit):
+        return [a for a in explicit if a["name"] == "Entire fab shop"] or \
+            [{"name": "Entire fab shop", "type": "out", "reason": "everyone gone"}], True
+    named = {a["name"] for a in explicit}
+    ok = set(entry.get("attendance_ok") or [])
+    if total <= 0 and _holiday_name(date):
+        return [], False
+    if total <= 0 and date >= FABSHOP_COVERAGE_START:
+        return [{"name": "Entire fab shop", "type": "out", "reason": "no hours logged"}], True
+    for n in _core_roster(date):
+        if n not in named and n not in ok and hours.get(n, 0) <= 0:
+            explicit.append({"name": n, "type": "out", "reason": "not listed"})
+    return explicit, False
+
+
+def _reason_category(reason):
+    r = (reason or "").lower()
+    if "holiday" in r:
+        return "Holiday time off"
+    if "sick" in r or "not feeling" in r or "ill" in r.split():
+        return "Sick"
+    if "pto" in r:
+        return "PTO"
+    if "doctor" in r or "appointment" in r:
+        return "Appointment"
+    if "family" in r or "wife" in r or "son" in r.split():
+        return "Family"
+    if "half day" in r or "short" in r:
+        return "Short day"
+    if r in ("", "not listed", "no hours logged"):
+        return "No reason written"
+    return "Other (gone / off)"
+
+
+def _weekdays_between(a, b):
+    d = datetime.date.fromisoformat(a)
+    end = datetime.date.fromisoformat(b)
+    while d <= end:
+        if d.weekday() < 5:
+            yield d.isoformat()
+        d += datetime.timedelta(days=1)
 
 
 def _hm(hours):
@@ -1787,6 +1908,10 @@ def _fabshop_day_card(day, live_entry):
         "problems": "",
         "completed_by": "",
         "notes": [],
+        "holiday": _holiday_name(day["date"]),
+        "absences": [],
+        "shop_closed": False,
+        "no_notes": True,
     }
     if live_entry:
         note = (live_entry.get("value_note") or "").strip()
@@ -1795,18 +1920,22 @@ def _fabshop_day_card(day, live_entry):
         for emp in live_entry.get("employees", []) or []:
             tot = sum(float(emp.get(k) or 0) for k in ("billable", "non_billable", "mgt_design"))
             if emp.get("name"):
-                people.append({"name": emp["name"], "total_hm": _hm(tot)})
+                people.append({"name": _display_name(emp["name"]), "total_hm": _hm(tot)})
+        abs_list, closed = _entry_absences(dict(live_entry, date=day["date"]))
         card.update({
             "value_note": note,
             "wo_tags": live_entry.get("wo_tags") or djl_titles.id_tags(note),
-            "elsewhere": [{"label": label, "kind": kind}
-                          for pat, label, kind in FABSHOP_ELSEWHERE_PATTERNS if pat.search(text)],
+            "elsewhere": list({label: {"label": label, "kind": kind}
+                               for pat, label, kind in FABSHOP_ELSEWHERE_PATTERNS if pat.search(text)}.values()),
             "people": people,
             "description": live_entry.get("description") or "",
             "new_leads": live_entry.get("new_leads") or "",
             "problems": live_entry.get("problems") or "",
             "completed_by": live_entry.get("completed_by") or "",
             "notes": live_entry.get("notes") or [],
+            "absences": [dict(a, name=_display_name(a["name"])) for a in abs_list],
+            "shop_closed": closed,
+            "no_notes": not (live_entry.get("description") or "").strip(),
         })
     return card
 
@@ -1849,9 +1978,20 @@ def fabshop_weekly():
         if any(datetime.date.fromisoformat(c["date"]).weekday() >= 5 for c in cards):
             end = start + datetime.timedelta(days=6)
 
+        present = {c["date"] for c in cards}
+        span_lo, span_hi = daily[0]["date"], daily[-1]["date"]
+        off_days = []
+        for wd in _weekdays_between(week, (start + datetime.timedelta(days=4)).isoformat()):
+            if wd not in present and span_lo <= wd <= span_hi:
+                hol = _holiday_name(wd)
+                off_days.append({"date": wd, "holiday": hol,
+                                 "label": f"Holiday: {hol}" if hol else "No tab on file"})
+        off_days.sort(key=lambda o: o["date"], reverse=True)
+
         return jsonify({
             "has_data": True,
             "week": week,
+            "off_days": off_days,
             "week_label": f"{start.strftime('%b')} {start.day} \u2013 {end.strftime('%b')} {end.day}, {end.year}",
             "prev_week": mondays[i - 1] if i > 0 else None,
             "next_week": mondays[i + 1] if i < len(mondays) - 1 else None,
@@ -1932,6 +2072,117 @@ def fabshop_summary():
             "total_value": round(sum(p["value"] for p in have), 2),
             "periods_with_data": len(have),
             "average_value": round(sum(p["value"] for p in have) / len(have), 2) if have else None,
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-impact", methods=["GET"])
+@require_role("admin", "calvin")
+def fabshop_impact():
+    """Holiday + absenteeism impact for Calvin. Hours/value lost are
+    ESTIMATES: each absent person's usual full-day hours, priced at the
+    shop's average value per billable hour."""
+    try:
+        dbx = get_dropbox_client()
+        merged = _merge_fabshop_data(dbx)
+        daily = [d for d in merged["daily"] if d.get("date")]
+        live = {e["date"]: e for e in _read_json_from_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, []) if e.get("date")}
+        if not live:
+            return jsonify({"has_data": False})
+
+        # Usual full-day hours per person (days of 6h+ only)
+        full = {}
+        for e in live.values():
+            if e["date"] < FABSHOP_COVERAGE_START:
+                continue
+            for n, h in _entry_hours_by_person(e).items():
+                if h >= 6:
+                    full.setdefault(n, []).append(h)
+        usual = {n: sum(v) / len(v) for n, v in full.items() if v}
+
+        # $ per hour of output on days that have a value
+        val_days = [d for d in daily if (d.get("estimated_value") or 0) > 0 and d["date"] >= FABSHOP_COVERAGE_START]
+        tot_hours = sum(d["total_man_hours"] for d in val_days)
+        tot_value = sum(d["estimated_value"] for d in val_days)
+        value_per_hour = (tot_value / tot_hours) if tot_hours > 0 else 0.0
+
+        events, by_person, by_cat = [], {}, {}
+        totals = {"out": 0, "left_early": 0}
+        closed_days, hours_lost_total = [], 0.0
+        for date in sorted(live):
+            if date < FABSHOP_COVERAGE_START:
+                continue
+            e = live[date]
+            hrs = _entry_hours_by_person(e)
+            abs_list, closed = _entry_absences(e)
+            if closed:
+                lost = sum(usual.get(n, 0) for n in _core_roster(date))
+                note = (e.get("description") or "").strip()
+                closed_days.append({"date": date, "note": note, "est_hours": round(lost, 1)})
+                hours_lost_total += lost
+                continue
+            for a in abs_list:
+                n = a["name"]
+                if a["type"] == "left_early":
+                    lost = max(0.0, usual.get(n, 0) - hrs.get(n, 0))
+                    totals["left_early"] += 1
+                else:
+                    lost = usual.get(n, 0)
+                    totals["out"] += 1
+                hours_lost_total += lost
+                cat = _reason_category(a["reason"])
+                c = by_cat.setdefault(cat, {"reason": cat, "days": 0, "est_hours": 0.0})
+                c["days"] += 1; c["est_hours"] += lost
+                pp = by_person.setdefault(n, {"name": _display_name(n), "out": 0, "left_early": 0, "est_hours": 0.0})
+                pp[a["type"]] += 1; pp["est_hours"] += lost
+                events.append({"date": date, "name": _display_name(n), "type": a["type"],
+                               "reason": a["reason"], "category": cat, "est_hours": round(lost, 1)})
+
+        # Holidays: weekdays the shop took off with no hours on file
+        last = daily[-1]["date"]
+        hol_days, hol_hours = [], 0.0
+        for wd in _weekdays_between(FABSHOP_COVERAGE_START, last):
+            name = _holiday_name(wd)
+            if not name:
+                continue
+            e = live.get(wd)
+            worked = e is not None and sum(_entry_hours_by_person(e).values()) > 0
+            lost = 0.0 if worked else sum(usual.get(n, 0) for n in _core_roster(wd))
+            hol_days.append({"date": wd, "name": name, "worked": worked, "est_hours": round(lost, 1)})
+            hol_hours += lost
+
+        have = {d["date"] for d in daily}
+        no_tab = [wd for wd in _weekdays_between(FABSHOP_COVERAGE_START, last)
+                  if wd not in have and not _holiday_name(wd)]
+
+        def money(h):
+            return round(h * value_per_hour)
+
+        return jsonify({
+            "has_data": True,
+            "coverage_from": FABSHOP_COVERAGE_START, "through": last,
+            "estimate_note": "Estimates: each person's usual full-day hours, priced at the shop's average value per hour on days with a value.",
+            "value_per_hour": round(value_per_hour, 2),
+            "absences": {
+                "person_days_out": totals["out"], "person_days_left_early": totals["left_early"],
+                "est_hours": round(sum(c["est_hours"] for c in by_cat.values()), 1),
+                "est_value": money(sum(c["est_hours"] for c in by_cat.values())),
+                "by_reason": sorted(({"reason": c["reason"], "days": c["days"], "est_hours": round(c["est_hours"], 1)}
+                                     for c in by_cat.values()), key=lambda c: -c["days"]),
+                "by_person": sorted(({"name": p["name"], "out": p["out"], "left_early": p["left_early"],
+                                      "est_hours": round(p["est_hours"], 1)} for p in by_person.values()),
+                                    key=lambda p: -p["out"]),
+            },
+            "shop_closed": {"count": len(closed_days), "days": closed_days,
+                            "est_hours": round(sum(c["est_hours"] for c in closed_days), 1),
+                            "est_value": money(sum(c["est_hours"] for c in closed_days))},
+            "holidays": {"count": sum(1 for h in hol_days if not h["worked"]), "days": hol_days,
+                         "est_hours": round(hol_hours, 1), "est_value": money(hol_hours)},
+            "no_tab_days": {"count": len(no_tab), "note": "Weekdays with no sheet on file. Not counted as absences."},
+            "total_est_hours": round(hours_lost_total + hol_hours, 1),
+            "total_est_value": money(hours_lost_total + hol_hours),
+            "recent_events": sorted(events, key=lambda x: x["date"], reverse=True)[:25],
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
