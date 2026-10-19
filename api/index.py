@@ -1745,6 +1745,79 @@ def fabshop_portal_evaluation_data():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+FABSHOP_TRACKING_CHANGE_WEEK = "2025-11-03"  # before this, non-billable hours were barely recorded
+
+
+@app.route("/api/fabshop-portal/trends", methods=["GET"])
+def fabshop_portal_trends():
+    """Hours trends for the Evaluation tab: one row per Monday-week (and per
+    month) from the first day on file to the last. A week/month with no sheet
+    is `has_data: false` so charts break instead of dropping to zero. Open
+    like evaluation-data, since the portal has no login yet."""
+    try:
+        dbx = get_dropbox_client()
+        daily = [d for d in _merge_fabshop_data(dbx)["daily"] if d.get("date")]
+        if not daily:
+            return jsonify({"has_data": False, "weeks": [], "months": []})
+        live = {e["date"]: e for e in _read_json_from_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, []) if e.get("date")}
+        outside_re = [pat for pat, label, kind in FABSHOP_ELSEWHERE_PATTERNS]
+
+        def blank(key, label):
+            return {"key": key, "label": label, "has_data": False, "days": 0, "billable": 0.0, "non_billable": 0.0,
+                    "mgt_design": 0.0, "total": 0.0, "person_days": 0, "outside_dates": [], "value": 0.0}
+
+        def add(row, d):
+            b, nb, m = (float(d.get(k) or 0) for k in ("billable_hours", "non_billable_hours", "mgt_design_hours"))
+            if b + nb + m <= 0:
+                return  # a day with no hours (shop closed, holiday) is not a data point
+            row["has_data"] = True
+            row["days"] += 1
+            row["billable"] += b; row["non_billable"] += nb; row["mgt_design"] += m
+            row["total"] += b + nb + m
+            row["value"] += float(d.get("estimated_value") or 0)
+            e = live.get(d["date"])
+            if e:
+                row["person_days"] += sum(1 for h in _entry_hours_by_person(e).values() if h > 0)
+                text = f"{e.get('description') or ''} {e.get('value_note') or ''}"
+                if any(p.search(text) for p in outside_re):
+                    row["outside_dates"].append(d["date"])
+
+        first = datetime.date.fromisoformat(_monday_of(daily[0]["date"]))
+        last = datetime.date.fromisoformat(_monday_of(daily[-1]["date"]))
+        weeks, w = {}, first
+        while w <= last:
+            weeks[w.isoformat()] = blank(w.isoformat(), f"{w.month}/{w.day}")
+            w += datetime.timedelta(weeks=1)
+        months = {}
+        for d in daily:
+            add(weeks[_monday_of(d["date"])], d)
+            mk = d["date"][:7]
+            months.setdefault(mk, blank(mk, datetime.date.fromisoformat(d["date"]).strftime("%b %Y")))
+            add(months[mk], d)
+
+        def finish(r):
+            r = dict(r)
+            for k in ("billable", "non_billable", "mgt_design", "total", "value"):
+                r[k] = round(r[k], 2)
+            if r["has_data"]:
+                r["billable_pct"] = round(r["billable"] / r["total"] * 100, 1)
+                r["billable_per_person_day"] = round(r["billable"] / r["person_days"], 2) if r["person_days"] else None
+            else:
+                r["billable_pct"] = r["billable_per_person_day"] = None
+            return r
+
+        wk = [finish(r) for r in weeks.values()]
+        mo = [finish(months[k]) for k in sorted(months)]
+        return jsonify({
+            "has_data": True, "weeks": wk, "months": mo,
+            "target_pct": 80,
+            "tracking_change_week": FABSHOP_TRACKING_CHANGE_WEEK,
+            "first_date": daily[0]["date"], "last_date": daily[-1]["date"],
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 # ---------------------------------------------------------------------------
 # Calvin's Fab Shop screen: Summary (line graph) + Weekly Breakdown (day cards)
 # ---------------------------------------------------------------------------

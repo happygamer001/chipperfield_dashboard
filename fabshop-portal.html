@@ -108,6 +108,21 @@
   button.ghost:hover { background: var(--page); }
   button.danger { background: transparent; border: 1px solid var(--danger-text); color: var(--danger-text); padding: 6px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; }
 
+
+  .seg { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+  .seg button { min-height: 40px; padding: 0 14px; border: 1px solid var(--line); border-radius: 20px; background: #fff; font-size: 13px; font-weight: 600; color: var(--ink-soft); cursor: pointer; }
+  .seg button.active { background: #e8f0df; border-color: var(--green-dark); color: var(--ink); }
+  .ev-controls { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-bottom: 12px; }
+  .ev-panel { margin-bottom: 14px; }
+  .ev-title { font-size: 14px; font-weight: 700; margin: 12px 0 2px; }
+  .ev-sub, .ev-note { font-size: 12px; color: var(--ink-soft); margin: 0 0 8px; line-height: 1.4; }
+  .ev-wrap { position: relative; height: 240px; }
+  .ev-wrap.tall { height: 280px; }
+  .ev-wrap.short { height: 150px; }
+  .ev-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+  .ev-table th, .ev-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  .ev-table th:first-child, .ev-table td:first-child { text-align: left; }
+  details.ev-panel summary { cursor: pointer; font-size: 13px; font-weight: 600; min-height: 32px; }
   .employee-row { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr auto; gap: 8px; align-items: end; margin-bottom: 8px; }
   .employee-row label { margin: 0 0 4px; }
   @media (max-width: 640px) { .employee-row { grid-template-columns: 1fr 1fr; } }
@@ -226,23 +241,38 @@
       <p class="section-heading">Evaluation of the Fab Shop</p>
       <p class="section-sub" id="eval-status">Loading…</p>
 
-      <div class="chart-toggle">
-        <button class="ghost" data-range="4w">Last 4 weeks</button>
-        <button class="ghost" data-range="3m">Last 3 months</button>
-        <button class="ghost active" data-range="all">All-time</button>
+      <div class="ev-controls">
+        <div class="seg" id="ev-range" role="group" aria-label="Time range">
+          <button data-range="13">3 months</button><button data-range="52" class="active">12 months</button><button data-range="all">All</button>
+        </div>
+        <div class="seg" id="ev-grain" role="group" aria-label="Grouping">
+          <button data-grain="weeks" class="active">Weekly</button><button data-grain="months">Monthly</button>
+        </div>
       </div>
 
-      <div class="item">
-        <p style="font-size:13px;font-weight:600;margin:0 0 10px;">Billable vs. Non-Billable hours</p>
-        <canvas id="hours-chart" height="220"></canvas>
-        <div id="hours-chart-empty" class="empty" style="display:none;">No data in this range.</div>
+      <div class="item ev-panel">
+        <div class="seg" id="ev-series" role="group" aria-label="Which hours to show">
+          <button data-series="billable" class="active">Billable</button><button data-series="non_billable">Non-billable</button><button data-series="overlap">Overlap</button><button data-series="mgt_design">Mgt / design</button>
+        </div>
+        <p class="ev-title" id="ev-line-title">Billable hours</p>
+        <div class="ev-wrap"><canvas id="ev-line" role="img" aria-label="Line chart of hours over time"></canvas></div>
+        <p class="ev-note" id="ev-line-note"></p>
       </div>
 
-      <div class="item">
-        <p style="font-size:13px;font-weight:600;margin:0 0 10px;">Estimated value</p>
-        <canvas id="value-chart" height="220"></canvas>
-        <div id="value-chart-empty" class="empty" style="display:none;">No data in this range.</div>
+      <div class="item ev-panel">
+        <p class="ev-title">Where the hours went</p>
+        <p class="ev-sub">Billable at the bottom. The strip underneath shows billable as a share of all hours; stay above the dashed 80% line.</p>
+        <div class="ev-wrap tall"><canvas id="ev-area" role="img" aria-label="Stacked area chart of billable, non-billable and management hours"></canvas></div>
+        <p class="ev-title" style="margin-top:14px;">Billable share of hours</p>
+        <p class="ev-sub">Dashed line = 80% goal. Triangles = MCI or other outside work in that period's notes.</p>
+        <div class="ev-wrap short"><canvas id="ev-pct" role="img" aria-label="Line chart of billable percent with an 80 percent goal"></canvas></div>
+        <p class="ev-note" id="ev-area-note"></p>
       </div>
+
+      <details class="item ev-panel" id="ev-table-wrap">
+        <summary>View the numbers as a table</summary>
+        <div style="overflow-x:auto;"><table class="ev-table" id="ev-table"></table></div>
+      </details>
     </div>
 
     <!-- ---------- Sales Intake Tracker ---------- -->
@@ -643,76 +673,196 @@ async function loadRecentEntries() {
 }
 
 // ============== Evaluation ==============
-let hoursChart = null;
-let valueChart = null;
-let evalData = { daily: [] };
-let currentRange = "all";
+const EV = { data: null, range: "52", grain: "weeks", series: "billable" };
+const EV_COLORS = { billable: "#3f6a24", non_billable: "#eb6834", mgt_design: "#2a78d6", mci: "#1b4f75", ink: "#52514e", grid: "#e2e3dc" };
+const EV_NAMES = { billable: "Billable", non_billable: "Non-billable", mgt_design: "Mgt / design" };
+const evCharts = {};
 
-function filterByRange(daily, range) {
-  const now = new Date();
-  let cutoff;
-  if (range === "4w") cutoff = new Date(now.getTime() - 28 * 86400000);
-  else if (range === "3m") cutoff = new Date(now.getTime() - 90 * 86400000);
-  else return daily;
-  return daily.filter(d => new Date(d.date) >= cutoff);
+function evRows() {
+  const all = EV.data[EV.grain] || [];
+  if (EV.range === "all") return all;
+  const n = EV.grain === "weeks" ? parseInt(EV.range, 10) : Math.round(parseInt(EV.range, 10) / 4.35);
+  return all.slice(-n);
+}
+const evHrs = v => v == null ? "—" : fmtHM(v) + " (" + (Math.round(v * 10) / 10) + " h)";
+function evLabelFor(r) {
+  if (EV.grain === "months") return r.label;
+  const d = new Date(r.key + "T00:00"); return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+// Rolling average over the last n weeks that have data (null when the week itself has none)
+function evRolling(rows, key, n, minDays) {
+  return rows.map((r, i) => {
+    if (!r.has_data) return null;
+    const win = rows.slice(Math.max(0, i - n + 1), i + 1).filter(x => x.has_data && x.days >= minDays);
+    return win.length ? win.reduce((a, x) => a + x[key], 0) / win.length : null;
+  });
+}
+function evBase(extra) {
+  return Object.assign({ responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+    layout: { padding: { right: 8 } } }, extra);
+}
+function evXAxis(rows) {
+  return { grid: { display: false }, ticks: { color: EV_COLORS.ink, maxRotation: 0, autoSkip: true, maxTicksLimit: 7 } };
+}
+// Both stacked charts share the same left gutter so their weeks line up
+const evGutter = { afterFit: sc => { sc.width = 52; } };
+
+// Vertical dashed marker where non-billable tracking changed, so the jump isn't mistaken for a real shift
+const evTrackingPlugin = {
+  id: "evTracking",
+  afterDatasetsDraw(chart) {
+    const idx = chart.config._trackIdx;
+    if (idx == null || idx < 0) return;
+    const { ctx, chartArea, scales } = chart; const x = scales.x.getPixelForValue(idx);
+    ctx.save(); ctx.strokeStyle = EV_COLORS.ink; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, chartArea.top); ctx.lineTo(x, chartArea.bottom); ctx.stroke();
+    ctx.setLineDash([]); ctx.fillStyle = EV_COLORS.ink; ctx.font = "11px sans-serif"; ctx.textAlign = "left";
+    const tx = Math.min(x + 4, chartArea.right - 160);
+    ctx.fillStyle = "rgba(255,255,255,.85)"; ctx.fillRect(tx - 2, chartArea.top + 1, 158, 16);
+    ctx.fillStyle = EV_COLORS.ink; ctx.fillText("Non-billable tracking changed", tx, chartArea.top + 13); ctx.restore();
+  }
+};
+
+function evTrackIdx(rows) {
+  if (EV.grain !== "weeks") return null;
+  return rows.findIndex(r => r.key === EV.data.tracking_change_week);
+}
+
+function evMake(id, config) {
+  if (evCharts[id]) evCharts[id].destroy();
+  evCharts[id] = new Chart(document.getElementById(id).getContext("2d"), config);
+  return evCharts[id];
+}
+
+function evRenderLine(rows) {
+  const labels = rows.map(evLabelFor);
+  const key = EV.series;
+  const partial = rows.map(r => r.has_data && r.days < 3 && EV.grain === "weeks");
+  const mk = (k, color, dash) => ({
+    label: EV_NAMES[k], data: rows.map(r => r.has_data ? r[k] : null), borderColor: color, backgroundColor: color,
+    borderWidth: 2, tension: 0.25, spanGaps: false, borderDash: dash || [],
+    pointRadius: 3, pointHoverRadius: 6,
+    pointBackgroundColor: ctx => partial[ctx.dataIndex] ? "#fff" : color, pointBorderColor: color, pointBorderWidth: 2,
+  });
+  let sets;
+  if (key === "overlap") sets = [mk("billable", EV_COLORS.billable), mk("non_billable", EV_COLORS.non_billable)];
+  else {
+    sets = [mk(key, EV_COLORS[key])];
+    sets.push({ label: EV.grain === "weeks" ? "4-week average" : "3-month average", data: evRolling(rows, key, EV.grain === "weeks" ? 4 : 3, EV.grain === "weeks" ? 3 : 10), borderColor: EV_COLORS.ink, borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, spanGaps: false, tension: 0.3 });
+  }
+  const title = key === "overlap" ? "Billable and non-billable hours, same scale" : (EV_NAMES[key] + " hours");
+  document.getElementById("ev-line-title").textContent = title + (EV.grain === "weeks" ? ", per week" : ", per month");
+  document.getElementById("ev-line-note").textContent = EV.grain === "weeks"
+    ? "Gaps mean no sheet was filed, not zero hours. Hollow dots are weeks with fewer than 3 days on file. The dashed line is a 4-week average."
+    : "Gaps mean no sheet was filed, not zero hours. Months with only a few days on file (or still in progress) will look low. The dashed line is a 3-month average.";
+  const chart = evMake("ev-line", {
+    type: "line", data: { labels, datasets: sets }, plugins: [evTrackingPlugin],
+    options: evBase({
+      plugins: {
+        legend: { display: sets.length > 1, position: "bottom", labels: { usePointStyle: true, pointStyleWidth: 10, boxWidth: 10, boxHeight: 10, font: { size: 12 } } },
+        tooltip: { callbacks: {
+          title: items => (EV.grain === "weeks" ? "Week of " : "") + labels[items[0].dataIndex],
+          label: c => c.parsed.y == null ? null : `${c.dataset.label}: ${evHrs(c.parsed.y)}`,
+          footer: items => { const r = rows[items[0].dataIndex]; return r.has_data ? `${r.days} day${r.days === 1 ? "" : "s"} on file${r.days < 3 && EV.grain === "weeks" ? " (partial week)" : ""}` : "No sheet on file"; },
+        } },
+      },
+      scales: { x: evXAxis(rows), y: { beginAtZero: true, grid: { color: EV_COLORS.grid }, ticks: { color: EV_COLORS.ink, callback: v => v + " h" } } },
+    }),
+  });
+  chart.config._trackIdx = (key === "non_billable" || key === "overlap") ? evTrackIdx(rows) : null;
+  chart.update();
+}
+
+function evRenderArea(rows) {
+  const labels = rows.map(evLabelFor);
+  const layer = (k, color) => ({
+    label: EV_NAMES[k], data: rows.map(r => r.has_data ? r[k] : null), borderColor: "#fff", borderWidth: 1.5,
+    backgroundColor: color, fill: true, stack: "hrs", tension: 0.2, pointRadius: 0, pointHoverRadius: 4, spanGaps: false,
+  });
+  const area = evMake("ev-area", {
+    type: "line", data: { labels, datasets: [layer("billable", EV_COLORS.billable), layer("non_billable", EV_COLORS.non_billable), layer("mgt_design", EV_COLORS.mgt_design)] },
+    plugins: [evTrackingPlugin],
+    options: evBase({
+      plugins: {
+        legend: { position: "bottom", labels: { usePointStyle: true, pointStyleWidth: 10, boxWidth: 10, boxHeight: 10, font: { size: 12 } } },
+        tooltip: { callbacks: {
+          title: items => (EV.grain === "weeks" ? "Week of " : "") + labels[items[0].dataIndex],
+          label: c => c.parsed.y == null ? null : `${c.dataset.label}: ${evHrs(c.parsed.y)}`,
+          afterBody: items => {
+            const r = rows[items[0].dataIndex]; if (!r.has_data) return ["No sheet on file"];
+            const out = [`Billable share: ${r.billable_pct}%`];
+            if (r.billable_per_person_day != null) out.push(`Billable per person-day: ${fmtHM(r.billable_per_person_day)}`);
+            if (r.outside_dates.length) out.push(`MCI / outside work in notes: ${r.outside_dates.length} day${r.outside_dates.length === 1 ? "" : "s"}`);
+            return out;
+          },
+        } },
+      },
+      scales: { x: Object.assign({ stacked: true }, evXAxis(rows)),
+        y: Object.assign({ stacked: true, beginAtZero: true, grid: { color: EV_COLORS.grid }, ticks: { color: EV_COLORS.ink, callback: v => v + " h" } }, evGutter) },
+    }),
+  });
+  area.config._trackIdx = evTrackIdx(rows); area.update();
+
+  const pct = rows.map(r => r.has_data ? r.billable_pct : null);
+  const outside = rows.map(r => r.has_data && r.outside_dates.length ? 4 : null);
+  evMake("ev-pct", {
+    type: "line",
+    data: { labels, datasets: [
+      { label: "Billable %", data: pct, borderColor: EV_COLORS.billable, backgroundColor: EV_COLORS.billable, borderWidth: 2, tension: 0.2, spanGaps: false, pointRadius: 2.5, pointHoverRadius: 5 },
+      { label: "Goal 80%", data: rows.map(() => 80), borderColor: EV_COLORS.ink, borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0 },
+      { label: "MCI / outside work in notes", data: outside, showLine: false, pointStyle: "triangle", pointRadius: 6, pointHoverRadius: 8, backgroundColor: EV_COLORS.mci, borderColor: "#fff", borderWidth: 1.5 },
+    ] },
+    options: evBase({
+      plugins: {
+        legend: { display: false },
+        tooltip: { filter: it => it.datasetIndex === 0, callbacks: {
+          title: items => (EV.grain === "weeks" ? "Week of " : "") + labels[items[0].dataIndex],
+          label: c => c.parsed.y == null ? null : `Billable: ${c.parsed.y}% of hours`,
+          afterBody: items => { const r = rows[items[0].dataIndex]; return r.outside_dates.length ? [`MCI / outside work: ${r.outside_dates.length} day${r.outside_dates.length === 1 ? "" : "s"}`] : []; },
+        } },
+      },
+      scales: { x: Object.assign({}, evXAxis(rows)),
+        y: Object.assign({ min: 0, max: 100, grid: { color: EV_COLORS.grid }, ticks: { color: EV_COLORS.ink, stepSize: 20, callback: v => v + "%" } }, evGutter) },
+    }),
+  });
+  document.getElementById("ev-area-note").textContent =
+    "The sheets don't record how many hours MCI or outside work took, so triangles only show that it happened. " +
+    (EV.grain === "months" ? (() => { const low = rows.filter(r => r.has_data && r.days < 10).map(r => r.label); return low.length ? low.join(", ") + " " + (low.length === 1 ? "has" : "have") + " under 10 days on file, so " + (low.length === 1 ? "it looks" : "they look") + " low. " : ""; })() : "") +
+    "Before Nov 2025 almost no non-billable time was written down, so older months look more billable than they likely were.";
+}
+
+function evRenderTable(rows) {
+  const head = `<tr><th>${EV.grain === "weeks" ? "Week of" : "Month"}</th><th>Days</th><th>Billable</th><th>Non-bill.</th><th>Mgt/design</th><th>Billable %</th><th>MCI days</th></tr>`;
+  document.getElementById("ev-table").innerHTML = head + rows.slice().reverse().map(r => r.has_data
+    ? `<tr><td>${evLabelFor(r)}</td><td>${r.days}</td><td>${fmtHM(r.billable)}</td><td>${fmtHM(r.non_billable)}</td><td>${fmtHM(r.mgt_design)}</td><td>${r.billable_pct}%</td><td>${r.outside_dates.length || ""}</td></tr>`
+    : `<tr><td>${evLabelFor(r)}</td><td colspan="6" style="text-align:left;color:var(--ink-soft);">No sheet on file</td></tr>`).join("");
 }
 
 function renderEvaluationCharts() {
-  const filtered = filterByRange(evalData.daily || [], currentRange);
-  const labels = filtered.map(d => d.date);
-
-  document.getElementById("hours-chart-empty").style.display = filtered.length === 0 ? "block" : "none";
-  document.getElementById("value-chart-empty").style.display = filtered.length === 0 ? "block" : "none";
-  document.getElementById("hours-chart").style.display = filtered.length === 0 ? "none" : "block";
-  document.getElementById("value-chart").style.display = filtered.length === 0 ? "none" : "block";
-  if (filtered.length === 0) return;
-
-  const hoursCtx = document.getElementById("hours-chart").getContext("2d");
-  if (hoursChart) hoursChart.destroy();
-  hoursChart = new Chart(hoursCtx, {
-    type: "line",
-    data: {
-      labels,
-      datasets: [
-        { label: "Billable", data: filtered.map(d => d.billable_hours), borderColor: "#4d7a2f", backgroundColor: "transparent", tension: 0.2 },
-        { label: "Non-Billable", data: filtered.map(d => d.non_billable_hours), borderColor: "#a02020", backgroundColor: "transparent", tension: 0.2 },
-      ]
-    },
-    options: { responsive: true, plugins: { legend: { position: "bottom" } } }
-  });
-
-  const valueCtx = document.getElementById("value-chart").getContext("2d");
-  if (valueChart) valueChart.destroy();
-  valueChart = new Chart(valueCtx, {
-    type: "line",
-    data: {
-      labels,
-      datasets: [
-        { label: "Estimated Value ($)", data: filtered.map(d => d.estimated_value), borderColor: "#97E45D", backgroundColor: "rgba(151,228,93,0.15)", fill: true, tension: 0.2 },
-      ]
-    },
-    options: { responsive: true, plugins: { legend: { position: "bottom" } } }
-  });
+  if (!EV.data || !EV.data.has_data) return;
+  const rows = evRows();
+  evRenderLine(rows); evRenderArea(rows); evRenderTable(rows);
 }
 
-document.querySelectorAll(".chart-toggle button").forEach(btn => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".chart-toggle button").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    currentRange = btn.getAttribute("data-range");
-    renderEvaluationCharts();
-  });
-});
+function evWire(id, attr, setter) {
+  document.querySelectorAll(`#${id} button`).forEach(btn => btn.addEventListener("click", () => {
+    document.querySelectorAll(`#${id} button`).forEach(b => b.classList.remove("active"));
+    btn.classList.add("active"); setter(btn.getAttribute(attr)); renderEvaluationCharts();
+  }));
+}
+evWire("ev-range", "data-range", v => { EV.range = v; });
+evWire("ev-grain", "data-grain", v => { EV.grain = v; });
+evWire("ev-series", "data-series", v => { EV.series = v; });
 
 async function loadEvaluationData() {
   const statusEl = document.getElementById("eval-status");
   statusEl.textContent = "Loading…";
   try {
-    const res = await fetch("/api/fabshop-portal/evaluation-data");
-    evalData = await res.json();
-    statusEl.textContent = evalData.uploaded_at
-      ? "Last updated: " + new Date(evalData.uploaded_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-      : "No data yet.";
+    const res = await fetch("/api/fabshop-portal/trends");
+    EV.data = await res.json();
+    if (!EV.data.has_data) { statusEl.textContent = "No data yet."; return; }
+    const last = new Date(EV.data.last_date + "T00:00");
+    statusEl.textContent = "Data on file through " + last.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
     renderEvaluationCharts();
   } catch (err) {
     statusEl.textContent = "Could not load evaluation data.";
