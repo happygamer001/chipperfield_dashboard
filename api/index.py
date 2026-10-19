@@ -1788,8 +1788,16 @@ def fabshop_portal_trends():
         while w <= last:
             weeks[w.isoformat()] = blank(w.isoformat(), f"{w.month}/{w.day}")
             w += datetime.timedelta(weeks=1)
+        days = {}
+        dd = datetime.date.fromisoformat(daily[0]["date"])
+        while dd <= datetime.date.fromisoformat(daily[-1]["date"]):
+            if dd.weekday() < 5:
+                days[dd.isoformat()] = blank(dd.isoformat(), f"{dd.month}/{dd.day}")
+            dd += datetime.timedelta(days=1)
         months = {}
         for d in daily:
+            days.setdefault(d["date"], blank(d["date"], d["date"][5:]))  # weekend work still shows
+            add(days[d["date"]], d)
             add(weeks[_monday_of(d["date"])], d)
             mk = d["date"][:7]
             months.setdefault(mk, blank(mk, datetime.date.fromisoformat(d["date"]).strftime("%b %Y")))
@@ -1808,8 +1816,9 @@ def fabshop_portal_trends():
 
         wk = [finish(r) for r in weeks.values()]
         mo = [finish(months[k]) for k in sorted(months)]
+        dy = [finish(days[k]) for k in sorted(days)]
         return jsonify({
-            "has_data": True, "weeks": wk, "months": mo,
+            "has_data": True, "days": dy, "weeks": wk, "months": mo,
             "target_pct": 80,
             "tracking_change_week": FABSHOP_TRACKING_CHANGE_WEEK,
             "first_date": daily[0]["date"], "last_date": daily[-1]["date"],

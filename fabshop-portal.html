@@ -118,7 +118,9 @@
   .ev-sub, .ev-note { font-size: 12px; color: var(--ink-soft); margin: 0 0 8px; line-height: 1.4; }
   .ev-wrap { position: relative; height: 240px; }
   .ev-wrap.tall { height: 280px; }
-  .ev-wrap.short { height: 150px; }
+  .ev-wrap.short { height: 240px; }
+  .ev-wrap.xtall { height: 380px; }
+  .ev-hint { font-size: 12px; color: var(--ink-soft); margin: 0 0 10px; text-align: left; background: #f3f6ee; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
   .ev-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
   .ev-table th, .ev-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
   .ev-table th:first-child, .ev-table td:first-child { text-align: left; }
@@ -243,30 +245,38 @@
 
       <div class="ev-controls">
         <div class="seg" id="ev-range" role="group" aria-label="Time range">
-          <button data-range="13">3 months</button><button data-range="52" class="active">12 months</button><button data-range="all">All</button>
+          <button data-range="91">3 months</button><button data-range="365" class="active">12 months</button><button data-range="all">All</button>
         </div>
         <div class="seg" id="ev-grain" role="group" aria-label="Grouping">
-          <button data-grain="weeks" class="active">Weekly</button><button data-grain="months">Monthly</button>
+          <button data-grain="days">Daily</button><button data-grain="weeks" class="active">Weekly</button><button data-grain="months">Monthly</button>
         </div>
       </div>
 
       <div class="item ev-panel">
+        <p class="ev-hint">&#9757; Tap <strong>Billable</strong>, <strong>Non-billable</strong>, <strong>Overlap</strong> or <strong>Mgt / design</strong> to switch this graph.</p>
         <div class="seg" id="ev-series" role="group" aria-label="Which hours to show">
           <button data-series="billable" class="active">Billable</button><button data-series="non_billable">Non-billable</button><button data-series="overlap">Overlap</button><button data-series="mgt_design">Mgt / design</button>
         </div>
-        <p class="ev-title" id="ev-line-title">Billable hours</p>
+        <p class="ev-title" id="ev-line-title">Billable Hours vs Date</p>
         <div class="ev-wrap"><canvas id="ev-line" role="img" aria-label="Line chart of hours over time"></canvas></div>
         <p class="ev-note" id="ev-line-note"></p>
       </div>
 
       <div class="item ev-panel">
-        <p class="ev-title">Where the hours went</p>
+        <p class="ev-title">Where the hours went (Hours vs Date)</p>
         <p class="ev-sub">Billable at the bottom. The strip underneath shows billable as a share of all hours; stay above the dashed 80% line.</p>
         <div class="ev-wrap tall"><canvas id="ev-area" role="img" aria-label="Stacked area chart of billable, non-billable and management hours"></canvas></div>
-        <p class="ev-title" style="margin-top:14px;">Billable share of hours</p>
-        <p class="ev-sub">Dashed line = 80% goal. Triangles = MCI or other outside work in that period's notes.</p>
+        <p class="ev-title" style="margin-top:14px;">Billable % vs Date</p>
+        <p class="ev-sub">Each point is the share of that period's hours that were billable. Dashed line = 80% goal. Triangles = MCI or other outside work in that period's notes.</p>
         <div class="ev-wrap short"><canvas id="ev-pct" role="img" aria-label="Line chart of billable percent with an 80 percent goal"></canvas></div>
         <p class="ev-note" id="ev-area-note"></p>
+      </div>
+
+      <div class="item ev-panel">
+        <p class="ev-title">Work Value vs Date</p>
+        <p class="ev-sub">Estimated value of work completed, from the value on each Daily Tab.</p>
+        <div class="ev-wrap xtall"><canvas id="ev-value" role="img" aria-label="Line chart of estimated work value over time"></canvas></div>
+        <p class="ev-note" id="ev-value-note"></p>
       </div>
 
       <details class="item ev-panel" id="ev-table-wrap">
@@ -673,7 +683,7 @@ async function loadRecentEntries() {
 }
 
 // ============== Evaluation ==============
-const EV = { data: null, range: "52", grain: "weeks", series: "billable" };
+const EV = { data: null, range: "365", grain: "weeks", series: "billable" };
 const EV_COLORS = { billable: "#3f6a24", non_billable: "#eb6834", mgt_design: "#2a78d6", mci: "#1b4f75", ink: "#52514e", grid: "#e2e3dc" };
 const EV_NAMES = { billable: "Billable", non_billable: "Non-billable", mgt_design: "Mgt / design" };
 const evCharts = {};
@@ -681,14 +691,24 @@ const evCharts = {};
 function evRows() {
   const all = EV.data[EV.grain] || [];
   if (EV.range === "all") return all;
-  const n = EV.grain === "weeks" ? parseInt(EV.range, 10) : Math.round(parseInt(EV.range, 10) / 4.35);
-  return all.slice(-n);
+  const last = new Date(EV.data.last_date + "T00:00");
+  const cutoff = new Date(last.getTime() - parseInt(EV.range, 10) * 86400000);
+  const cut = cutoff.toISOString().slice(0, 10);
+  return all.filter(r => (EV.grain === "months" ? r.key + "-31" : r.key) >= cut);
 }
 const evHrs = v => v == null ? "—" : fmtHM(v) + " (" + (Math.round(v * 10) / 10) + " h)";
 function evLabelFor(r) {
   if (EV.grain === "months") return r.label;
   const d = new Date(r.key + "T00:00"); return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
+function evTitleFor(r) {
+  if (EV.grain === "months") return r.label;
+  const d = new Date(r.key + "T00:00");
+  return EV.grain === "weeks" ? "Week of " + d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+    : d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+const evAxisTitle = t => ({ display: true, text: t, color: EV_COLORS.ink, font: { size: 12, weight: "600" } });
+const evDateTitle = () => evAxisTitle(EV.grain === "weeks" ? "Date (week starting)" : EV.grain === "months" ? "Date (month)" : "Date");
 // Rolling average over the last n weeks that have data (null when the week itself has none)
 function evRolling(rows, key, n, minDays) {
   return rows.map((r, i) => {
@@ -699,13 +719,13 @@ function evRolling(rows, key, n, minDays) {
 }
 function evBase(extra) {
   return Object.assign({ responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
-    layout: { padding: { right: 8 } } }, extra);
+    layout: { padding: { right: 40 } } }, extra);
 }
 function evXAxis(rows) {
   return { grid: { display: false }, ticks: { color: EV_COLORS.ink, maxRotation: 0, autoSkip: true, maxTicksLimit: 7 } };
 }
 // Both stacked charts share the same left gutter so their weeks line up
-const evGutter = { afterFit: sc => { sc.width = 52; } };
+const evGutter = { afterFit: sc => { sc.width = 72; } };
 
 // Vertical dashed marker where non-billable tracking changed, so the jump isn't mistaken for a real shift
 const evTrackingPlugin = {
@@ -723,8 +743,17 @@ const evTrackingPlugin = {
   }
 };
 
+const evGoalPlugin = {
+  id: "evGoal",
+  afterDatasetsDraw(chart) {
+    const { ctx, chartArea, scales } = chart; const y = scales.y.getPixelForValue(80);
+    ctx.save(); ctx.fillStyle = EV_COLORS.ink; ctx.font = "bold 11px sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillText("80%", chartArea.right + 6, y - 6); ctx.fillText("goal", chartArea.right + 6, y + 6); ctx.restore();
+  }
+};
+
 function evTrackIdx(rows) {
-  if (EV.grain !== "weeks") return null;
+  if (EV.grain === "months") return null;
   return rows.findIndex(r => r.key === EV.data.tracking_change_week);
 }
 
@@ -748,11 +777,13 @@ function evRenderLine(rows) {
   if (key === "overlap") sets = [mk("billable", EV_COLORS.billable), mk("non_billable", EV_COLORS.non_billable)];
   else {
     sets = [mk(key, EV_COLORS[key])];
-    sets.push({ label: EV.grain === "weeks" ? "4-week average" : "3-month average", data: evRolling(rows, key, EV.grain === "weeks" ? 4 : 3, EV.grain === "weeks" ? 3 : 10), borderColor: EV_COLORS.ink, borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, spanGaps: false, tension: 0.3 });
+    sets.push({ label: EV.grain === "days" ? "5-day average" : EV.grain === "weeks" ? "4-week average" : "3-month average", data: evRolling(rows, key, EV.grain === "days" ? 5 : EV.grain === "weeks" ? 4 : 3, EV.grain === "weeks" ? 3 : EV.grain === "months" ? 10 : 1), borderColor: EV_COLORS.ink, borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, spanGaps: false, tension: 0.3 });
   }
-  const title = key === "overlap" ? "Billable and non-billable hours, same scale" : (EV_NAMES[key] + " hours");
-  document.getElementById("ev-line-title").textContent = title + (EV.grain === "weeks" ? ", per week" : ", per month");
-  document.getElementById("ev-line-note").textContent = EV.grain === "weeks"
+  const title = key === "overlap" ? "Billable and Non-billable Hours vs Date" : (EV_NAMES[key] + " Hours vs Date");
+  document.getElementById("ev-line-title").textContent = title + " (" + (EV.grain === "days" ? "per day" : EV.grain === "weeks" ? "per week" : "per month") + ")";
+  document.getElementById("ev-line-note").textContent = EV.grain === "days"
+    ? "Gaps mean no sheet was filed (weekends, holidays, missing days), not zero hours. The dashed line is a 5-day average."
+    : EV.grain === "weeks"
     ? "Gaps mean no sheet was filed, not zero hours. Hollow dots are weeks with fewer than 3 days on file. The dashed line is a 4-week average."
     : "Gaps mean no sheet was filed, not zero hours. Months with only a few days on file (or still in progress) will look low. The dashed line is a 3-month average.";
   const chart = evMake("ev-line", {
@@ -761,12 +792,13 @@ function evRenderLine(rows) {
       plugins: {
         legend: { display: sets.length > 1, position: "bottom", labels: { usePointStyle: true, pointStyleWidth: 10, boxWidth: 10, boxHeight: 10, font: { size: 12 } } },
         tooltip: { callbacks: {
-          title: items => (EV.grain === "weeks" ? "Week of " : "") + labels[items[0].dataIndex],
+          title: items => evTitleFor(rows[items[0].dataIndex]),
           label: c => c.parsed.y == null ? null : `${c.dataset.label}: ${evHrs(c.parsed.y)}`,
           footer: items => { const r = rows[items[0].dataIndex]; return r.has_data ? `${r.days} day${r.days === 1 ? "" : "s"} on file${r.days < 3 && EV.grain === "weeks" ? " (partial week)" : ""}` : "No sheet on file"; },
         } },
       },
-      scales: { x: evXAxis(rows), y: { beginAtZero: true, grid: { color: EV_COLORS.grid }, ticks: { color: EV_COLORS.ink, callback: v => v + " h" } } },
+      scales: { x: Object.assign({ title: evDateTitle() }, evXAxis(rows)),
+        y: { beginAtZero: true, title: evAxisTitle(key === "overlap" ? "Hours" : EV_NAMES[key] + " hours"), grid: { color: EV_COLORS.grid }, ticks: { color: EV_COLORS.ink, callback: v => v + " h" } } },
     }),
   });
   chart.config._trackIdx = (key === "non_billable" || key === "overlap") ? evTrackIdx(rows) : null;
@@ -786,7 +818,7 @@ function evRenderArea(rows) {
       plugins: {
         legend: { position: "bottom", labels: { usePointStyle: true, pointStyleWidth: 10, boxWidth: 10, boxHeight: 10, font: { size: 12 } } },
         tooltip: { callbacks: {
-          title: items => (EV.grain === "weeks" ? "Week of " : "") + labels[items[0].dataIndex],
+          title: items => evTitleFor(rows[items[0].dataIndex]),
           label: c => c.parsed.y == null ? null : `${c.dataset.label}: ${evHrs(c.parsed.y)}`,
           afterBody: items => {
             const r = rows[items[0].dataIndex]; if (!r.has_data) return ["No sheet on file"];
@@ -797,8 +829,8 @@ function evRenderArea(rows) {
           },
         } },
       },
-      scales: { x: Object.assign({ stacked: true }, evXAxis(rows)),
-        y: Object.assign({ stacked: true, beginAtZero: true, grid: { color: EV_COLORS.grid }, ticks: { color: EV_COLORS.ink, callback: v => v + " h" } }, evGutter) },
+      scales: { x: Object.assign({ stacked: true, title: evDateTitle() }, evXAxis(rows)),
+        y: Object.assign({ stacked: true, beginAtZero: true, title: evAxisTitle("Hours"), grid: { color: EV_COLORS.grid }, ticks: { color: EV_COLORS.ink, callback: v => v + " h" } }, evGutter) },
     }),
   });
   area.config._trackIdx = evTrackIdx(rows); area.update();
@@ -806,23 +838,23 @@ function evRenderArea(rows) {
   const pct = rows.map(r => r.has_data ? r.billable_pct : null);
   const outside = rows.map(r => r.has_data && r.outside_dates.length ? 4 : null);
   evMake("ev-pct", {
-    type: "line",
+    type: "line", plugins: [evGoalPlugin],
     data: { labels, datasets: [
       { label: "Billable %", data: pct, borderColor: EV_COLORS.billable, backgroundColor: EV_COLORS.billable, borderWidth: 2, tension: 0.2, spanGaps: false, pointRadius: 2.5, pointHoverRadius: 5 },
-      { label: "Goal 80%", data: rows.map(() => 80), borderColor: EV_COLORS.ink, borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0 },
+      { label: "Goal 80%", data: rows.map(() => 80), borderColor: EV_COLORS.ink, borderDash: [6, 4], borderWidth: 2, pointRadius: 0 },
       { label: "MCI / outside work in notes", data: outside, showLine: false, pointStyle: "triangle", pointRadius: 6, pointHoverRadius: 8, backgroundColor: EV_COLORS.mci, borderColor: "#fff", borderWidth: 1.5 },
     ] },
-    options: evBase({
+    options: evBase({ layout: { padding: { right: 40 } },
       plugins: {
         legend: { display: false },
         tooltip: { filter: it => it.datasetIndex === 0, callbacks: {
-          title: items => (EV.grain === "weeks" ? "Week of " : "") + labels[items[0].dataIndex],
-          label: c => c.parsed.y == null ? null : `Billable: ${c.parsed.y}% of hours`,
+          title: items => evTitleFor(rows[items[0].dataIndex]),
+          label: c => c.parsed.y == null ? null : `Billable: ${c.parsed.y}% of hours (goal 80%)`,
           afterBody: items => { const r = rows[items[0].dataIndex]; return r.outside_dates.length ? [`MCI / outside work: ${r.outside_dates.length} day${r.outside_dates.length === 1 ? "" : "s"}`] : []; },
         } },
       },
-      scales: { x: Object.assign({}, evXAxis(rows)),
-        y: Object.assign({ min: 0, max: 100, grid: { color: EV_COLORS.grid }, ticks: { color: EV_COLORS.ink, stepSize: 20, callback: v => v + "%" } }, evGutter) },
+      scales: { x: Object.assign({ title: evDateTitle() }, evXAxis(rows)),
+        y: Object.assign({ min: 0, max: 100, title: evAxisTitle("Billable % of hours"), grid: { color: ctx => ctx.tick && ctx.tick.value === 80 ? EV_COLORS.ink : EV_COLORS.grid }, ticks: { color: EV_COLORS.ink, stepSize: 10, callback: v => v + "%" } }, evGutter) },
     }),
   });
   document.getElementById("ev-area-note").textContent =
@@ -831,17 +863,44 @@ function evRenderArea(rows) {
     "Before Nov 2025 almost no non-billable time was written down, so older months look more billable than they likely were.";
 }
 
+function evRenderValue(rows) {
+  const labels = rows.map(evLabelFor);
+  const vals = rows.map(r => r.has_data && r.value > 0 ? r.value : null);
+  const max = Math.max(0, ...vals.filter(v => v != null));
+  const top = Math.max(100, Math.ceil(max / 100) * 100);
+  const dense = top > 2000; // label every $500 once there are too many $100 lines to label
+  evMake("ev-value", {
+    type: "line",
+    data: { labels, datasets: [{ label: "Work value", data: vals, borderColor: EV_COLORS.billable, backgroundColor: EV_COLORS.billable, borderWidth: 2, tension: 0.2, spanGaps: false, pointRadius: EV.grain === "days" ? 2.5 : 3.5, pointHoverRadius: 6 }] },
+    options: evBase({
+      plugins: { legend: { display: false }, tooltip: { callbacks: {
+        title: items => evTitleFor(rows[items[0].dataIndex]),
+        label: c => c.parsed.y == null ? null : "Work value: $" + Math.round(c.parsed.y).toLocaleString(),
+        footer: items => { const r = rows[items[0].dataIndex]; return r.has_data ? (r.value > 0 ? "" : "No dollar value written") : "No sheet on file"; },
+      } } },
+      scales: { x: Object.assign({ title: evDateTitle() }, evXAxis(rows)),
+        y: { min: 0, max: top, title: evAxisTitle("Work value ($)"), grid: { color: ctx => ctx.tick && ctx.tick.value % 500 === 0 ? "#cfd1c8" : EV_COLORS.grid },
+          ticks: { stepSize: 100, autoSkip: false, color: EV_COLORS.ink, callback: v => (!dense || v % 500 === 0) ? "$" + v.toLocaleString() : "" } } },
+    }),
+  });
+  const unpriced = rows.filter(r => r.has_data && !(r.value > 0)).length;
+  document.getElementById("ev-value-note").textContent =
+    "Gridlines are every $100" + (dense ? " (labeled every $500 so the numbers stay readable, because one big job pushes the scale up)" : "") + ". " +
+    (unpriced ? unpriced + " " + (EV.grain === "days" ? "day" : EV.grain === "weeks" ? "week" : "month") + (unpriced === 1 ? "" : "s") + " with hours but no dollar value written (for example a written rating like \"Med value\") " + (unpriced === 1 ? "is" : "are") + " left blank, not $0. " : "") +
+    (EV.grain === "days" ? "" : "Weekly and monthly totals add up only the days that have a dollar value.");
+}
+
 function evRenderTable(rows) {
-  const head = `<tr><th>${EV.grain === "weeks" ? "Week of" : "Month"}</th><th>Days</th><th>Billable</th><th>Non-bill.</th><th>Mgt/design</th><th>Billable %</th><th>MCI days</th></tr>`;
+  const head = `<tr><th>${EV.grain === "months" ? "Month" : EV.grain === "weeks" ? "Week of" : "Day"}</th><th>Days</th><th>Billable</th><th>Non-bill.</th><th>Mgt/design</th><th>Billable %</th><th>Value</th><th>MCI days</th></tr>`;
   document.getElementById("ev-table").innerHTML = head + rows.slice().reverse().map(r => r.has_data
-    ? `<tr><td>${evLabelFor(r)}</td><td>${r.days}</td><td>${fmtHM(r.billable)}</td><td>${fmtHM(r.non_billable)}</td><td>${fmtHM(r.mgt_design)}</td><td>${r.billable_pct}%</td><td>${r.outside_dates.length || ""}</td></tr>`
-    : `<tr><td>${evLabelFor(r)}</td><td colspan="6" style="text-align:left;color:var(--ink-soft);">No sheet on file</td></tr>`).join("");
+    ? `<tr><td>${evLabelFor(r)}</td><td>${r.days}</td><td>${fmtHM(r.billable)}</td><td>${fmtHM(r.non_billable)}</td><td>${fmtHM(r.mgt_design)}</td><td>${r.billable_pct}%</td><td>${r.value > 0 ? "$" + Math.round(r.value).toLocaleString() : ""}</td><td>${r.outside_dates.length || ""}</td></tr>`
+    : `<tr><td>${evLabelFor(r)}</td><td colspan="7" style="text-align:left;color:var(--ink-soft);">No sheet on file</td></tr>`).join("");
 }
 
 function renderEvaluationCharts() {
   if (!EV.data || !EV.data.has_data) return;
   const rows = evRows();
-  evRenderLine(rows); evRenderArea(rows); evRenderTable(rows);
+  evRenderLine(rows); evRenderArea(rows); evRenderValue(rows); evRenderTable(rows);
 }
 
 function evWire(id, attr, setter) {
