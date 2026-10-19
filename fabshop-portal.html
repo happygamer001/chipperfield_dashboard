@@ -108,9 +108,34 @@
   button.ghost:hover { background: var(--page); }
   button.danger { background: transparent; border: 1px solid var(--danger-text); color: var(--danger-text); padding: 6px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; }
 
+
+  .seg { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+  .seg button { min-height: 40px; padding: 0 14px; border: 1px solid var(--line); border-radius: 20px; background: #fff; font-size: 13px; font-weight: 600; color: var(--ink-soft); cursor: pointer; }
+  .seg button.active { background: #e8f0df; border-color: var(--green-dark); color: var(--ink); }
+  .ev-controls { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-bottom: 12px; }
+  .ev-panel { margin-bottom: 14px; }
+  .ev-title { font-size: 14px; font-weight: 700; margin: 12px 0 2px; }
+  .ev-sub, .ev-note { font-size: 12px; color: var(--ink-soft); margin: 0 0 8px; line-height: 1.4; }
+  .ev-wrap { position: relative; height: 240px; }
+  .ev-wrap.tall { height: 280px; }
+  .ev-wrap.short { height: 150px; }
+  .ev-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+  .ev-table th, .ev-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  .ev-table th:first-child, .ev-table td:first-child { text-align: left; }
+  details.ev-panel summary { cursor: pointer; font-size: 13px; font-weight: 600; min-height: 32px; }
   .employee-row { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr auto; gap: 8px; align-items: end; margin-bottom: 8px; }
   .employee-row label { margin: 0 0 4px; }
   @media (max-width: 640px) { .employee-row { grid-template-columns: 1fr 1fr; } }
+  .emp-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+  .emp-card.closed { opacity: .45; pointer-events: none; }
+  .emp-total { font-size: 12px; color: var(--ink-soft); margin: 2px 0 8px; }
+  .emp-total.bad { color: var(--danger-text); font-weight: 600; }
+  .radio-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .radio-row label { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 8px 12px; min-height: 40px; border: 1px solid var(--line); border-radius: 20px; font-size: 14px; cursor: pointer; }
+  .radio-row input { width: auto; margin: 0; }
+  .radio-row label:has(input:checked) { background: #e8f0df; border-color: #4d7a2f; font-weight: 600; }
+  .emp-reason { display: none; margin-top: 4px; }
+  .emp-card[data-status="out"] .emp-reason, .emp-card[data-status="left_early"] .emp-reason { display: block; }
 
   .chart-toggle { display: flex; gap: 8px; margin-bottom: 16px; }
   .chart-toggle button.active { background: var(--green); border-color: var(--green-dark); color: #0f1a08; font-weight: 600; }
@@ -165,7 +190,12 @@
       <label>Date</label>
       <input type="date" id="dt-date">
 
+      <label style="display:flex;align-items:center;gap:10px;margin:12px 0;font-size:15px;">
+        <input type="checkbox" id="dt-shop-closed" style="width:auto;margin:0;"> Entire fab shop out today
+      </label>
+
       <p class="section-heading">Employees</p>
+      <p class="section-sub">Enter time as h:mm (5:30). Decimals like 5.5 also work. Pick Out or Left early to give a reason.</p>
       <div id="employee-rows"></div>
       <div id="employee-quick-add" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;"></div>
       <button class="ghost" id="add-employee-row-btn" type="button">+ Add other employee</button>
@@ -179,7 +209,10 @@
       <p class="section-heading">Problems</p>
       <textarea id="dt-problems" placeholder="Any problems today?"></textarea>
 
-      <p class="section-heading">Estimated value of work completed</p>
+      <p class="section-heading">Value, WO / job numbers, notes</p>
+      <p class="section-sub">Write anything, the way the paper sheet does: "Med value", "21774, 21764", "J123", "safety".</p>
+      <input type="text" id="dt-value-note" placeholder="e.g. Med value (21774)">
+      <label style="margin-top:10px;">Dollar value (optional, fill in when known)</label>
       <input type="number" id="dt-estimated-value" placeholder="$">
 
       <p class="section-heading">Tab completed by</p>
@@ -208,23 +241,38 @@
       <p class="section-heading">Evaluation of the Fab Shop</p>
       <p class="section-sub" id="eval-status">Loading…</p>
 
-      <div class="chart-toggle">
-        <button class="ghost" data-range="4w">Last 4 weeks</button>
-        <button class="ghost" data-range="3m">Last 3 months</button>
-        <button class="ghost active" data-range="all">All-time</button>
+      <div class="ev-controls">
+        <div class="seg" id="ev-range" role="group" aria-label="Time range">
+          <button data-range="13">3 months</button><button data-range="52" class="active">12 months</button><button data-range="all">All</button>
+        </div>
+        <div class="seg" id="ev-grain" role="group" aria-label="Grouping">
+          <button data-grain="weeks" class="active">Weekly</button><button data-grain="months">Monthly</button>
+        </div>
       </div>
 
-      <div class="item">
-        <p style="font-size:13px;font-weight:600;margin:0 0 10px;">Billable vs. Non-Billable hours</p>
-        <canvas id="hours-chart" height="220"></canvas>
-        <div id="hours-chart-empty" class="empty" style="display:none;">No data in this range.</div>
+      <div class="item ev-panel">
+        <div class="seg" id="ev-series" role="group" aria-label="Which hours to show">
+          <button data-series="billable" class="active">Billable</button><button data-series="non_billable">Non-billable</button><button data-series="overlap">Overlap</button><button data-series="mgt_design">Mgt / design</button>
+        </div>
+        <p class="ev-title" id="ev-line-title">Billable hours</p>
+        <div class="ev-wrap"><canvas id="ev-line" role="img" aria-label="Line chart of hours over time"></canvas></div>
+        <p class="ev-note" id="ev-line-note"></p>
       </div>
 
-      <div class="item">
-        <p style="font-size:13px;font-weight:600;margin:0 0 10px;">Estimated value</p>
-        <canvas id="value-chart" height="220"></canvas>
-        <div id="value-chart-empty" class="empty" style="display:none;">No data in this range.</div>
+      <div class="item ev-panel">
+        <p class="ev-title">Where the hours went</p>
+        <p class="ev-sub">Billable at the bottom. The strip underneath shows billable as a share of all hours; stay above the dashed 80% line.</p>
+        <div class="ev-wrap tall"><canvas id="ev-area" role="img" aria-label="Stacked area chart of billable, non-billable and management hours"></canvas></div>
+        <p class="ev-title" style="margin-top:14px;">Billable share of hours</p>
+        <p class="ev-sub">Dashed line = 80% goal. Triangles = MCI or other outside work in that period's notes.</p>
+        <div class="ev-wrap short"><canvas id="ev-pct" role="img" aria-label="Line chart of billable percent with an 80 percent goal"></canvas></div>
+        <p class="ev-note" id="ev-area-note"></p>
       </div>
+
+      <details class="item ev-panel" id="ev-table-wrap">
+        <summary>View the numbers as a table</summary>
+        <div style="overflow-x:auto;"><table class="ev-table" id="ev-table"></table></div>
+      </details>
     </div>
 
     <!-- ---------- Sales Intake Tracker ---------- -->
@@ -301,38 +349,133 @@ document.getElementById("back-to-landing").addEventListener("click", () => {
 let ROSTER = [];
 let employeeRowCount = 0;
 
-function addEmployeeRow(prefillName) {
+const ABSENCE_REASONS = ["PTO", "Sick", "Family", "Appointment", "Holiday", "Other"];
+
+// "5:30" -> 5.5, "5.5" -> 5.5, "5h 30m" -> 5.5, "" -> 0, bad input -> NaN
+function parseHM(text) {
+  const t = (text || "").trim().toLowerCase();
+  if (!t) return 0;
+  let m = t.match(/^(\d+):(\d{1,2})$/);
+  if (m) return +m[2] > 59 ? NaN : Math.round((+m[1] + +m[2] / 60) * 10000) / 10000;
+  m = t.match(/^(\d+)\s*h(?:rs?|ours?)?\s*(?:(\d{1,2})\s*m(?:ins?)?)?$/);
+  if (m) return +(m[2] || 0) > 59 ? NaN : Math.round((+m[1] + +(m[2] || 0) / 60) * 10000) / 10000;
+  if (/^(\d+\.?\d*|\.\d+)$/.test(t)) return Math.round(parseFloat(t) * 10000) / 10000;
+  return NaN;
+}
+function fmtHM(hours) {
+  const mins = Math.round((hours || 0) * 60);
+  return Math.floor(mins / 60) + ":" + String(mins % 60).padStart(2, "0");
+}
+function esc(t) { return String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;"); }
+
+function addEmployeeRow(prefillName, prefill) {
   const container = document.getElementById("employee-rows");
   const rowId = "emp-row-" + (employeeRowCount++);
   const div = document.createElement("div");
-  div.className = "employee-row";
+  div.className = "emp-card";
   div.id = rowId;
+  div.dataset.status = "present";
 
-  const optionsHtml = ROSTER.map(n => `<option value="${n}" ${n === prefillName ? "selected" : ""}>${n}</option>`).join("");
+  const optionsHtml = ROSTER.map(n => `<option value="${esc(n)}" ${n === prefillName ? "selected" : ""}>${esc(n)}</option>`).join("");
+  const reasonsHtml = ABSENCE_REASONS.map((r, i) =>
+    `<label><input type="radio" name="rs-${rowId}" value="${r}"> ${r}</label>`).join("");
 
   div.innerHTML = `
-    <div>
-      <label>Name</label>
-      <select data-role="emp-name">${optionsHtml || '<option value="">No roster yet</option>'}</select>
+    <div class="employee-row">
+      <div>
+        <label>Name</label>
+        <select data-role="emp-name">${optionsHtml || '<option value="">No roster yet</option>'}</select>
+      </div>
+      <div>
+        <label>Billable</label>
+        <input type="text" inputmode="text" autocomplete="off" data-role="emp-billable" placeholder="0:00">
+      </div>
+      <div>
+        <label>Non-Billable</label>
+        <input type="text" inputmode="text" autocomplete="off" data-role="emp-nonbillable" placeholder="0:00">
+      </div>
+      <div>
+        <label>MGT/Design</label>
+        <input type="text" inputmode="text" autocomplete="off" data-role="emp-mgt" placeholder="0:00">
+      </div>
+      <div>
+        <button class="danger" type="button" data-role="emp-remove">×</button>
+      </div>
     </div>
-    <div>
-      <label>Billable</label>
-      <input type="number" step="0.1" data-role="emp-billable" placeholder="0">
+    <div class="emp-total" data-role="emp-total">Total 0:00</div>
+    <div class="radio-row" data-role="status-row">
+      <label><input type="radio" name="st-${rowId}" value="present" checked> Present</label>
+      <label><input type="radio" name="st-${rowId}" value="out"> Out</label>
+      <label><input type="radio" name="st-${rowId}" value="left_early"> Left early</label>
     </div>
-    <div>
-      <label>Non-Billable</label>
-      <input type="number" step="0.1" data-role="emp-nonbillable" placeholder="0">
-    </div>
-    <div>
-      <label>MGT/Design</label>
-      <input type="number" step="0.1" data-role="emp-mgt" placeholder="0">
-    </div>
-    <div>
-      <button class="danger" type="button" onclick="document.getElementById('${rowId}').remove()">×</button>
+    <div class="emp-reason">
+      <div class="radio-row">${reasonsHtml}</div>
+      <input type="text" data-role="emp-reason-detail" placeholder="Details (optional)">
     </div>
   `;
   container.appendChild(div);
+
+  const upd = () => updateEmpTotal(div);
+  div.querySelectorAll('[data-role^="emp-b"],[data-role="emp-nonbillable"],[data-role="emp-mgt"]').forEach(i => i.addEventListener("input", upd));
+  div.querySelectorAll(`input[name="st-${rowId}"]`).forEach(r => r.addEventListener("change", () => { div.dataset.status = r.value; }));
+  div.querySelector('[data-role="emp-remove"]').addEventListener("click", () => div.remove());
+
+  if (prefill) {
+    const hm = v => (v ? fmtHM(v) : "");
+    div.querySelector('[data-role="emp-billable"]').value = hm(prefill.billable);
+    div.querySelector('[data-role="emp-nonbillable"]').value = hm(prefill.non_billable);
+    div.querySelector('[data-role="emp-mgt"]').value = hm(prefill.mgt_design);
+    if (prefill.absence) {
+      div.dataset.status = prefill.absence.type;
+      div.querySelector(`input[name="st-${rowId}"][value="${prefill.absence.type}"]`).checked = true;
+      const known = ABSENCE_REASONS.find(r => (prefill.absence.reason || "").toLowerCase().startsWith(r.toLowerCase()));
+      const pick = known || "Other";
+      div.querySelector(`input[name="rs-${rowId}"][value="${pick}"]`).checked = true;
+      div.querySelector('[data-role="emp-reason-detail"]').value = prefill.absence.reason || "";
+    }
+  }
+  updateEmpTotal(div);
+  return div;
 }
+
+function updateEmpTotal(card) {
+  const vals = ["emp-billable", "emp-nonbillable", "emp-mgt"].map(r => parseHM(card.querySelector(`[data-role="${r}"]`).value));
+  const el = card.querySelector('[data-role="emp-total"]');
+  if (vals.some(v => Number.isNaN(v))) { el.textContent = "Use h:mm like 5:30 (minutes 0-59) or decimals like 5.5"; el.className = "emp-total bad"; return; }
+  const t = vals.reduce((a, b) => a + b, 0);
+  el.className = "emp-total";
+  el.textContent = `Total ${fmtHM(t)} (${(Math.round(t * 100) / 100)} hrs)`;
+}
+
+document.getElementById("dt-shop-closed").addEventListener("change", e => {
+  document.querySelectorAll("#employee-rows .emp-card").forEach(c => c.classList.toggle("closed", e.target.checked));
+});
+
+// Reopening a date that already has an entry loads it, so resubmitting never wipes anything
+let ENTRY_CACHE = null;
+async function loadEntryForDate() {
+  const date = document.getElementById("dt-date").value;
+  if (!date) return;
+  try {
+    if (!ENTRY_CACHE) ENTRY_CACHE = (await (await fetch("/api/fabshop-portal/daily-entries")).json()).entries || [];
+  } catch (e) { return; }
+  const entry = ENTRY_CACHE.find(e => e.date === date);
+  const rows = document.getElementById("employee-rows");
+  if (!entry) return;
+  rows.innerHTML = "";
+  const abs = {}; (entry.absences || []).forEach(a => { abs[a.name] = a; });
+  (entry.employees || []).forEach(emp => addEmployeeRow(emp.name, Object.assign({}, emp, { absence: abs[emp.name] })));
+  (entry.absences || []).filter(a => a.name !== "Entire fab shop" && !(entry.employees || []).some(e => e.name === a.name))
+    .forEach(a => addEmployeeRow(a.name, { absence: a }));
+  document.getElementById("dt-description").value = entry.description || "";
+  document.getElementById("dt-new-leads").value = entry.new_leads || "";
+  document.getElementById("dt-problems").value = entry.problems || "";
+  document.getElementById("dt-value-note").value = entry.value_note || "";
+  document.getElementById("dt-estimated-value").value = entry.estimated_value || "";
+  document.getElementById("dt-completed-by").value = entry.completed_by || "";
+  const closed = document.getElementById("dt-shop-closed"); closed.checked = !!entry.shop_closed; closed.dispatchEvent(new Event("change"));
+}
+document.getElementById("dt-date").addEventListener("change", loadEntryForDate);
 
 document.getElementById("add-employee-row-btn").addEventListener("click", () => addEmployeeRow());
 
@@ -405,24 +548,39 @@ document.getElementById("submit-daily-tab-btn").addEventListener("click", async 
     return;
   }
 
-  const employees = [];
-  document.querySelectorAll("#employee-rows .employee-row").forEach(row => {
-    const name = row.querySelector('[data-role="emp-name"]').value;
+  const employees = [], absences = [];
+  const shopClosed = document.getElementById("dt-shop-closed").checked;
+  let bad = null;
+  document.querySelectorAll("#employee-rows .emp-card").forEach(card => {
+    const name = card.querySelector('[data-role="emp-name"]').value;
     if (!name) return;
-    employees.push({
-      name,
-      billable: parseFloat(row.querySelector('[data-role="emp-billable"]').value) || 0,
-      non_billable: parseFloat(row.querySelector('[data-role="emp-nonbillable"]').value) || 0,
-      mgt_design: parseFloat(row.querySelector('[data-role="emp-mgt"]').value) || 0,
-    });
+    const hrs = ["emp-billable", "emp-nonbillable", "emp-mgt"].map(r => parseHM(card.querySelector(`[data-role="${r}"]`).value));
+    if (hrs.some(h => Number.isNaN(h))) { bad = name; return; }
+    employees.push({ name, billable: hrs[0], non_billable: hrs[1], mgt_design: hrs[2] });
+    const st = card.dataset.status;
+    if (!shopClosed && (st === "out" || st === "left_early")) {
+      const picked = card.querySelector('input[name^="rs-"]:checked');
+      const detail = card.querySelector('[data-role="emp-reason-detail"]').value.trim();
+      const reason = [picked ? picked.value : "", detail && detail !== (picked ? picked.value : "") ? detail : ""].filter(Boolean).join(": ");
+      absences.push({ name, type: st, reason });
+    }
   });
+  if (bad) {
+    statusEl.textContent = "Check " + bad + "'s hours. Use h:mm like 5:30.";
+    statusEl.style.color = "var(--danger-text)";
+    return;
+  }
+  if (shopClosed) absences.push({ name: "Entire fab shop", type: "out", reason: "everyone gone" });
 
   const payload = {
     date,
-    employees,
+    employees: shopClosed ? [] : employees,
+    absences,
+    shop_closed: shopClosed,
     description: document.getElementById("dt-description").value,
     new_leads: document.getElementById("dt-new-leads").value,
     problems: document.getElementById("dt-problems").value,
+    value_note: document.getElementById("dt-value-note").value,
     estimated_value: parseFloat(document.getElementById("dt-estimated-value").value) || 0,
     completed_by: document.getElementById("dt-completed-by").value,
   };
@@ -437,6 +595,7 @@ document.getElementById("submit-daily-tab-btn").addEventListener("click", async 
     });
     const data = await res.json();
     if (data.status !== "ok") throw new Error(data.message || "Submit failed");
+    ENTRY_CACHE = null;
     statusEl.textContent = "Submitted — Calvin's dashboard updated.";
     statusEl.style.color = "var(--ok-text)";
     loadRecentEntries();
@@ -472,7 +631,7 @@ async function loadRecentEntries() {
             <p class="item-title">${e.date}</p>
             <p class="item-sub">Billable ${e.totals.billable} · Non-billable ${e.totals.non_billable} · MGT/Design ${e.totals.mgt_design}</p>
           </div>
-          <span class="tag ok">$${(e.estimated_value || 0).toLocaleString()}</span>
+          <span class="tag ok">${e.estimated_value ? "$" + e.estimated_value.toLocaleString() : (e.value_note ? e.value_note : "no value")}</span>
         </div>
         ${e.description ? `<p class="summary">${e.description}</p>` : ''}
         ${e.new_leads ? `<p class="summary" style="color:var(--ink-soft);">New leads: ${e.new_leads}</p>` : ''}
@@ -514,76 +673,196 @@ async function loadRecentEntries() {
 }
 
 // ============== Evaluation ==============
-let hoursChart = null;
-let valueChart = null;
-let evalData = { daily: [] };
-let currentRange = "all";
+const EV = { data: null, range: "52", grain: "weeks", series: "billable" };
+const EV_COLORS = { billable: "#3f6a24", non_billable: "#eb6834", mgt_design: "#2a78d6", mci: "#1b4f75", ink: "#52514e", grid: "#e2e3dc" };
+const EV_NAMES = { billable: "Billable", non_billable: "Non-billable", mgt_design: "Mgt / design" };
+const evCharts = {};
 
-function filterByRange(daily, range) {
-  const now = new Date();
-  let cutoff;
-  if (range === "4w") cutoff = new Date(now.getTime() - 28 * 86400000);
-  else if (range === "3m") cutoff = new Date(now.getTime() - 90 * 86400000);
-  else return daily;
-  return daily.filter(d => new Date(d.date) >= cutoff);
+function evRows() {
+  const all = EV.data[EV.grain] || [];
+  if (EV.range === "all") return all;
+  const n = EV.grain === "weeks" ? parseInt(EV.range, 10) : Math.round(parseInt(EV.range, 10) / 4.35);
+  return all.slice(-n);
+}
+const evHrs = v => v == null ? "—" : fmtHM(v) + " (" + (Math.round(v * 10) / 10) + " h)";
+function evLabelFor(r) {
+  if (EV.grain === "months") return r.label;
+  const d = new Date(r.key + "T00:00"); return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+// Rolling average over the last n weeks that have data (null when the week itself has none)
+function evRolling(rows, key, n, minDays) {
+  return rows.map((r, i) => {
+    if (!r.has_data) return null;
+    const win = rows.slice(Math.max(0, i - n + 1), i + 1).filter(x => x.has_data && x.days >= minDays);
+    return win.length ? win.reduce((a, x) => a + x[key], 0) / win.length : null;
+  });
+}
+function evBase(extra) {
+  return Object.assign({ responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+    layout: { padding: { right: 8 } } }, extra);
+}
+function evXAxis(rows) {
+  return { grid: { display: false }, ticks: { color: EV_COLORS.ink, maxRotation: 0, autoSkip: true, maxTicksLimit: 7 } };
+}
+// Both stacked charts share the same left gutter so their weeks line up
+const evGutter = { afterFit: sc => { sc.width = 52; } };
+
+// Vertical dashed marker where non-billable tracking changed, so the jump isn't mistaken for a real shift
+const evTrackingPlugin = {
+  id: "evTracking",
+  afterDatasetsDraw(chart) {
+    const idx = chart.config._trackIdx;
+    if (idx == null || idx < 0) return;
+    const { ctx, chartArea, scales } = chart; const x = scales.x.getPixelForValue(idx);
+    ctx.save(); ctx.strokeStyle = EV_COLORS.ink; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, chartArea.top); ctx.lineTo(x, chartArea.bottom); ctx.stroke();
+    ctx.setLineDash([]); ctx.fillStyle = EV_COLORS.ink; ctx.font = "11px sans-serif"; ctx.textAlign = "left";
+    const tx = Math.min(x + 4, chartArea.right - 160);
+    ctx.fillStyle = "rgba(255,255,255,.85)"; ctx.fillRect(tx - 2, chartArea.top + 1, 158, 16);
+    ctx.fillStyle = EV_COLORS.ink; ctx.fillText("Non-billable tracking changed", tx, chartArea.top + 13); ctx.restore();
+  }
+};
+
+function evTrackIdx(rows) {
+  if (EV.grain !== "weeks") return null;
+  return rows.findIndex(r => r.key === EV.data.tracking_change_week);
+}
+
+function evMake(id, config) {
+  if (evCharts[id]) evCharts[id].destroy();
+  evCharts[id] = new Chart(document.getElementById(id).getContext("2d"), config);
+  return evCharts[id];
+}
+
+function evRenderLine(rows) {
+  const labels = rows.map(evLabelFor);
+  const key = EV.series;
+  const partial = rows.map(r => r.has_data && r.days < 3 && EV.grain === "weeks");
+  const mk = (k, color, dash) => ({
+    label: EV_NAMES[k], data: rows.map(r => r.has_data ? r[k] : null), borderColor: color, backgroundColor: color,
+    borderWidth: 2, tension: 0.25, spanGaps: false, borderDash: dash || [],
+    pointRadius: 3, pointHoverRadius: 6,
+    pointBackgroundColor: ctx => partial[ctx.dataIndex] ? "#fff" : color, pointBorderColor: color, pointBorderWidth: 2,
+  });
+  let sets;
+  if (key === "overlap") sets = [mk("billable", EV_COLORS.billable), mk("non_billable", EV_COLORS.non_billable)];
+  else {
+    sets = [mk(key, EV_COLORS[key])];
+    sets.push({ label: EV.grain === "weeks" ? "4-week average" : "3-month average", data: evRolling(rows, key, EV.grain === "weeks" ? 4 : 3, EV.grain === "weeks" ? 3 : 10), borderColor: EV_COLORS.ink, borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, spanGaps: false, tension: 0.3 });
+  }
+  const title = key === "overlap" ? "Billable and non-billable hours, same scale" : (EV_NAMES[key] + " hours");
+  document.getElementById("ev-line-title").textContent = title + (EV.grain === "weeks" ? ", per week" : ", per month");
+  document.getElementById("ev-line-note").textContent = EV.grain === "weeks"
+    ? "Gaps mean no sheet was filed, not zero hours. Hollow dots are weeks with fewer than 3 days on file. The dashed line is a 4-week average."
+    : "Gaps mean no sheet was filed, not zero hours. Months with only a few days on file (or still in progress) will look low. The dashed line is a 3-month average.";
+  const chart = evMake("ev-line", {
+    type: "line", data: { labels, datasets: sets }, plugins: [evTrackingPlugin],
+    options: evBase({
+      plugins: {
+        legend: { display: sets.length > 1, position: "bottom", labels: { usePointStyle: true, pointStyleWidth: 10, boxWidth: 10, boxHeight: 10, font: { size: 12 } } },
+        tooltip: { callbacks: {
+          title: items => (EV.grain === "weeks" ? "Week of " : "") + labels[items[0].dataIndex],
+          label: c => c.parsed.y == null ? null : `${c.dataset.label}: ${evHrs(c.parsed.y)}`,
+          footer: items => { const r = rows[items[0].dataIndex]; return r.has_data ? `${r.days} day${r.days === 1 ? "" : "s"} on file${r.days < 3 && EV.grain === "weeks" ? " (partial week)" : ""}` : "No sheet on file"; },
+        } },
+      },
+      scales: { x: evXAxis(rows), y: { beginAtZero: true, grid: { color: EV_COLORS.grid }, ticks: { color: EV_COLORS.ink, callback: v => v + " h" } } },
+    }),
+  });
+  chart.config._trackIdx = (key === "non_billable" || key === "overlap") ? evTrackIdx(rows) : null;
+  chart.update();
+}
+
+function evRenderArea(rows) {
+  const labels = rows.map(evLabelFor);
+  const layer = (k, color) => ({
+    label: EV_NAMES[k], data: rows.map(r => r.has_data ? r[k] : null), borderColor: "#fff", borderWidth: 1.5,
+    backgroundColor: color, fill: true, stack: "hrs", tension: 0.2, pointRadius: 0, pointHoverRadius: 4, spanGaps: false,
+  });
+  const area = evMake("ev-area", {
+    type: "line", data: { labels, datasets: [layer("billable", EV_COLORS.billable), layer("non_billable", EV_COLORS.non_billable), layer("mgt_design", EV_COLORS.mgt_design)] },
+    plugins: [evTrackingPlugin],
+    options: evBase({
+      plugins: {
+        legend: { position: "bottom", labels: { usePointStyle: true, pointStyleWidth: 10, boxWidth: 10, boxHeight: 10, font: { size: 12 } } },
+        tooltip: { callbacks: {
+          title: items => (EV.grain === "weeks" ? "Week of " : "") + labels[items[0].dataIndex],
+          label: c => c.parsed.y == null ? null : `${c.dataset.label}: ${evHrs(c.parsed.y)}`,
+          afterBody: items => {
+            const r = rows[items[0].dataIndex]; if (!r.has_data) return ["No sheet on file"];
+            const out = [`Billable share: ${r.billable_pct}%`];
+            if (r.billable_per_person_day != null) out.push(`Billable per person-day: ${fmtHM(r.billable_per_person_day)}`);
+            if (r.outside_dates.length) out.push(`MCI / outside work in notes: ${r.outside_dates.length} day${r.outside_dates.length === 1 ? "" : "s"}`);
+            return out;
+          },
+        } },
+      },
+      scales: { x: Object.assign({ stacked: true }, evXAxis(rows)),
+        y: Object.assign({ stacked: true, beginAtZero: true, grid: { color: EV_COLORS.grid }, ticks: { color: EV_COLORS.ink, callback: v => v + " h" } }, evGutter) },
+    }),
+  });
+  area.config._trackIdx = evTrackIdx(rows); area.update();
+
+  const pct = rows.map(r => r.has_data ? r.billable_pct : null);
+  const outside = rows.map(r => r.has_data && r.outside_dates.length ? 4 : null);
+  evMake("ev-pct", {
+    type: "line",
+    data: { labels, datasets: [
+      { label: "Billable %", data: pct, borderColor: EV_COLORS.billable, backgroundColor: EV_COLORS.billable, borderWidth: 2, tension: 0.2, spanGaps: false, pointRadius: 2.5, pointHoverRadius: 5 },
+      { label: "Goal 80%", data: rows.map(() => 80), borderColor: EV_COLORS.ink, borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0 },
+      { label: "MCI / outside work in notes", data: outside, showLine: false, pointStyle: "triangle", pointRadius: 6, pointHoverRadius: 8, backgroundColor: EV_COLORS.mci, borderColor: "#fff", borderWidth: 1.5 },
+    ] },
+    options: evBase({
+      plugins: {
+        legend: { display: false },
+        tooltip: { filter: it => it.datasetIndex === 0, callbacks: {
+          title: items => (EV.grain === "weeks" ? "Week of " : "") + labels[items[0].dataIndex],
+          label: c => c.parsed.y == null ? null : `Billable: ${c.parsed.y}% of hours`,
+          afterBody: items => { const r = rows[items[0].dataIndex]; return r.outside_dates.length ? [`MCI / outside work: ${r.outside_dates.length} day${r.outside_dates.length === 1 ? "" : "s"}`] : []; },
+        } },
+      },
+      scales: { x: Object.assign({}, evXAxis(rows)),
+        y: Object.assign({ min: 0, max: 100, grid: { color: EV_COLORS.grid }, ticks: { color: EV_COLORS.ink, stepSize: 20, callback: v => v + "%" } }, evGutter) },
+    }),
+  });
+  document.getElementById("ev-area-note").textContent =
+    "The sheets don't record how many hours MCI or outside work took, so triangles only show that it happened. " +
+    (EV.grain === "months" ? (() => { const low = rows.filter(r => r.has_data && r.days < 10).map(r => r.label); return low.length ? low.join(", ") + " " + (low.length === 1 ? "has" : "have") + " under 10 days on file, so " + (low.length === 1 ? "it looks" : "they look") + " low. " : ""; })() : "") +
+    "Before Nov 2025 almost no non-billable time was written down, so older months look more billable than they likely were.";
+}
+
+function evRenderTable(rows) {
+  const head = `<tr><th>${EV.grain === "weeks" ? "Week of" : "Month"}</th><th>Days</th><th>Billable</th><th>Non-bill.</th><th>Mgt/design</th><th>Billable %</th><th>MCI days</th></tr>`;
+  document.getElementById("ev-table").innerHTML = head + rows.slice().reverse().map(r => r.has_data
+    ? `<tr><td>${evLabelFor(r)}</td><td>${r.days}</td><td>${fmtHM(r.billable)}</td><td>${fmtHM(r.non_billable)}</td><td>${fmtHM(r.mgt_design)}</td><td>${r.billable_pct}%</td><td>${r.outside_dates.length || ""}</td></tr>`
+    : `<tr><td>${evLabelFor(r)}</td><td colspan="6" style="text-align:left;color:var(--ink-soft);">No sheet on file</td></tr>`).join("");
 }
 
 function renderEvaluationCharts() {
-  const filtered = filterByRange(evalData.daily || [], currentRange);
-  const labels = filtered.map(d => d.date);
-
-  document.getElementById("hours-chart-empty").style.display = filtered.length === 0 ? "block" : "none";
-  document.getElementById("value-chart-empty").style.display = filtered.length === 0 ? "block" : "none";
-  document.getElementById("hours-chart").style.display = filtered.length === 0 ? "none" : "block";
-  document.getElementById("value-chart").style.display = filtered.length === 0 ? "none" : "block";
-  if (filtered.length === 0) return;
-
-  const hoursCtx = document.getElementById("hours-chart").getContext("2d");
-  if (hoursChart) hoursChart.destroy();
-  hoursChart = new Chart(hoursCtx, {
-    type: "line",
-    data: {
-      labels,
-      datasets: [
-        { label: "Billable", data: filtered.map(d => d.billable_hours), borderColor: "#4d7a2f", backgroundColor: "transparent", tension: 0.2 },
-        { label: "Non-Billable", data: filtered.map(d => d.non_billable_hours), borderColor: "#a02020", backgroundColor: "transparent", tension: 0.2 },
-      ]
-    },
-    options: { responsive: true, plugins: { legend: { position: "bottom" } } }
-  });
-
-  const valueCtx = document.getElementById("value-chart").getContext("2d");
-  if (valueChart) valueChart.destroy();
-  valueChart = new Chart(valueCtx, {
-    type: "line",
-    data: {
-      labels,
-      datasets: [
-        { label: "Estimated Value ($)", data: filtered.map(d => d.estimated_value), borderColor: "#97E45D", backgroundColor: "rgba(151,228,93,0.15)", fill: true, tension: 0.2 },
-      ]
-    },
-    options: { responsive: true, plugins: { legend: { position: "bottom" } } }
-  });
+  if (!EV.data || !EV.data.has_data) return;
+  const rows = evRows();
+  evRenderLine(rows); evRenderArea(rows); evRenderTable(rows);
 }
 
-document.querySelectorAll(".chart-toggle button").forEach(btn => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".chart-toggle button").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    currentRange = btn.getAttribute("data-range");
-    renderEvaluationCharts();
-  });
-});
+function evWire(id, attr, setter) {
+  document.querySelectorAll(`#${id} button`).forEach(btn => btn.addEventListener("click", () => {
+    document.querySelectorAll(`#${id} button`).forEach(b => b.classList.remove("active"));
+    btn.classList.add("active"); setter(btn.getAttribute(attr)); renderEvaluationCharts();
+  }));
+}
+evWire("ev-range", "data-range", v => { EV.range = v; });
+evWire("ev-grain", "data-grain", v => { EV.grain = v; });
+evWire("ev-series", "data-series", v => { EV.series = v; });
 
 async function loadEvaluationData() {
   const statusEl = document.getElementById("eval-status");
   statusEl.textContent = "Loading…";
   try {
-    const res = await fetch("/api/fabshop-portal/evaluation-data");
-    evalData = await res.json();
-    statusEl.textContent = evalData.uploaded_at
-      ? "Last updated: " + new Date(evalData.uploaded_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-      : "No data yet.";
+    const res = await fetch("/api/fabshop-portal/trends");
+    EV.data = await res.json();
+    if (!EV.data.has_data) { statusEl.textContent = "No data yet."; return; }
+    const last = new Date(EV.data.last_date + "T00:00");
+    statusEl.textContent = "Data on file through " + last.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
     renderEvaluationCharts();
   } catch (err) {
     statusEl.textContent = "Could not load evaluation data.";
