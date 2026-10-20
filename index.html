@@ -296,6 +296,7 @@
     <button class="primary" id="fetch-logs-btn" style="flex:0 0 auto;">Fetch Daily Job Logs</button>
     <button class="ghost" id="rebuild-logs-btn" style="flex:0 0 auto;" title="Re-creates every log PDF from the last 30 days of emails with the full log, replacing summary-only PDFs. Photos are not touched.">Rebuild last 30 days (full PDFs)</button>
   </div>
+  <div id="fetch-logs-report" style="margin:-10px 0 20px;"></div>
 
   <div class="queue-header">
     <h2>Fix filenames from PDF content</h2>
@@ -1038,6 +1039,9 @@ async function runLogFetch(rebuild) {
   btn.textContent = rebuild ? "Rebuilding…" : "Fetching…";
 
   const combined = { scanned: 0, pdfs_uploaded: 0, photos_uploaded: 0, skipped: 0, not_a_log: 0 };
+  const details = [];
+  const reportEl = document.getElementById("fetch-logs-report");
+  if (reportEl) reportEl.innerHTML = "";
   let startIndex = 0;
   let total = null;
 
@@ -1061,6 +1065,7 @@ async function runLogFetch(rebuild) {
       total = data.total;
       const s = data.summary || {};
       Object.keys(combined).forEach(k => { combined[k] += s[k] ?? 0; });
+      details.push(...(data.details || []));
 
       if (data.done || total === 0) break;
       startIndex = data.next_index;
@@ -1068,6 +1073,20 @@ async function runLogFetch(rebuild) {
 
     statusEl.textContent = `Done — scanned ${combined.scanned}, ${rebuild ? "rebuilt" : "uploaded"} ${combined.pdfs_uploaded} log(s) and ${combined.photos_uploaded} photo(s), skipped ${combined.skipped} already on file` +
       (combined.not_a_log ? `, ignored ${combined.not_a_log} non-log email(s)` : "") + ".";
+    if (reportEl && details.length) {
+      // Newest file names first (they start with YYMMDD); plain text only.
+      details.sort((a, b) => (b.file || "").localeCompare(a.file || ""));
+      reportEl.innerHTML = '<p class="field-label" style="margin:10px 0 6px;">What this run did (one line per log email):</p>';
+      details.forEach(d => {
+        const row = document.createElement("div");
+        row.style.cssText = "font-size:12px;padding:5px 0;border-bottom:1px solid var(--line);";
+        const strong = document.createElement("strong");
+        strong.textContent = d.action;
+        row.appendChild(strong);
+        row.appendChild(document.createTextNode(" — " + (d.file || d.email || "(no subject)") + (d.received ? "  · email " + d.received : "")));
+        reportEl.appendChild(row);
+      });
+    }
     loadDailyLogsFromDropbox();
   } catch (err) {
     statusEl.textContent = "Failed: " + err.message;
