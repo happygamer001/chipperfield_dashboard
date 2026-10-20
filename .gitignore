@@ -1,2 +1,8 @@
 __pycache__/
 *.pyc
+
+# PC script: local secrets and output
+local/djl_settings.txt
+local/logs/
+local/preview_output/
+local/*.csv

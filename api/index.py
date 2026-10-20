@@ -833,6 +833,14 @@ def typeform_webhook():
     if not verify_signature(raw_body, signature):
         return jsonify({"status": "error", "message": "Invalid signature"}), 401
 
+    # Daily Job Logs are now written ONLY by the office PC script
+    # (local/daily_job_logs.py, from the Typeform notification emails).
+    # This endpoint still answers 200 so Typeform doesn't flag the webhook
+    # as failing, but it no longer writes anything to Dropbox. Set
+    # DJL_WEBHOOK_WRITES=1 in Vercel to switch the old behaviour back on.
+    if os.environ.get("DJL_WEBHOOK_WRITES") != "1":
+        return jsonify({"status": "ok", "message": "Received; Daily Job Logs are saved by the office PC script."})
+
     try:
         payload = json.loads(raw_body.decode("utf-8"))
         summary = process_submission(payload)
@@ -848,6 +856,11 @@ def typeform_webhook():
 @app.route("/api/upload-daily-logs", methods=["GET", "POST"])
 @require_role_or_cron("admin")
 def upload_daily_logs():
+    # Turned off: Daily Job Logs run on the office PC now (local/daily_job_logs.py),
+    # which has no time limit. Set DJL_DASHBOARD_UPLOADS=1 in Vercel to switch it back on.
+    if os.environ.get("DJL_DASHBOARD_UPLOADS") != "1":
+        return jsonify({"status": "error",
+                        "message": "Daily Job Logs now run on the office PC; the dashboard no longer uploads them."}), 410
     try:
         if request.method == "POST":
             # Admin button — processes exactly one batch; the frontend

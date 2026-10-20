@@ -290,11 +290,10 @@
 
   <div class="queue-header">
     <h2>Daily Job Logs</h2>
-    <span id="fetch-logs-status">Runs automatically every hour — use this to trigger it now</span>
+    <span id="fetch-logs-status">Saved by the office PC each morning (local/daily_job_logs.py)</span>
   </div>
   <div class="filters" style="margin-bottom:20px;align-items:center;">
-    <button class="primary" id="fetch-logs-btn" style="flex:0 0 auto;">Fetch Daily Job Logs</button>
-    <button class="ghost" id="rebuild-logs-btn" style="flex:0 0 auto;" title="Re-creates every log PDF from the last 30 days of emails with the full log, replacing summary-only PDFs. Photos are not touched.">Rebuild last 30 days (full PDFs)</button>
+    <p style="margin:0;font-size:13px;color:var(--ink-soft);">The dashboard only reads Daily Job Logs from Dropbox. Fetching and rebuilding happen on the office PC — see <code>local/README.md</code> in the repo. The PC run's log is in its <code>logs</code> folder; anything needing review is in <code>Daily Job Logs/_Needs Review</code>.</p>
   </div>
   <div id="fetch-logs-report" style="margin:-10px 0 20px;"></div>
 
@@ -1022,8 +1021,9 @@ document.getElementById("fabshop-import-btn").addEventListener("click", async ()
   }
 });
 
-document.getElementById("fetch-logs-btn").addEventListener("click", () => runLogFetch(false));
-document.getElementById("rebuild-logs-btn").addEventListener("click", () => {
+// Fetch / Rebuild buttons were removed (logs run on the office PC); kept guarded in case they come back.
+document.getElementById("fetch-logs-btn")?.addEventListener("click", () => runLogFetch(false));
+document.getElementById("rebuild-logs-btn")?.addEventListener("click", () => {
   if (!confirm("Rebuild every Daily Job Log PDF from the last 30 days of emails with the full log? Existing PDFs with the same name are replaced. Photos are not touched.")) return;
   runLogFetch(true);
 });

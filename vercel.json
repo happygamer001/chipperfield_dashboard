@@ -3,11 +3,5 @@
     "api/index.py": {
       "maxDuration": 60
     }
-  },
-  "crons": [
-    {
-      "path": "/api/upload-daily-logs",
-      "schedule": "0 * * * *"
-    }
-  ]
+  }
 }
