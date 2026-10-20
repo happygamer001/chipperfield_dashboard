@@ -876,7 +876,14 @@ def upload_daily_logs():
             total = 0
             done = True
             while True:
-                result = run_gmail_djl_uploader(start_index=start_index, batch_size=10)
+                # Each call stops on its own when its time runs out, so
+                # hand it only what's left of this request's ~45s.
+                remaining = 45 - (time.time() - start_time)
+                if remaining < 10:
+                    done = False
+                    break
+                result = run_gmail_djl_uploader(start_index=start_index, batch_size=10,
+                                                time_budget=remaining)
                 for k in combined_summary:
                     combined_summary[k] += result["summary"][k]
                 total = result["total"]
