@@ -1,0 +1,14 @@
+# Copy this file to djl_settings.txt (same folder as daily_job_logs.py) and fill in the values.
+# djl_settings.txt holds passwords - never commit it, email it, or put it in a shared folder.
+
+# Gmail account that receives the Typeform notifications, and its Google app password
+EMAIL_USER=
+EMAIL_PASS=
+
+# Dropbox app (same app the dashboard uses)
+DROPBOX_APP_KEY=
+DROPBOX_APP_SECRET=
+DROPBOX_REFRESH_TOKEN=
+
+# Optional: how many days back the daily run looks (default 7)
+# DAILY_WINDOW_DAYS=7
