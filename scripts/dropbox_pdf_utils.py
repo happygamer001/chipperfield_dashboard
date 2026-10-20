@@ -134,16 +134,24 @@ def build_filenames(log_date_yymmdd, log_name, job_wo):
     return pdf_filename, photo_filename
 
 
-def upload_pdf_and_photos(dbx, log_date_yymmdd, log_name, job_wo, pdf_text_content, pdf_title, photo_bytes_list):
+def upload_pdf_and_photos(dbx, log_date_yymmdd, log_name, job_wo, pdf_text_content, pdf_title, photo_bytes_list,
+                          full_text=None, rebuild=False):
     """
     photo_bytes_list: list of raw bytes for each photo (already downloaded).
     Returns a summary dict.
 
-    Also writes a plain-text sidecar next to the PDF (same name, .txt) with
-    the same content used to generate the PDF — this is what lets the
-    dashboard show "work completed" text inline without anyone having to
-    open the PDF. Older entries uploaded before this existed won't have one.
+    TWO DIFFERENT TEXTS:
+      full_text        -> the PDF. The complete log (crew, date, job #, weather,
+                          times, equipment, everything). This is the record
+                          Jacque and billing use - it must never be the summary.
+      pdf_text_content -> the .txt sidecar next to the PDF. The short
+                          Work: / Productivity issues: summary the dashboard
+                          shows inline for Calvin. (Name kept for backward
+                          compatibility with existing callers.)
+    If full_text isn't given, the PDF falls back to pdf_text_content.
+    rebuild=True overwrites an existing PDF/.txt with the same name.
     """
+    full_text = full_text or pdf_text_content
     target_folder_path = get_year_subfolder(log_date_yymmdd)
     existing_files = get_existing_dropbox_files(dbx, target_folder_path)
     pdf_filename, photo_filename_fn = build_filenames(log_date_yymmdd, log_name, job_wo)
@@ -151,18 +159,18 @@ def upload_pdf_and_photos(dbx, log_date_yymmdd, log_name, job_wo, pdf_text_conte
 
     summary = {"pdf_uploaded": False, "photos_uploaded": 0, "pdf_path": None}
 
-    if pdf_filename not in existing_files:
-        pdf_bytes = generate_pdf_from_text(pdf_title, pdf_text_content)
+    if pdf_filename not in existing_files or rebuild:
+        pdf_bytes = generate_pdf_from_text(pdf_title, full_text)
         dest_pdf_path = f"{target_folder_path}/{pdf_filename}"
         dbx.files_upload(pdf_bytes, dest_pdf_path, mode=dropbox.files.WriteMode.overwrite)
         summary["pdf_uploaded"] = True
         summary["pdf_path"] = dest_pdf_path
         existing_files.add(pdf_filename)
 
-        # Sidecar text file, same content as the PDF
+        # Sidecar text file: the dashboard summary (not the full log)
         try:
             dest_txt_path = f"{target_folder_path}/{txt_filename}"
-            dbx.files_upload(pdf_text_content.encode("utf-8"), dest_txt_path, mode=dropbox.files.WriteMode.overwrite)
+            dbx.files_upload((pdf_text_content or full_text).encode("utf-8"), dest_txt_path, mode=dropbox.files.WriteMode.overwrite)
             existing_files.add(txt_filename)
         except Exception:
             pass  # non-critical — the PDF is still there even if this fails

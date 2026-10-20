@@ -57,9 +57,10 @@ DROPBOX_BASE_FOLDER = os.environ.get(
 SEARCH_WINDOW_DAYS = int(os.environ.get("SEARCH_WINDOW_DAYS", "7"))
 
 
-def _get_search_since_date():
-    """IMAP wants DD-Mon-YYYY. Rolls forward automatically every day it runs."""
-    since = datetime.date.today() - datetime.timedelta(days=SEARCH_WINDOW_DAYS)
+def _get_search_since_date(days=None):
+    """IMAP wants DD-Mon-YYYY. Rolls forward automatically every day it runs.
+    days overrides SEARCH_WINDOW_DAYS for one run (e.g. a 30-day rebuild)."""
+    since = datetime.date.today() - datetime.timedelta(days=days or SEARCH_WINDOW_DAYS)
     return since.strftime("%d-%b-%Y")
 
 
@@ -276,7 +277,7 @@ def extract_photo_urls_from_html(html_content):
 # MAIN EXECUTION
 # ==========================================
 
-def _process_one_djl_message(dbx, msg):
+def _process_one_djl_message(dbx, msg, rebuild=False):
     """
     Processes a single already-fetched email message: parses it, uploads
     the PDF/sidecar text and any photos. Pulled out of the main loop so it
@@ -284,9 +285,13 @@ def _process_one_djl_message(dbx, msg):
     BeautifulSoup on unusual HTML) or an oversized photo download can
     occasionally hang, and without a timeout one bad message could stall
     the whole batch the same way one malformed PDF did for Fix Filenames.
-    Returns a delta dict: {"pdfs_uploaded", "photos_uploaded", "skipped"}.
+    Returns a delta dict: {"pdfs_uploaded", "photos_uploaded", "skipped", "not_a_log"}.
+
+    rebuild=True overwrites a PDF/.txt that already exists under the same
+    name (one-time repair of the summary-only PDFs). Photos are never
+    re-uploaded.
     """
-    delta = {"pdfs_uploaded": 0, "photos_uploaded": 0, "skipped": 0}
+    delta = {"pdfs_uploaded": 0, "photos_uploaded": 0, "skipped": 0, "not_a_log": 0}
 
     subject_header = msg["Subject"]
     subject = ""
@@ -323,26 +328,39 @@ def _process_one_djl_message(dbx, msg):
     answers = email_body_to_answers(body_text or body_html)
     has_real_titles = any(a["field"]["title"] for a in answers)
 
+    # The PDF in Dropbox is the COMPLETE log (every question and answer),
+    # the same "original view" Chicken's local script produces and the one
+    # Jacque/billing rely on. The short structured summary only goes to the
+    # .txt sidecar for the dashboard.
+    full_text = clean_email_body_for_pdf(body_text or body_html)
+
     if answers and has_real_titles:
+        # Only the known log forms go to Dropbox. Other Typeform forms that
+        # reach this inbox (job applications / screenings) contain personal
+        # details and must never land in the Daily Job Logs folders.
+        if form_parsers.detect_form_type(answers) not in form_parsers.KNOWN_FORM_TYPES:
+            print(f"⏭️ Not a job log, skipped: {subject}")
+            delta["not_a_log"] += 1
+            return delta
+
         name_ans = form_parsers.find_answer(answers, ["your name", "name"])
         date_ans = form_parsers.find_answer(answers, ["date"])
         log_name = form_parsers._clean_or_none(form_parsers.answer_text(name_ans)) or "Unknown"
         raw_date_text = form_parsers.answer_text(date_ans) or ""
         log_date = format_date_for_jacque(raw_date_text)
         job_wo, pdf_text, _extra = form_parsers.parse_structured_answers(answers, log_name, log_date)
-
-        # Belt-and-suspenders: if the structured parse still couldn't
-        # classify the form (so pdf_text would come out as an unhelpful
-        # "Field (untitled): ..." dump), that's strictly worse than the
-        # old script's readable cleaned-text output — use that instead.
-        if _extra.get("form_type") == "unrecognized":
-            pdf_text = clean_email_body_for_pdf(body_text or body_html)
+        if not pdf_text.strip():
+            pdf_text = full_text
     else:
         # Safety net: no '* Title' fields found at all (an unexpected
-        # email format) — fall back to the old whole-body approach rather
-        # than losing the submission.
+        # email format). Only keep it if the subject says it's a log -
+        # otherwise it's some other form or email and is skipped.
+        if "log" not in subject.lower():
+            print(f"⏭️ Not a job log, skipped: {subject}")
+            delta["not_a_log"] += 1
+            return delta
         log_date, log_name, job_wo = parse_metadata_from_email(subject, body_text or body_html)
-        pdf_text = clean_email_body_for_pdf(body_text or body_html)
+        pdf_text = full_text
 
     target_folder_path = get_year_subfolder(log_date)
     existing_dropbox_files = get_existing_dropbox_files(dbx, target_folder_path)
@@ -353,9 +371,9 @@ def _process_one_djl_message(dbx, msg):
         parts.append(job_wo)
     pdf_filename = " | ".join(parts) + ".pdf"
 
-    if pdf_filename not in existing_dropbox_files:
-        print(f"\n📄 Generating PDF for Log: {pdf_filename}")
-        pdf_bytes = generate_pdf_from_text(pdf_filename.replace('.pdf', ''), pdf_text)
+    if pdf_filename not in existing_dropbox_files or rebuild:
+        print(f"\n📄 {'Rebuilding' if pdf_filename in existing_dropbox_files else 'Generating'} PDF for Log: {pdf_filename}")
+        pdf_bytes = generate_pdf_from_text(pdf_filename.replace('.pdf', ''), full_text)
 
         dest_pdf_path = f"{target_folder_path}/{pdf_filename}"
         try:
@@ -364,9 +382,9 @@ def _process_one_djl_message(dbx, msg):
             existing_dropbox_files.add(pdf_filename)
             delta["pdfs_uploaded"] += 1
 
-            # Sidecar text file (same content, .txt extension) — this is
-            # what lets the dashboard show the actual description without
-            # anyone opening the PDF.
+            # Sidecar text file (.txt) — the short dashboard summary, which
+            # lets the dashboard show the description without anyone
+            # opening the PDF. The PDF itself holds the full log.
             try:
                 txt_filename = pdf_filename[:-4] + ".txt"
                 dest_txt_path = f"{target_folder_path}/{txt_filename}"
@@ -426,7 +444,7 @@ def _process_one_djl_message(dbx, msg):
     return delta
 
 
-def run_gmail_djl_uploader(start_index=0, batch_size=10):
+def run_gmail_djl_uploader(start_index=0, batch_size=10, rebuild=False, days=None):
     """
     Processes a BATCH of matching emails, not all of them — fetching a
     message's full content over IMAP is the expensive part, and doing
@@ -438,7 +456,7 @@ def run_gmail_djl_uploader(start_index=0, batch_size=10):
     email_user = _require_env("EMAIL_USER")
     email_pass = _require_env("EMAIL_PASS")
 
-    search_since_date = _get_search_since_date()
+    search_since_date = _get_search_since_date(days)
     print(f"\n--- Scanning Gmail Inbox for Logs and Attached Photos since {search_since_date} ---")
 
     dbx = get_dropbox_client()
@@ -452,7 +470,7 @@ def run_gmail_djl_uploader(start_index=0, batch_size=10):
     all_email_ids = messages[0].split()
     total = len(all_email_ids)
 
-    summary = {"scanned": 0, "pdfs_uploaded": 0, "photos_uploaded": 0, "skipped": 0}
+    summary = {"scanned": 0, "pdfs_uploaded": 0, "photos_uploaded": 0, "skipped": 0, "not_a_log": 0}
 
     if not all_email_ids:
         print("No emails found.")
@@ -474,12 +492,12 @@ def run_gmail_djl_uploader(start_index=0, batch_size=10):
             for response_part in msg_data:
                 if isinstance(response_part, tuple):
                     msg = email.message_from_bytes(response_part[1])
-                    future = executor.submit(_process_one_djl_message, dbx, msg)
+                    future = executor.submit(_process_one_djl_message, dbx, msg, rebuild)
                     try:
                         delta = future.result(timeout=25)
-                        summary["pdfs_uploaded"] += delta["pdfs_uploaded"]
-                        summary["photos_uploaded"] += delta["photos_uploaded"]
-                        summary["skipped"] += delta["skipped"]
+                        for key in summary:
+                            if key != "scanned":
+                                summary[key] += delta.get(key, 0)
                     except Exception as e:
                         print(f"⚠️ Message processing timed out or failed: {e}")
     finally:

@@ -294,6 +294,7 @@
   </div>
   <div class="filters" style="margin-bottom:20px;align-items:center;">
     <button class="primary" id="fetch-logs-btn" style="flex:0 0 auto;">Fetch Daily Job Logs</button>
+    <button class="ghost" id="rebuild-logs-btn" style="flex:0 0 auto;" title="Re-creates every log PDF from the last 30 days of emails with the full log, replacing summary-only PDFs. Photos are not touched.">Rebuild last 30 days (full PDFs)</button>
   </div>
 
   <div class="queue-header">
@@ -1020,14 +1021,23 @@ document.getElementById("fabshop-import-btn").addEventListener("click", async ()
   }
 });
 
-document.getElementById("fetch-logs-btn").addEventListener("click", async () => {
-  const btn = document.getElementById("fetch-logs-btn");
+document.getElementById("fetch-logs-btn").addEventListener("click", () => runLogFetch(false));
+document.getElementById("rebuild-logs-btn").addEventListener("click", () => {
+  if (!confirm("Rebuild every Daily Job Log PDF from the last 30 days of emails with the full log? Existing PDFs with the same name are replaced. Photos are not touched.")) return;
+  runLogFetch(true);
+});
+
+async function runLogFetch(rebuild) {
+  const btn = document.getElementById(rebuild ? "rebuild-logs-btn" : "fetch-logs-btn");
+  const otherBtn = document.getElementById(rebuild ? "fetch-logs-btn" : "rebuild-logs-btn");
+  const idleLabel = btn.textContent;
   const statusEl = document.getElementById("fetch-logs-status");
 
   btn.disabled = true;
-  btn.textContent = "Fetching…";
+  otherBtn.disabled = true;
+  btn.textContent = rebuild ? "Rebuilding…" : "Fetching…";
 
-  const combined = { scanned: 0, pdfs_uploaded: 0, photos_uploaded: 0, skipped: 0 };
+  const combined = { scanned: 0, pdfs_uploaded: 0, photos_uploaded: 0, skipped: 0, not_a_log: 0 };
   let startIndex = 0;
   let total = null;
 
@@ -1038,7 +1048,7 @@ document.getElementById("fetch-logs-btn").addEventListener("click", async () => 
       const res = await fetch("/api/upload-daily-logs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ start_index: startIndex })
+        body: JSON.stringify(rebuild ? { start_index: startIndex, rebuild: true, days: 30 } : { start_index: startIndex })
       });
       let data;
       try {
@@ -1050,24 +1060,23 @@ document.getElementById("fetch-logs-btn").addEventListener("click", async () => 
 
       total = data.total;
       const s = data.summary || {};
-      combined.scanned += s.scanned ?? 0;
-      combined.pdfs_uploaded += s.pdfs_uploaded ?? 0;
-      combined.photos_uploaded += s.photos_uploaded ?? 0;
-      combined.skipped += s.skipped ?? 0;
+      Object.keys(combined).forEach(k => { combined[k] += s[k] ?? 0; });
 
       if (data.done || total === 0) break;
       startIndex = data.next_index;
     }
 
-    statusEl.textContent = `Done — scanned ${combined.scanned}, uploaded ${combined.pdfs_uploaded} log(s) and ${combined.photos_uploaded} photo(s), skipped ${combined.skipped} already on file.`;
+    statusEl.textContent = `Done — scanned ${combined.scanned}, ${rebuild ? "rebuilt" : "uploaded"} ${combined.pdfs_uploaded} log(s) and ${combined.photos_uploaded} photo(s), skipped ${combined.skipped} already on file` +
+      (combined.not_a_log ? `, ignored ${combined.not_a_log} non-log email(s)` : "") + ".";
     loadDailyLogsFromDropbox();
   } catch (err) {
     statusEl.textContent = "Failed: " + err.message;
   } finally {
     btn.disabled = false;
-    btn.textContent = "Fetch Daily Job Logs";
+    otherBtn.disabled = false;
+    btn.textContent = idleLabel;
   }
-});
+}
 
 document.getElementById("fix-filenames-btn").addEventListener("click", async () => {
   const btn = document.getElementById("fix-filenames-btn");
