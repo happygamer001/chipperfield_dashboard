@@ -17,6 +17,7 @@ import os
 import io
 import sys
 import datetime
+import time
 import dropbox
 import requests
 from bs4 import BeautifulSoup
@@ -510,7 +511,7 @@ def _search_log_emails(mail, search_since_date, days=None):
     return messages[0].split()
 
 
-def run_gmail_djl_uploader(start_index=0, batch_size=10, rebuild=False, days=None):
+def run_gmail_djl_uploader(start_index=0, batch_size=10, rebuild=False, days=None, time_budget=40):
     """
     Processes a BATCH of matching emails, not all of them — fetching a
     message's full content over IMAP is the expensive part, and doing
@@ -519,6 +520,7 @@ def run_gmail_djl_uploader(start_index=0, batch_size=10, rebuild=False, days=Non
     Fix Filenames tool hit, fixed the same way here: batch + continuation
     cursor, with the caller looping until done).
     """
+    started = time.time()
     email_user = _require_env("EMAIL_USER")
     email_pass = _require_env("EMAIL_PASS")
 
@@ -541,38 +543,49 @@ def run_gmail_djl_uploader(start_index=0, batch_size=10, rebuild=False, days=Non
         return {"summary": summary, "done": True, "next_index": None, "total": 0, "details": details}
 
     batch_ids = all_email_ids[start_index:start_index + batch_size]
-    summary["scanned"] = len(batch_ids)
 
-    # IMAP fetch itself stays on the main thread (a single connection
-    # shouldn't be driven from multiple threads at once) — but everything
-    # AFTER the fetch (parsing, Dropbox uploads) runs under a hard
-    # per-message timeout, one message at a time, so a single slow/odd
-    # email can never stall the whole batch or blow the function's budget.
-    executor = ThreadPoolExecutor(max_workers=1)
+    # Vercel stops a request at 60 seconds (that's the 504 error). Work
+    # through the batch only while there's time left; whatever isn't
+    # reached is picked up by the next request (next_index), so a slow
+    # email - big photo attachments, a slow Typeform photo link - can't
+    # sink the whole run. Each message gets a fresh worker thread, so one
+    # that hangs past its timeout can't hold up the messages after it.
+    deadline = started + time_budget
+    processed = 0
     try:
         for e_id in batch_ids:
+            remaining = deadline - time.time()
+            if remaining < 6 and processed > 0:
+                break
             _, msg_data = mail.fetch(e_id, '(RFC822)')
+            processed += 1
             for response_part in msg_data:
                 if isinstance(response_part, tuple):
                     msg = email.message_from_bytes(response_part[1])
+                    executor = ThreadPoolExecutor(max_workers=1)
                     future = executor.submit(_process_one_djl_message, dbx, msg, rebuild)
                     try:
-                        delta = future.result(timeout=25)
+                        delta = future.result(timeout=max(5, min(25, deadline - time.time())))
                         for key in summary:
                             if key != "scanned":
                                 summary[key] += delta.get(key, 0)
                         details.extend(delta.get("files", []))
                     except Exception as e:
-                        print(f"⚠️ Message processing timed out or failed: {e}")
-                        details.append({"file": "", "action": f"timed out or failed: {e}",
+                        print(f"⚠️ Message processing timed out or failed: {e!r}")
+                        details.append({"file": "", "action": f"timed out or failed: {e!r}",
                                         "email": str(msg["Subject"] or "")[:120], "received": str(msg["Date"] or "")[:31]})
+                    finally:
+                        executor.shutdown(wait=False)
     finally:
-        executor.shutdown(wait=False)
+        try:
+            mail.logout()
+        except Exception:
+            pass
 
-    mail.logout()
+    summary["scanned"] = processed
     print("\nGmail scan batch complete!")
 
-    next_index = start_index + len(batch_ids)
+    next_index = start_index + processed
     done = next_index >= total
 
     return {
