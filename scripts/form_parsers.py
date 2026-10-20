@@ -362,6 +362,40 @@ def parse_fab_shop_log(answers, log_name, log_date, learned_map=None):
     return "Fab Shop Daily Log", "\n".join(lines), {"has_incident": bool(incident)}
 
 
+KNOWN_FORM_TYPES = ("daily_job_log", "management_log", "fab_shop_log")
+
+
+def render_full_log(answers):
+    """
+    The COMPLETE log - every question and answer, in form order - for the
+    Dropbox PDF (the billing/accounting record). The short Work: /
+    Productivity issues: summary from the parse_* functions is for the
+    dashboard only (the .txt sidecar) and must never be the PDF's content.
+    Used by the webhook path, which has no email body to copy from.
+    """
+    blocks = []
+    photo_n = 0
+    for ans in answers:
+        title = (ans.get("field", {}).get("title") or "").strip() or "Field (untitled)"
+        if ans.get("type") == "file_url":
+            if ans.get("file_url"):
+                photo_n += 1
+                blocks.append(f"* {title}\nPhoto {photo_n}: {ans['file_url']}")
+            continue
+        if ans.get("type") == "choices":
+            labels = (ans.get("choices") or {}).get("labels") or []
+            other = (ans.get("choices") or {}).get("other")
+            val = ", ".join(labels + ([f"Other: {other}"] if other else []))
+        elif ans.get("type") == "boolean":
+            val = "Yes" if ans.get("boolean") else "No"
+        else:
+            val = answer_text(ans)
+        if val is None or str(val).strip() == "":
+            continue
+        blocks.append(f"* {title}\n{str(val).strip()}")
+    return "\n\n".join(blocks)
+
+
 def parse_structured_answers(answers, log_name, log_date, learned_map=None):
     """
     One entry point: detects the form type, dispatches to the right

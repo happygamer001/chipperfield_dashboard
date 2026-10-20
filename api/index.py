@@ -779,19 +779,16 @@ def process_submission(payload):
     elif form_type == "fab_shop_log":
         job_wo, pdf_text, extra = _parse_fab_shop_log(answers, log_name, log_date, learned_map)
     else:
-        # Unrecognized form shape — fall back to a generic dump so at least
-        # something usable lands in Dropbox instead of silently failing.
-        job_wo = ""
-        lines = []
-        for ans in answers:
-            title = ans.get("field", {}).get("title") or "Field (untitled)"
-            val = answer_text(ans)
-            if val:
-                lines.append(f"{title}: {val}")
-        pdf_text = "\n".join(lines)
-        extra = {"form_type": "unrecognized"}
+        # Not one of the job-log forms (e.g. a job application or screening
+        # form pointed at this webhook). Those hold applicants' personal
+        # details, so nothing is written to the Daily Job Logs folders.
+        return {"skipped": True, "reason": "not a job log form", "form_type": form_type}
 
     _write_json_to_dropbox(dbx, FIELD_ID_ROLE_MAP_PATH, learned_map)
+
+    # The PDF gets the complete log (every question and answer); pdf_text
+    # (the short summary) only goes to the .txt sidecar for the dashboard.
+    full_text = form_parsers.render_full_log(answers)
 
     photo_bytes_list = _collect_photos(answers)
 
@@ -801,7 +798,8 @@ def process_submission(payload):
     pdf_title = " | ".join(pdf_title_parts)
 
     summary = upload_pdf_and_photos(
-        dbx, log_date, log_name, job_wo, pdf_text, pdf_title, photo_bytes_list
+        dbx, log_date, log_name, job_wo, pdf_text, pdf_title, photo_bytes_list,
+        full_text=full_text,
     )
     summary["log_name"] = log_name
     summary["job_wo"] = job_wo
@@ -842,7 +840,14 @@ def upload_daily_logs():
             # loops itself, showing live progress between calls.
             body = request.get_json(silent=True) or {}
             start_index = int(body.get("start_index", 0))
-            result = run_gmail_djl_uploader(start_index=start_index, batch_size=10)
+            # Optional one-time repair: rebuild=True overwrites existing
+            # PDFs/.txt files with the full log; days widens the Gmail
+            # search window for that run (capped at 120 days).
+            rebuild = bool(body.get("rebuild", False))
+            days = body.get("days")
+            days = max(1, min(int(days), 120)) if days else None
+            result = run_gmail_djl_uploader(start_index=start_index, batch_size=10,
+                                            rebuild=rebuild, days=days)
             return jsonify({"status": "ok", **result})
         else:
             # GET (the hourly Cron trigger, or a manual browser visit) —
