@@ -51,6 +51,8 @@ IMAP_SERVER = os.environ.get("IMAP_SERVER", "imap.gmail.com")
 DROPBOX_BASE_FOLDER = os.environ.get(
     "DROPBOX_BASE_FOLDER", "/Chipperfield Ag/Chipperfield/Daily Job Logs"
 )
+# Same archive folder the local daily_job_logs.py script uses.
+ARCHIVE_FOLDER_PATH = f"{DROPBOX_BASE_FOLDER}/Original Unformatted Files"
 
 # Rolling search window instead of a fixed date, so the scan doesn't grow slower every month.
 # Overridable via env var if you ever need to re-scan further back (e.g. a one-off backfill).
@@ -291,7 +293,8 @@ def _process_one_djl_message(dbx, msg, rebuild=False):
     name (one-time repair of the summary-only PDFs). Photos are never
     re-uploaded.
     """
-    delta = {"pdfs_uploaded": 0, "photos_uploaded": 0, "skipped": 0, "not_a_log": 0}
+    delta = {"pdfs_uploaded": 0, "photos_uploaded": 0, "skipped": 0, "not_a_log": 0, "files": []}
+    received = (msg["Date"] or "")[:31]
 
     subject_header = msg["Subject"]
     subject = ""
@@ -338,9 +341,10 @@ def _process_one_djl_message(dbx, msg, rebuild=False):
         # Only the known log forms go to Dropbox. Other Typeform forms that
         # reach this inbox (job applications / screenings) contain personal
         # details and must never land in the Daily Job Logs folders.
-        if form_parsers.detect_form_type(answers) not in form_parsers.KNOWN_FORM_TYPES:
+        if not form_parsers.is_log_submission(form_parsers.detect_form_type(answers), subject):
             print(f"⏭️ Not a job log, skipped: {subject}")
             delta["not_a_log"] += 1
+            delta["files"].append({"file": "", "action": "not a log", "email": subject, "received": received})
             return delta
 
         name_ans = form_parsers.find_answer(answers, ["your name", "name"])
@@ -358,6 +362,7 @@ def _process_one_djl_message(dbx, msg, rebuild=False):
         if "log" not in subject.lower():
             print(f"⏭️ Not a job log, skipped: {subject}")
             delta["not_a_log"] += 1
+            delta["files"].append({"file": "", "action": "not a log", "email": subject, "received": received})
             return delta
         log_date, log_name, job_wo = parse_metadata_from_email(subject, body_text or body_html)
         pdf_text = full_text
@@ -372,7 +377,8 @@ def _process_one_djl_message(dbx, msg, rebuild=False):
     pdf_filename = " | ".join(parts) + ".pdf"
 
     if pdf_filename not in existing_dropbox_files or rebuild:
-        print(f"\n📄 {'Rebuilding' if pdf_filename in existing_dropbox_files else 'Generating'} PDF for Log: {pdf_filename}")
+        action = "rebuilt" if pdf_filename in existing_dropbox_files else "new file"
+        print(f"\n📄 {'Rebuilding' if action == 'rebuilt' else 'Generating'} PDF for Log: {pdf_filename}")
         pdf_bytes = generate_pdf_from_text(pdf_filename.replace('.pdf', ''), full_text)
 
         dest_pdf_path = f"{target_folder_path}/{pdf_filename}"
@@ -381,6 +387,25 @@ def _process_one_djl_message(dbx, msg, rebuild=False):
             print(f"✅ Uploaded PDF Log: {dest_pdf_path}")
             existing_dropbox_files.add(pdf_filename)
             delta["pdfs_uploaded"] += 1
+            delta["files"].append({"file": pdf_filename, "action": action, "email": subject, "received": received})
+
+            # Logs the old webhook code couldn't classify were saved with no
+            # job part ("261001 | Craig.pdf"); the correct name now has one
+            # ("261001 | Craig | Daily Management Log.pdf"). On a rebuild,
+            # move that old summary-only copy (and its .txt) into the archive
+            # folder so it isn't left sitting next to the full version.
+            old_name = f"{log_date} | {log_name}.pdf"
+            if rebuild and job_wo and old_name != pdf_filename and old_name in existing_dropbox_files:
+                for old in (old_name, old_name[:-4] + ".txt"):
+                    if old not in existing_dropbox_files:
+                        continue
+                    try:
+                        dbx.files_move_v2(f"{target_folder_path}/{old}", f"{ARCHIVE_FOLDER_PATH}/{old}", autorename=True)
+                        existing_dropbox_files.discard(old)
+                        if old.endswith(".pdf"):
+                            delta["files"].append({"file": old, "action": "old copy archived", "email": subject, "received": received})
+                    except Exception as mv_err:
+                        print(f"⚠️ Could not archive old copy {old}: {mv_err}")
 
             # Sidecar text file (.txt) — the short dashboard summary, which
             # lets the dashboard show the description without anyone
@@ -394,6 +419,7 @@ def _process_one_djl_message(dbx, msg, rebuild=False):
                 print(f"⚠️ Sidecar text upload error (non-critical): {txt_err}")
         except Exception as pdf_err:
             print(f"⚠️ PDF upload error: {pdf_err}")
+            delta["files"].append({"file": pdf_filename, "action": f"upload failed: {pdf_err}", "email": subject, "received": received})
     else:
         print(f"Skipping PDF Log (already in Dropbox): {pdf_filename}")
         delta["skipped"] += 1
@@ -471,11 +497,12 @@ def run_gmail_djl_uploader(start_index=0, batch_size=10, rebuild=False, days=Non
     total = len(all_email_ids)
 
     summary = {"scanned": 0, "pdfs_uploaded": 0, "photos_uploaded": 0, "skipped": 0, "not_a_log": 0}
+    details = []  # one row per log PDF written / non-log email skipped (shown after a rebuild)
 
     if not all_email_ids:
         print("No emails found.")
         mail.logout()
-        return {"summary": summary, "done": True, "next_index": None, "total": 0}
+        return {"summary": summary, "done": True, "next_index": None, "total": 0, "details": details}
 
     batch_ids = all_email_ids[start_index:start_index + batch_size]
     summary["scanned"] = len(batch_ids)
@@ -498,8 +525,11 @@ def run_gmail_djl_uploader(start_index=0, batch_size=10, rebuild=False, days=Non
                         for key in summary:
                             if key != "scanned":
                                 summary[key] += delta.get(key, 0)
+                        details.extend(delta.get("files", []))
                     except Exception as e:
                         print(f"⚠️ Message processing timed out or failed: {e}")
+                        details.append({"file": "", "action": f"timed out or failed: {e}",
+                                        "email": str(msg["Subject"] or "")[:120], "received": str(msg["Date"] or "")[:31]})
     finally:
         executor.shutdown(wait=False)
 
@@ -511,6 +541,7 @@ def run_gmail_djl_uploader(start_index=0, batch_size=10, rebuild=False, days=Non
 
     return {
         "summary": summary,
+        "details": details,
         "done": done,
         "next_index": None if done else next_index,
         "total": total,

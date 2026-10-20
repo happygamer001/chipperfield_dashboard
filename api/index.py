@@ -779,10 +779,24 @@ def process_submission(payload):
     elif form_type == "fab_shop_log":
         job_wo, pdf_text, extra = _parse_fab_shop_log(answers, log_name, log_date, learned_map)
     else:
-        # Not one of the job-log forms (e.g. a job application or screening
-        # form pointed at this webhook). Those hold applicants' personal
-        # details, so nothing is written to the Daily Job Logs folders.
-        return {"skipped": True, "reason": "not a job log form", "form_type": form_type}
+        form_title = form_response.get("definition", {}).get("title", "")
+        if not form_parsers.is_log_submission(form_type, form_title):
+            # Not a log form (e.g. a job application or screening form
+            # pointed at this webhook). Those hold applicants' personal
+            # details, so nothing is written to the Daily Job Logs folders.
+            return {"skipped": True, "reason": "not a job log form", "form_type": form_type,
+                    "form_title": form_title}
+        # A log form whose answers didn't match a known shape - keep it
+        # (generic summary) rather than lose the submission.
+        job_wo = "Daily Management Log" if "management" in form_title.lower() else ""
+        lines = []
+        for ans in answers:
+            title = ans.get("field", {}).get("title") or "Field (untitled)"
+            val = answer_text(ans)
+            if val:
+                lines.append(f"{title}: {val}")
+        pdf_text = "\n".join(lines)
+        extra = {"form_type": "unrecognized"}
 
     _write_json_to_dropbox(dbx, FIELD_ID_ROLE_MAP_PATH, learned_map)
 

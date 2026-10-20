@@ -213,6 +213,11 @@ def detect_form_type(answers, learned_map=None):
         return "daily_job_log"
     if "how long did that take" in joined and "next action" in joined:
         return "management_log"
+    # Typeform only sends questions that were answered, so a short
+    # management log (one project, no duration / next action) has neither
+    # of the above. These two questions only exist on that form.
+    if "what project did you work on today" in joined or "what did you do for" in joined:
+        return "management_log"
     if "what did your team work on today" in joined:
         return "fab_shop_log"
 
@@ -363,6 +368,17 @@ def parse_fab_shop_log(answers, log_name, log_date, learned_map=None):
 
 
 KNOWN_FORM_TYPES = ("daily_job_log", "management_log", "fab_shop_log")
+
+
+def is_log_submission(form_type, form_title):
+    """
+    True for anything that belongs in the Daily Job Logs folders: a
+    recognized log form, OR any form whose title / email subject says
+    "log" (so a log submission is never dropped just because its answers
+    didn't match a known shape). Everything else - job applications,
+    screenings - is kept out, since those hold applicants' personal details.
+    """
+    return form_type in KNOWN_FORM_TYPES or "log" in (form_title or "").lower()
 
 
 def render_full_log(answers):
