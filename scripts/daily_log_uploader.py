@@ -470,6 +470,46 @@ def _process_one_djl_message(dbx, msg, rebuild=False):
     return delta
 
 
+# Gmail's "All Mail" holds every message whether or not it's still in the
+# Inbox. Reading only the Inbox missed every log email that had been
+# archived or filtered out of it, so a rebuild couldn't find older logs.
+ALL_MAIL_FOLDERS = ('"[Gmail]/All Mail"', '"[Google Mail]/All Mail"')
+
+
+def _search_log_emails(mail, search_since_date, days=None):
+    """
+    Opens All Mail (falling back to the Inbox) READ-ONLY, so scanning never
+    marks anyone's email as read, and returns the matching message ids,
+    oldest first. Uses Gmail's own search to fetch only emails whose subject
+    mentions "log" or "typeform" (far fewer messages to download); falls
+    back to a plain date search if that isn't supported.
+    """
+    opened = None
+    for box in ALL_MAIL_FOLDERS + ("INBOX",):
+        try:
+            typ, _ = mail.select(box, readonly=True)
+        except imaplib.IMAP4.error:
+            continue
+        if typ == "OK":
+            opened = box
+            break
+    if not opened:
+        raise RuntimeError("Could not open the Gmail mailbox (All Mail or Inbox)")
+    print(f"Mailbox: {opened}")
+    mail._djl_mailbox = opened.strip('"')
+
+    since = datetime.date.today() - datetime.timedelta(days=days or SEARCH_WINDOW_DAYS)
+    gmail_query = f"after:{since:%Y/%m/%d} (subject:log OR subject:typeform)"
+    try:
+        typ, messages = mail.search(None, "X-GM-RAW", f'"{gmail_query}"')
+        if typ == "OK":
+            return messages[0].split()
+    except imaplib.IMAP4.error:
+        pass
+    typ, messages = mail.search(None, f'(SINCE "{search_since_date}")')
+    return messages[0].split()
+
+
 def run_gmail_djl_uploader(start_index=0, batch_size=10, rebuild=False, days=None):
     """
     Processes a BATCH of matching emails, not all of them — fetching a
@@ -483,17 +523,13 @@ def run_gmail_djl_uploader(start_index=0, batch_size=10, rebuild=False, days=Non
     email_pass = _require_env("EMAIL_PASS")
 
     search_since_date = _get_search_since_date(days)
-    print(f"\n--- Scanning Gmail Inbox for Logs and Attached Photos since {search_since_date} ---")
+    print(f"\n--- Scanning Gmail (All Mail) for Logs and Attached Photos since {search_since_date} ---")
 
     dbx = get_dropbox_client()
 
     mail = imaplib.IMAP4_SSL(IMAP_SERVER, 993)
     mail.login(email_user, email_pass)
-    mail.select("inbox")
-
-    search_query = f'(SINCE "{search_since_date}")'
-    status, messages = mail.search(None, search_query)
-    all_email_ids = messages[0].split()
+    all_email_ids = _search_log_emails(mail, search_since_date, days)
     total = len(all_email_ids)
 
     summary = {"scanned": 0, "pdfs_uploaded": 0, "photos_uploaded": 0, "skipped": 0, "not_a_log": 0}
@@ -542,6 +578,7 @@ def run_gmail_djl_uploader(start_index=0, batch_size=10, rebuild=False, days=Non
     return {
         "summary": summary,
         "details": details,
+        "searched": f"{getattr(mail, '_djl_mailbox', 'INBOX')} since {search_since_date}",
         "done": done,
         "next_index": None if done else next_index,
         "total": total,
