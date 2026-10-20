@@ -1040,6 +1040,7 @@ async function runLogFetch(rebuild) {
 
   const combined = { scanned: 0, pdfs_uploaded: 0, photos_uploaded: 0, skipped: 0, not_a_log: 0 };
   const details = [];
+  let searched = "";
   const reportEl = document.getElementById("fetch-logs-report");
   if (reportEl) reportEl.innerHTML = "";
   let startIndex = 0;
@@ -1066,6 +1067,7 @@ async function runLogFetch(rebuild) {
       const s = data.summary || {};
       Object.keys(combined).forEach(k => { combined[k] += s[k] ?? 0; });
       details.push(...(data.details || []));
+      if (data.searched) searched = data.searched;
 
       if (data.done || total === 0) break;
       startIndex = data.next_index;
@@ -1076,7 +1078,8 @@ async function runLogFetch(rebuild) {
     if (reportEl && details.length) {
       // Newest file names first (they start with YYMMDD); plain text only.
       details.sort((a, b) => (b.file || "").localeCompare(a.file || ""));
-      reportEl.innerHTML = '<p class="field-label" style="margin:10px 0 6px;">What this run did (one line per log email):</p>';
+      reportEl.innerHTML = '<p class="field-label" style="margin:10px 0 6px;"></p>';
+      reportEl.firstChild.textContent = (rebuild ? "Rebuild" : "Fetch") + (searched ? " — searched " + searched : "") + ". One line per log email:";
       details.forEach(d => {
         const row = document.createElement("div");
         row.style.cssText = "font-size:12px;padding:5px 0;border-bottom:1px solid var(--line);";
