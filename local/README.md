@@ -2,9 +2,13 @@
 
 `daily_job_logs.py` is the only thing that writes Daily Job Logs to Dropbox. It runs on the office PC once a day. The Chipperfield Dashboard only reads what it writes:
 
-- **`YYMMDD | Name | Job.pdf`** is the complete log, the record Jacque and billing use.
-- **`YYMMDD | Name | Job.txt`** is the short summary that Calvin's dashboard shows.
-- **Photos** are saved as `YYMMDD | Name | Job | ImageN.jpeg`.
+| Where | What | Who uses it |
+|---|---|---|
+| `Daily Job Logs/<year>/YYMMDD \| Name \| Job.pdf` | The complete log | Jacque and billing |
+| `Daily Job Logs/<year>/YYMMDD \| Name \| Job \| ImageN.jpeg` | Site photos | Jacque, billing and the dashboard |
+| `Dashboard/Daily Log Summaries/<year>/YYMMDD \| Name \| Job.txt` | Short summary | Calvin's dashboard |
+
+The summaries are kept out of the job log folders on purpose, so those folders hold only PDFs and photos.
 
 It reads Gmail **All Mail**, so archived or filtered emails are included. The mailbox is opened read-only, so nothing gets marked as read. Only emails with "log" in the subject are processed: Daily Job Log, Daily Management Log and the Fab Shop daily log. Service requests, job applications and screenings are skipped.
 
@@ -29,12 +33,21 @@ It reads Gmail **All Mail**, so archived or filtered emails are included. The ma
 ```
 run_daily_job_logs.bat rebuild 90
 ```
-- **Overwrites PDFs:** every log from the last 90 days is replaced with the full log, and its `.txt` with the summary.
+- **Overwrites PDFs:** every log from the last 90 days is replaced with the full log, and its summary is rewritten in `Dashboard/Daily Log Summaries`.
 - **Archives old copies:** an old copy saved under a different name, such as `261001 | Craig.pdf`, is moved to `Original Unformatted Files`.
 - **Photos** are not re-uploaded.
 - **Results:** see `logs\djl_<today>.log` and the review list in `Daily Job Logs/_Needs Review`.
 
 There's no time limit on the PC, so a long run is fine.
+
+## One-time move: take the old summaries out of the job log folders
+
+```
+python daily_job_logs.py move-summaries
+```
+- **Moves** every `.txt` file in `Daily Job Logs` and its year folders into `Dashboard/Daily Log Summaries/<year>/`. No PDFs or photos are touched.
+- **Duplicates:** if a summary with the same name is already there, the newer one is kept and the older copy goes to `Daily Log Summaries/_replaced`.
+- **Merge the dashboard pull request first, then run this.** The live dashboard needs to know where to find the summaries.
 
 ## Schedule the daily run
 
@@ -56,5 +69,6 @@ schtasks /Create /TN "Daily Job Logs" /TR "\"C:\DailyJobLogs\run_daily_job_logs.
 | `python daily_job_logs.py` | Daily run, the same thing the scheduled task does |
 | `python daily_job_logs.py preview 10` | Builds the last 10 logs locally. Uploads nothing |
 | `python daily_job_logs.py backfill 2026` | Lists the title fixes for a year folder. Renames nothing |
-| `python daily_job_logs.py apply backfill_2026.csv` | Applies a reviewed rename list |
+| `python daily_job_logs.py apply backfill_2026.csv` | Applies a reviewed rename list. Summaries are renamed to match |
+| `python daily_job_logs.py move-summaries` | One-time: moves the summary `.txt` files out of the job log folders |
 | `python daily_job_logs.py other` | Lists logs where "Other" was picked for the name |

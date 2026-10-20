@@ -745,7 +745,7 @@ async function loadDailyReports() {
 
   try {
     const [logsRes, kevinRes] = await Promise.all([
-      fetch("/api/recent-logs?days=5"),
+      fetch("/api/recent-logs?days=7"),
       fetch("/api/notion/kevin-management-form")
     ]);
     const logsData = await logsRes.json();
@@ -842,8 +842,8 @@ async function loadDailyReports() {
       });
     };
 
-    renderGroup(crewEl, crew, "No crew job logs in the last 5 days.");
-    renderGroup(mgmtEl, mgmt, "No management logs in the last 5 days.");
+    renderGroup(crewEl, crew, "No crew job logs in the last 7 days.");
+    renderGroup(mgmtEl, mgmt, "No management logs in the last 7 days.");
   } catch (err) {
     crewEl.innerHTML = '<div class="empty">Could not load daily reports.</div>';
     mgmtEl.innerHTML = '';
@@ -974,14 +974,14 @@ async function loadFabshopDailyLog() {
   el.innerHTML = '<div class="empty">Loading…</div>';
 
   try {
-    const res = await fetch("/api/recent-logs?days=5");
+    const res = await fetch("/api/recent-logs?days=7");
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || "Failed to load");
 
     const entries = (data.logs || []).filter(l => l.job_or_wo === "Fab Shop Daily Log");
 
     if (entries.length === 0) {
-      el.innerHTML = '<div class="empty">No Fab Shop log entries in the last 5 days.</div>';
+      el.innerHTML = '<div class="empty">No Fab Shop log entries in the last 7 days.</div>';
       return;
     }
 

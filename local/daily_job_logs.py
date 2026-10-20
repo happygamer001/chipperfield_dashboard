@@ -3,8 +3,10 @@ Daily Job Logs pipeline  (Chipperfield Ag)
 
 THIS SCRIPT IS THE ONLY THING THAT WRITES DAILY JOB LOGS TO DROPBOX.
     It runs on the office PC (Windows Task Scheduler, see local/README.md). The Chipperfield
-    Dashboard only READS the logs: the PDF (full log) and the .txt next to it (short summary
-    the dashboard shows Calvin).
+    Dashboard only READS the logs:
+      Daily Job Logs/<year>/            PDF (full log) + photos   - what Jacque and billing use
+      Dashboard/Daily Log Summaries/<year>/   .txt (short summary)  - what Calvin's dashboard shows
+    The summaries are kept out of the job log folders on purpose.
 
 HOW TO RUN
     python daily_job_logs.py                     Daily run: log emails from the last DAILY_WINDOW_DAYS days
@@ -13,6 +15,8 @@ HOW TO RUN
                                                  overwriting existing PDFs/.txt files with the full log. Old copies
                                                  saved under a different name ("261001 | Craig.pdf") are moved to
                                                  Original Unformatted Files. Photos are not touched.
+    python daily_job_logs.py move-summaries      ONE-TIME: moves the old summary .txt files out of the Daily Job Logs
+                                                 folders into Dashboard/Daily Log Summaries. Changes no PDFs.
     python daily_job_logs.py preview 10          Look at the last 10 log emails. Uploads NOTHING.
                                                  Saves the PDFs and a title list into the local "preview_output" folder.
     python daily_job_logs.py backfill 2026       List what the 2026 folder WOULD be renamed to. Renames NOTHING.
@@ -95,6 +99,10 @@ IMAP_SERVER = "imap.gmail.com"
 DROPBOX_BASE_FOLDER = "/Chipperfield Ag/Chipperfield/Daily Job Logs"
 ARCHIVE_FOLDER_PATH = "/Chipperfield Ag/Chipperfield/Daily Job Logs/Original Unformatted Files"
 REVIEW_FOLDER_PATH = "/Chipperfield Ag/Chipperfield/Daily Job Logs/_Needs Review"
+
+# Short summaries for Calvin's dashboard live here (same file name as the PDF, .txt),
+# NOT next to the PDFs, so the job log folders hold only PDFs and photos.
+SUMMARY_FOLDER_PATH = "/Chipperfield Ag/Chipperfield/Dashboard/Daily Log Summaries"
 
 # Which emails count as logs: the subject must contain the word "log" (Daily Job Log,
 # Daily Management Log, the Fab Shop daily log...). Service requests, job applications
@@ -836,7 +844,7 @@ def _meaningful(text):
 
 def build_dashboard_summary(clean_text):
     """
-    The short text the dashboard shows Calvin (saved as the .txt next to the PDF).
+    The short text the dashboard shows Calvin (saved as a .txt in Dashboard/Daily Log Summaries).
     The PDF itself always holds the complete log - this is only the at-a-glance view.
     """
     fields = parse_typeform_fields(clean_text)
@@ -889,6 +897,34 @@ def build_dashboard_summary(clean_text):
     return clean_text
 
 
+def get_summary_folder(log_date_yymmdd):
+    """Dashboard/Daily Log Summaries/<year> (or the folder itself for No_Date logs)."""
+    if log_date_yymmdd and len(log_date_yymmdd) == 6 and log_date_yymmdd.isdigit():
+        return f"{SUMMARY_FOLDER_PATH}/20{log_date_yymmdd[:2]}"
+    return SUMMARY_FOLDER_PATH
+
+
+def ensure_folder(path):
+    try:
+        dbx.files_create_folder_v2(path)
+    except dropbox.exceptions.ApiError:
+        pass  # already exists
+
+
+def rename_summary(old_pdf_name, new_pdf_name):
+    """Keeps a log's dashboard summary matched to its PDF after the PDF is renamed."""
+    old_date = split_log_filename(old_pdf_name)[0]
+    new_date = split_log_filename(new_pdf_name)[0]
+    src = f"{get_summary_folder(old_date)}/{old_pdf_name[:-4]}.txt"
+    dst = f"{get_summary_folder(new_date)}/{new_pdf_name[:-4]}.txt"
+    if src == dst:
+        return
+    try:
+        dbx.files_move_v2(src, dst, autorename=False)
+    except dropbox.exceptions.ApiError:
+        pass  # no summary for this log (older logs) - the dashboard falls back to the PDF text
+
+
 def archive_old_copy(folder, old_pdf_name, existing_files):
     """Moves an old copy (and its .txt) into Original Unformatted Files. Returns True if moved."""
     moved = False
@@ -929,8 +965,7 @@ def run_gmail_djl_uploader(days=None, rebuild=False):
                 existing_files.add(pdf_filename)
                 try:
                     summary = build_dashboard_summary(meta["clean_text"])
-                    safe_dropbox_upload(summary.encode("utf-8"), f"{target_folder_path}/{txt_filename}")
-                    existing_files.add(txt_filename)
+                    safe_dropbox_upload(summary.encode("utf-8"), f"{get_summary_folder(meta['date'])}/{txt_filename}")
                 except Exception as err:
                     add_review("Gmail", txt_filename, "DASHBOARD SUMMARY NOT SAVED", str(err))
                 counts["new" if is_new else "rebuilt"] += 1
@@ -1409,6 +1444,45 @@ def run_other_names_preview(years=None):
     save_rename_list(rows, "other_names.csv")
 
 
+def run_move_summaries():
+    """One-time: moves summary .txt files out of the Daily Job Logs folders into the summary folder."""
+    print(f"\nMOVING SUMMARIES out of Daily Job Logs into {SUMMARY_FOLDER_PATH}")
+    folders = [DROPBOX_BASE_FOLDER]
+    res = dbx.files_list_folder(DROPBOX_BASE_FOLDER)
+    entries = list(res.entries)
+    while res.has_more:
+        res = dbx.files_list_folder_continue(res.cursor)
+        entries.extend(res.entries)
+    folders += [e.path_display for e in entries
+                if isinstance(e, dropbox.files.FolderMetadata) and re.fullmatch(r'20\d{2}', e.name)]
+
+    moved = replaced = failed = 0
+    for folder in folders:
+        txts = [e for e in list_folder_files(folder) if e.name.lower().endswith(".txt")]
+        if not txts:
+            continue
+        year = folder.rsplit("/", 1)[-1]
+        dest_folder = f"{SUMMARY_FOLDER_PATH}/{year}" if re.fullmatch(r'20\d{2}', year) else SUMMARY_FOLDER_PATH
+        ensure_folder(dest_folder)
+        print(f"  {folder.rsplit('/', 1)[-1]}: {len(txts)} summary file(s)")
+        for e in txts:
+            src, dst = f"{folder}/{e.name}", f"{dest_folder}/{e.name}"
+            try:
+                dbx.files_move_v2(src, dst, autorename=False)
+                moved += 1
+            except dropbox.exceptions.ApiError:
+                # A newer summary with this name is already in the summary folder (written by a
+                # recent run) - keep that one and set the old copy aside instead of overwriting.
+                try:
+                    ensure_folder(f"{SUMMARY_FOLDER_PATH}/_replaced")
+                    dbx.files_move_v2(src, f"{SUMMARY_FOLDER_PATH}/_replaced/{e.name}", autorename=True)
+                    replaced += 1
+                except Exception as err:
+                    failed += 1
+                    add_review("Move summaries", e.name, "SUMMARY NOT MOVED", str(err))
+    print(f"\n{moved} moved, {replaced} older duplicate(s) set aside in _replaced, {failed} failed.")
+
+
 def run_backfill_apply(csv_path):
     if not os.path.isabs(csv_path):
         csv_path = os.path.join(SCRIPT_DIR, csv_path)
@@ -1427,6 +1501,8 @@ def run_backfill_apply(csv_path):
         else:
             try:
                 dbx.files_move_v2(f"{row['folder']}/{row['current_name']}", f"{row['folder']}/{new_name}", autorename=False)
+                if new_name.lower().endswith(".pdf"):
+                    rename_summary(row["current_name"], new_name)
                 row["result"] = "RENAMED"
                 done += 1
                 print(f"🔄 '{row['current_name']}' ➔ '{new_name}'")
@@ -1467,6 +1543,12 @@ def main():
         years = [a for a in args[1:] if re.fullmatch(r'20\d{2}', a)] or None
         connect_dropbox()
         run_other_names_preview(years)
+        return
+
+    if command == "move-summaries":
+        connect_dropbox()
+        run_move_summaries()
+        save_review_list()
         return
 
     if command == "apply":
