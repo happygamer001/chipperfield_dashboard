@@ -267,12 +267,26 @@ def _parse_dropbox_filename(filename):
     }
 
 
-def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
+MAX_RANGE_DAYS = 93  # longest date range one request may ask for (about 3 months)
+
+
+def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT, start=None, end=None):
+    """Logs from the last `days` days, or - when start/end (datetime.date) are
+    given - from start through end inclusive. Calvin's date filter uses the
+    latter. A range longer than MAX_RANGE_DAYS is cut to the last MAX_RANGE_DAYS."""
     dbx = get_dropbox_client()
 
     today = datetime.date.today()
-    window_start = today - datetime.timedelta(days=days - 1)
-    years_to_check = sorted({window_start.year, today.year})
+    if start or end:
+        end_date = min(end or today, today)
+        window_start = start or (end_date - datetime.timedelta(days=days - 1))
+        if window_start > end_date:
+            window_start, end_date = end_date, window_start
+        window_start = max(window_start, end_date - datetime.timedelta(days=MAX_RANGE_DAYS - 1))
+    else:
+        end_date = today
+        window_start = today - datetime.timedelta(days=days - 1)
+    years_to_check = list(range(window_start.year, end_date.year + 1))
 
     entries_by_key = {}
     photo_files = []  # collected in a second pass, once all reports are known
@@ -294,7 +308,7 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
                 continue
 
             log_date = _yymmdd_to_date(parsed["date"])
-            if not log_date or log_date < window_start or log_date > today:
+            if not log_date or log_date < window_start or log_date > end_date:
                 continue
 
             if parsed["is_image"]:
@@ -437,6 +451,7 @@ LOG_TEXT_CACHE_PATH = os.environ.get(
     "LOG_TEXT_CACHE_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/log_text_cache.json"
 )
 MAX_NEW_EXTRACTIONS = int(os.environ.get("MAX_NEW_EXTRACTIONS", "12"))
+MAX_SUMMARY_READS = int(os.environ.get("MAX_SUMMARY_READS", "250"))
 EXTRACTION_BUDGET_SECONDS = 20
 MAX_CACHE_ENTRIES = 3000
 
@@ -514,7 +529,12 @@ def _attach_summaries(dbx, results):
 
     changed = False
     ex = ThreadPoolExecutor(max_workers=8)
-    futures = {ex.submit(_extract_log_text, dbx, r): r for r in missing[:MAX_NEW_EXTRACTIONS]}
+    # Reading a small summary .txt is cheap, so up to MAX_SUMMARY_READS of those
+    # per load (enough for a long date range). Pulling text out of a PDF is
+    # slow, so those stay capped at MAX_NEW_EXTRACTIONS; the rest fill in later.
+    from_txt = [r for r in missing if r.get("dropbox_txt_path")][:MAX_SUMMARY_READS]
+    from_pdf = [r for r in missing if not r.get("dropbox_txt_path")][:MAX_NEW_EXTRACTIONS]
+    futures = {ex.submit(_extract_log_text, dbx, r): r for r in from_txt + from_pdf}
     deadline = time.time() + EXTRACTION_BUDGET_SECONDS
     try:
         for fut in as_completed(futures, timeout=max(1, deadline - time.time())):
