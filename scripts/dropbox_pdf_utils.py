@@ -167,9 +167,11 @@ def upload_pdf_and_photos(dbx, log_date_yymmdd, log_name, job_wo, pdf_text_conte
         summary["pdf_path"] = dest_pdf_path
         existing_files.add(pdf_filename)
 
-        # Sidecar text file: the dashboard summary (not the full log)
+        # Dashboard summary (not the full log) - in the summary folder, not next to the PDF
         try:
-            dest_txt_path = f"{target_folder_path}/{txt_filename}"
+            summary_year = target_folder_path.rsplit("/", 1)[-1]
+            summary_dir = f"{SUMMARY_FOLDER}/{summary_year}" if summary_year.isdigit() else SUMMARY_FOLDER
+            dest_txt_path = f"{summary_dir}/{txt_filename}"
             dbx.files_upload((pdf_text_content or full_text).encode("utf-8"), dest_txt_path, mode=dropbox.files.WriteMode.overwrite)
             existing_files.add(txt_filename)
         except Exception:
@@ -191,7 +193,14 @@ def upload_pdf_and_photos(dbx, log_date_yymmdd, log_name, job_wo, pdf_text_conte
 # RECENT LOGS LOOKUP (for the admin dashboard's "last N days" view)
 # ==========================================
 
-DAYS_TO_SHOW_DEFAULT = 5
+DAYS_TO_SHOW_DEFAULT = 7
+
+# Short summaries the dashboard shows (written by the office PC script, same file
+# name as the PDF with .txt). Kept out of the Daily Job Logs folders on purpose -
+# those hold only the full PDFs and photos.
+SUMMARY_FOLDER = os.environ.get(
+    "DJL_SUMMARY_FOLDER", "/Chipperfield Ag/Chipperfield/Dashboard/Daily Log Summaries"
+)
 
 # Filenames look like "YYMMDD | Name | JobOrWO.ext" for reports, and
 # "YYMMDD | JobOrWO | Name | ImageN.ext" for photos (job/WO comes first
@@ -258,12 +267,26 @@ def _parse_dropbox_filename(filename):
     }
 
 
-def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
+MAX_RANGE_DAYS = 93  # longest date range one request may ask for (about 3 months)
+
+
+def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT, start=None, end=None):
+    """Logs from the last `days` days, or - when start/end (datetime.date) are
+    given - from start through end inclusive. Calvin's date filter uses the
+    latter. A range longer than MAX_RANGE_DAYS is cut to the last MAX_RANGE_DAYS."""
     dbx = get_dropbox_client()
 
     today = datetime.date.today()
-    window_start = today - datetime.timedelta(days=days - 1)
-    years_to_check = sorted({window_start.year, today.year})
+    if start or end:
+        end_date = min(end or today, today)
+        window_start = start or (end_date - datetime.timedelta(days=days - 1))
+        if window_start > end_date:
+            window_start, end_date = end_date, window_start
+        window_start = max(window_start, end_date - datetime.timedelta(days=MAX_RANGE_DAYS - 1))
+    else:
+        end_date = today
+        window_start = today - datetime.timedelta(days=days - 1)
+    years_to_check = list(range(window_start.year, end_date.year + 1))
 
     entries_by_key = {}
     photo_files = []  # collected in a second pass, once all reports are known
@@ -285,7 +308,7 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
                 continue
 
             log_date = _yymmdd_to_date(parsed["date"])
-            if not log_date or log_date < window_start or log_date > today:
+            if not log_date or log_date < window_start or log_date > end_date:
                 continue
 
             if parsed["is_image"]:
@@ -379,6 +402,28 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT):
         entries_by_key[matched_key]["photo_count"] += 1
         entries_by_key[matched_key]["photo_paths"].append(entry.path_display)
 
+    # Summaries: Dashboard/Daily Log Summaries/<year>. Matched to a log by the
+    # same date / name / job key as its PDF; preferred over an old .txt that
+    # may still sit next to the PDF. A summary with no matching PDF is ignored.
+    for year in years_to_check:
+        try:
+            res = dbx.files_list_folder(f"{SUMMARY_FOLDER}/{year}")
+            summary_entries = list(res.entries)
+            while res.has_more:
+                res = dbx.files_list_folder_continue(res.cursor)
+                summary_entries.extend(res.entries)
+        except Exception:
+            continue
+        for entry in summary_entries:
+            parsed = _parse_dropbox_filename(entry.name)
+            if not parsed or parsed["is_image"] or parsed["ext"] != "txt":
+                continue
+            segs = parsed["segments"]
+            key = (parsed["date"], segs[0],
+                   djl_titles.normalize_identifier(segs[1] if len(segs) > 1 else ""))
+            if key in entries_by_key:
+                entries_by_key[key]["dropbox_txt_path"] = entry.path_display
+
     results = list(entries_by_key.values())
     results.sort(key=lambda r: r["date"], reverse=True)
 
@@ -406,6 +451,7 @@ LOG_TEXT_CACHE_PATH = os.environ.get(
     "LOG_TEXT_CACHE_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/log_text_cache.json"
 )
 MAX_NEW_EXTRACTIONS = int(os.environ.get("MAX_NEW_EXTRACTIONS", "12"))
+MAX_SUMMARY_READS = int(os.environ.get("MAX_SUMMARY_READS", "250"))
 EXTRACTION_BUDGET_SECONDS = 20
 MAX_CACHE_ENTRIES = 3000
 
@@ -483,7 +529,12 @@ def _attach_summaries(dbx, results):
 
     changed = False
     ex = ThreadPoolExecutor(max_workers=8)
-    futures = {ex.submit(_extract_log_text, dbx, r): r for r in missing[:MAX_NEW_EXTRACTIONS]}
+    # Reading a small summary .txt is cheap, so up to MAX_SUMMARY_READS of those
+    # per load (enough for a long date range). Pulling text out of a PDF is
+    # slow, so those stay capped at MAX_NEW_EXTRACTIONS; the rest fill in later.
+    from_txt = [r for r in missing if r.get("dropbox_txt_path")][:MAX_SUMMARY_READS]
+    from_pdf = [r for r in missing if not r.get("dropbox_txt_path")][:MAX_NEW_EXTRACTIONS]
+    futures = {ex.submit(_extract_log_text, dbx, r): r for r in from_txt + from_pdf}
     deadline = time.time() + EXTRACTION_BUDGET_SECONDS
     try:
         for fut in as_completed(futures, timeout=max(1, deadline - time.time())):

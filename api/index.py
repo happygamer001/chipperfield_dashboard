@@ -244,7 +244,15 @@ def _notes_for_log(all_notes, log):
 def recent_logs():
     try:
         days = int(request.args.get("days", DAYS_TO_SHOW_DEFAULT))
-        logs = get_recent_daily_logs(days=days)
+        # Optional date filter (Calvin's dashboard): ?start=YYYY-MM-DD&end=YYYY-MM-DD
+        def _iso(name):
+            v = (request.args.get(name) or "").strip()
+            try:
+                return datetime.date.fromisoformat(v) if v else None
+            except ValueError:
+                raise ValueError(f"'{name}' must be a date like 2026-10-01")
+        start, end = _iso("start"), _iso("end")
+        logs = get_recent_daily_logs(days=days, start=start, end=end)
 
         dbx = get_dropbox_client()
         all_notes = _read_json_from_dropbox(dbx, DAILY_LOG_NOTES_PATH, {})

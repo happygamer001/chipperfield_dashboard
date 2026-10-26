@@ -1296,7 +1296,7 @@ function findSource(id) {
 async function loadDailyLogsFromDropbox() {
   const source = findSource("dropbox-dailylog");
   try {
-    const res = await fetch("/api/recent-logs?days=5");
+    const res = await fetch("/api/recent-logs?days=7");
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || ("API returned " + res.status));
 

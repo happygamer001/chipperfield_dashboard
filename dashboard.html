@@ -90,6 +90,11 @@
   .daily-report-grid .summary { font-size: 13px; margin-top: 8px; white-space: pre-line; }
   @media (max-width: 640px) { .daily-report-grid { grid-template-columns: 1fr; } }
   .daily-report-subheading { font-size: 13px; font-weight: 600; color: var(--ink-soft); margin: 18px 0 8px; }
+  .log-date-filter { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 12px 14px; margin: 0 0 6px; }
+  .log-date-filter label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+  .log-date-filter input[type=date] { font-size: 14px; font-family: inherit; min-height: 38px; padding: 0 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--page); color: var(--ink); color-scheme: light dark; }
+  .log-date-filter .fw-chip.primary { background: var(--green); border-color: var(--green-dark); color: #1c1f1a; font-weight: 600; }
+  .log-date-showing { font-size: 12px; color: var(--ink-soft); margin: 0 0 4px; }
   #company-picker .item:hover { background: var(--page); }
   @media (max-width: 640px) {
     #company-picker main > div[style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
@@ -252,6 +257,13 @@
     <p class="logout-link back-link" style="margin:0 0 16px;">← Back to companies</p>
     <p class="section-heading" style="margin-top:0;">Daily reports</p>
     <p class="section-sub">Management log and job logs from the crew, most recent first.</p>
+    <div class="log-date-filter" id="log-date-filter">
+      <label>From <input type="date" id="log-date-from"></label>
+      <label>To <input type="date" id="log-date-to"></label>
+      <button class="fw-chip primary" id="log-date-apply">Show</button>
+      <button class="fw-chip" id="log-date-reset">Last 7 days</button>
+    </div>
+    <p class="log-date-showing" id="log-date-showing" aria-live="polite">Showing the last 7 days</p>
     <p class="daily-report-subheading">Crew job logs</p>
     <div id="crew-logs-display" class="daily-report-grid"></div>
 
@@ -737,7 +749,64 @@ document.getElementById("vendor-search-input").addEventListener("keydown", (e) =
   if (e.key === "Enter") runVendorSearch();
 });
 
+// Date filter for the Chipperfield daily reports. Empty = the last 7 days.
+const logDateFilter = { start: "", end: "" };
+
+function fmtLogDate(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function logDateRangeLabel() {
+  const { start, end } = logDateFilter;
+  if (!start && !end) return "the last 7 days";
+  if (start && end && start === end) return fmtLogDate(start);
+  if (start && end) return `${fmtLogDate(start)} – ${fmtLogDate(end)}`;
+  return start ? `${fmtLogDate(start)} to today` : `the 7 days up to ${fmtLogDate(end)}`;
+}
+
+function inLogDateRange(iso) {
+  // For entries filtered here in the page (Kevin's Notion management logs).
+  const { start, end } = logDateFilter;
+  if (!start && !end) return true;
+  if (!/^\d{4}-\d{2}-\d{2}/.test(iso || "")) return false;
+  const d = iso.slice(0, 10);
+  return (!start || d >= start) && (!end || d <= end);
+}
+
+function applyLogDateFilter() {
+  let start = document.getElementById("log-date-from").value;
+  let end = document.getElementById("log-date-to").value;
+  if (start && end && start > end) [start, end] = [end, start];
+  if (start && !end) end = start;  // one date picked = just that day
+  if (end && !start) start = end;
+  if (start && end) {
+    const span = (new Date(end) - new Date(start)) / 86400000;
+    if (span > 92) {
+      document.getElementById("log-date-showing").textContent = "Pick a range of 3 months or less.";
+      return;
+    }
+  }
+  logDateFilter.start = start;
+  logDateFilter.end = end;
+  document.getElementById("log-date-from").value = start;
+  document.getElementById("log-date-to").value = end;
+  loadDailyReports();
+}
+
+document.getElementById("log-date-apply").addEventListener("click", applyLogDateFilter);
+document.getElementById("log-date-reset").addEventListener("click", () => {
+  logDateFilter.start = logDateFilter.end = "";
+  document.getElementById("log-date-from").value = "";
+  document.getElementById("log-date-to").value = "";
+  loadDailyReports();
+});
+["log-date-from", "log-date-to"].forEach(id =>
+  document.getElementById(id).addEventListener("keydown", e => { if (e.key === "Enter") applyLogDateFilter(); }));
+
 async function loadDailyReports() {
+  const showingEl = document.getElementById("log-date-showing");
+  showingEl.textContent = "Showing " + logDateRangeLabel();
   const crewEl = document.getElementById("crew-logs-display");
   const mgmtEl = document.getElementById("mgmt-logs-display");
   crewEl.innerHTML = '<div class="empty">Loading…</div>';
@@ -745,7 +814,9 @@ async function loadDailyReports() {
 
   try {
     const [logsRes, kevinRes] = await Promise.all([
-      fetch("/api/recent-logs?days=5"),
+      fetch("/api/recent-logs?" + (logDateFilter.start
+        ? `start=${logDateFilter.start}&end=${logDateFilter.end}`
+        : "days=7")),
       fetch("/api/notion/kevin-management-form")
     ]);
     const logsData = await logsRes.json();
@@ -773,7 +844,7 @@ async function loadDailyReports() {
 
     if (kevinRes.ok) {
       const kevinData = await kevinRes.json();
-      (kevinData.items || []).forEach(k => {
+      (kevinData.items || []).filter(k => inLogDateRange(k.date)).forEach(k => {
         mgmt.push({
           title: k.name,
           subtitle: k.date || "No date",
@@ -842,8 +913,10 @@ async function loadDailyReports() {
       });
     };
 
-    renderGroup(crewEl, crew, "No crew job logs in the last 5 days.");
-    renderGroup(mgmtEl, mgmt, "No management logs in the last 5 days.");
+    const when = logDateFilter.start ? "for " + logDateRangeLabel() : "in the last 7 days";
+    renderGroup(crewEl, crew, `No crew job logs ${when}.`);
+    renderGroup(mgmtEl, mgmt, `No management logs ${when}.`);
+    showingEl.textContent = `Showing ${logDateRangeLabel()} · ${crew.length} job log(s), ${mgmt.length} management log(s)`;
   } catch (err) {
     crewEl.innerHTML = '<div class="empty">Could not load daily reports.</div>';
     mgmtEl.innerHTML = '';
@@ -974,14 +1047,14 @@ async function loadFabshopDailyLog() {
   el.innerHTML = '<div class="empty">Loading…</div>';
 
   try {
-    const res = await fetch("/api/recent-logs?days=5");
+    const res = await fetch("/api/recent-logs?days=7");
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || "Failed to load");
 
     const entries = (data.logs || []).filter(l => l.job_or_wo === "Fab Shop Daily Log");
 
     if (entries.length === 0) {
-      el.innerHTML = '<div class="empty">No Fab Shop log entries in the last 5 days.</div>';
+      el.innerHTML = '<div class="empty">No Fab Shop log entries in the last 7 days.</div>';
       return;
     }
 
