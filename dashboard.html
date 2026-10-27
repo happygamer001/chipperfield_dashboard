@@ -370,7 +370,7 @@
       <div class="fw-stats" id="gs-stats"></div>
       <div id="gs-body">
         <div class="gs-chart-card">
-          <p class="gs-chart-title">Material shipped out (tons)</p>
+          <p class="gs-chart-title">Material shipped out (Tons)</p>
           <p class="gs-chart-sub" id="gs-tons-sub"></p>
           <div class="gs-chartwrap"><canvas id="gs-tons-chart" role="img" aria-label="Tons shipped out over time, by material. The same numbers are in the By material table below."></canvas></div>
         </div>
@@ -725,7 +725,7 @@ document.querySelectorAll("#gs-range .fw-chip").forEach(btn =>
   btn.addEventListener("click", () => { gsRange = btn.getAttribute("data-range"); loadGravelSales(); }));
 
 const gsMoney = n => "$" + Math.round(n || 0).toLocaleString();
-const gsTons = n => (Math.round((n || 0) * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 }) + " t";
+const gsTons = n => (Math.round((n || 0) * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 }) + " T";
 const gsIso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const gsDate = iso => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d); };
 
@@ -869,7 +869,7 @@ function renderGravelSales() {
           footer: items => "Total: " + gsTons(items.reduce((s, i) => s + i.parsed.y, 0)),
         } },
       },
-      scales: { x: axisX, y: { stacked: true, beginAtZero: true, ticks: { color: soft, callback: v => Number(v).toLocaleString() + " t" }, grid: { color: grid } } },
+      scales: { x: axisX, y: { stacked: true, beginAtZero: true, ticks: { color: soft, callback: v => Number(v).toLocaleString() + " T" }, grid: { color: grid } } },
     },
   }));
 
