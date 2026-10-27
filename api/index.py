@@ -41,6 +41,7 @@ from dropbox_pdf_utils import (  # noqa: E402
     format_date_for_jacque,
     upload_pdf_and_photos,
     get_recent_daily_logs,
+    list_log_index,
     get_file_links,
     extract_text_from_pdf_bytes,
     DAYS_TO_SHOW_DEFAULT,
@@ -3052,5 +3053,236 @@ def fix_filenames_from_content():
             "skipped_no_date": skipped_no_date,
             "errors": errors,
         })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ==========================================
+# Chipperfield Calendar + PTO banner
+# ==========================================
+# PTO comes from two Notion databases: the current "PTO Request" form (Garage →
+# PTO Request Form, Apr 2026 on) and the older "PTO Requests" table (Sep 2025 –
+# Apr 2026). Every submitted request is shown (there's no approval field yet),
+# including all three types: PTO, Time Off, Sick Time.
+NOTION_PTO_DATASOURCE_ID = os.environ.get(
+    "NOTION_PTO_DATASOURCE_ID", "3484562c-e56f-808c-a09a-000b4a287b61"
+)
+NOTION_PTO_OLD_DATASOURCE_ID = os.environ.get(
+    "NOTION_PTO_OLD_DATASOURCE_ID", "2654562c-e56f-80b8-8e85-000b24528cea"
+)
+# 👷 Employee Files (Garage) — active employees' birthdays (month/day only is shown).
+NOTION_EMPLOYEE_FILES_DATASOURCE_ID = os.environ.get(
+    "NOTION_EMPLOYEE_FILES_DATASOURCE_ID", "47d8f070-51d2-43db-92e4-c016c71796ff"
+)
+LOG_HISTORY_FIRST_YEAR = 2024
+SITE_ID = re.compile(r'^(J|WO)\d{3,}$', re.IGNORECASE)
+
+
+def _today_central():
+    """'Today' for the banner is McCook's date, not the server's (UTC)."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.datetime.now(ZoneInfo("America/Chicago")).date()
+    except Exception:
+        return (datetime.datetime.utcnow() - datetime.timedelta(hours=6)).date()
+
+
+def _is_business_day(d):
+    return d.weekday() < 5 and not _holiday_name(d)
+
+
+def _business_day_before(d):
+    d = d - datetime.timedelta(days=1)
+    while not _is_business_day(d):
+        d -= datetime.timedelta(days=1)
+    return d
+
+
+def _multi_select(props, name):
+    p = props.get(name) or {}
+    if p.get("type") != "multi_select":
+        return []
+    return [o.get("name") for o in p.get("multi_select", []) if o.get("name")]
+
+
+def _date_range(props, name):
+    p = props.get(name) or {}
+    if p.get("type") != "date" or not p.get("date"):
+        return None, None
+    start = (p["date"].get("start") or "")[:10] or None
+    end = (p["date"].get("end") or "")[:10] or start
+    return start, end
+
+
+def _pto_requests():
+    """All PTO / Time Off / Sick Time requests from both databases, de-duplicated
+    (the old and new tables overlap for a few days in April 2026)."""
+    out, seen = [], set()
+
+    def add(name, types, start, end, hours, url):
+        if not name or not start:
+            return
+        key = (name.strip().lower(), start)
+        if key in seen:
+            return
+        seen.add(key)
+        if end and end < start:
+            start, end = end, start
+        out.append({"name": name.strip(), "types": types or ["Time off"], "start": start,
+                    "end": end or start, "hours": hours, "url": url})
+
+    for page in notion_utils.query_data_source_all(NOTION_PTO_DATASOURCE_ID):
+        props = page.get("properties", {})
+        start, end = _date_range(props, "Dates Requested")
+        add(notion_utils.prop_text(props, "Employee Name"), _multi_select(props, "What kind of request is this?"),
+            start, end, notion_utils.prop_text(props, "Number of hours requested"), page.get("url"))
+    try:
+        for page in notion_utils.query_data_source_all(NOTION_PTO_OLD_DATASOURCE_ID):
+            props = page.get("properties", {})
+            start, end = _date_range(props, "Date")
+            hours = notion_utils.prop_number(props, "Hours")
+            add(notion_utils.prop_text(props, "Employee Name"), _multi_select(props, "Type"),
+                start, end, (f"{hours:g}" if hours else None), page.get("url"))
+    except Exception:
+        pass  # older table is history only; the current form still loads
+    return out
+
+
+def _pto_label(types):
+    """'PTO', 'Sick Time', 'Time Off' — or 'PTO / Sick Time' when several were ticked."""
+    return " / ".join(types) if types else "Time off"
+
+
+@app.route("/api/pto-banner", methods=["GET"])
+@require_role("admin", "calvin")
+def pto_banner():
+    """Time off to flag above the daily job logs: shown on the business day
+    before it starts, and on its first day."""
+    try:
+        today = _today_central()
+        items = []
+        for r in _pto_requests():
+            start = datetime.date.fromisoformat(r["start"])
+            if today == start or today == _business_day_before(start):
+                items.append({**r, "label": _pto_label(r["types"]), "starts_today": today == start})
+        items.sort(key=lambda r: (r["start"], r["name"]))
+        return jsonify({"status": "ok", "today": today.isoformat(), "items": items})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def _job_names():
+    """Job/WO number → name, from Notion Current Jobs (and Work Orders when reachable)."""
+    names = {}
+    try:
+        for page in notion_utils.query_data_source_all(NOTION_CURRENT_JOBS_DATASOURCE_ID):
+            props = page.get("properties", {})
+            name = notion_utils.prop_text(props, "Name")
+            # "1420" -> "J1420" with the same 4-digit / 5-digit rule the log titles use
+            for tag in djl_titles.id_tags(notion_utils.prop_text(props, "Job #") or ""):
+                if name:
+                    names.setdefault(tag, name)
+    except Exception:
+        pass
+    try:
+        for page in notion_utils.query_data_source_all(NOTION_WORKORDERS_DATASOURCE_ID, max_pages=5):
+            props = page.get("properties", {})
+            wo = notion_utils.prop_number(props, "WO #")
+            if not wo:
+                continue
+            title = next((notion_utils.prop_text(props, k) for k, v in props.items() if v.get("type") == "title"), None)
+            label = title or notion_utils.prop_text(props, "Reporting Contact") or ""
+            if label:
+                names.setdefault(f"WO{int(wo)}", label)
+    except Exception:
+        pass  # Work Orders source is optional — numbers still show without names
+    return names
+
+
+@app.route("/api/calendar", methods=["GET"])
+@require_role("admin", "calvin")
+def chipperfield_calendar():
+    """
+    One month for the Chipperfield Calendar tab. ?month=YYYY-MM (default: this month).
+    Days run Monday before the 1st through Sunday after the last day, so the grid is full.
+    Per day: job/WO numbers logged that day (from the Daily Job Log file names) with
+    the crew, PTO, shop holiday, and birthdays (month/day of active employees).
+    Per job: first and last day logged and how many days it's been logged — all history.
+    """
+    try:
+        month = (request.args.get("month") or "").strip()
+        today = _today_central()
+        try:
+            first = datetime.date.fromisoformat(month + "-01") if month else today.replace(day=1)
+        except ValueError:
+            return jsonify({"status": "error", "message": "month must look like 2026-10"}), 400
+        nxt = (first.replace(day=28) + datetime.timedelta(days=4)).replace(day=1)
+        grid_start = first - datetime.timedelta(days=first.weekday())
+        last = nxt - datetime.timedelta(days=1)
+        grid_end = last + datetime.timedelta(days=6 - last.weekday())
+
+        days = {}
+        cur = grid_start
+        while cur <= grid_end:
+            days[cur.isoformat()] = {"sites": {}, "pto": [], "holiday": _holiday_name(cur), "birthdays": []}
+            cur += datetime.timedelta(days=1)
+
+        # Job sites, from every log file name (all years), so per-job totals are complete.
+        jobs = {}
+        for log in list_log_index(range(LOG_HISTORY_FIRST_YEAR, today.year + 1)):
+            for site in [s.strip() for s in (log["job_or_wo"] or "").split(",")]:
+                if not SITE_ID.match(site):
+                    continue
+                site = site.upper()
+                j = jobs.setdefault(site, {"first": log["date"], "last": log["date"], "dates": set()})
+                j["first"] = min(j["first"], log["date"])
+                j["last"] = max(j["last"], log["date"])
+                j["dates"].add(log["date"])
+                if log["date"] in days:
+                    entry = days[log["date"]]["sites"].setdefault(site, {"id": site, "crew": [], "logs": []})
+                    if log["name"] not in entry["crew"]:
+                        entry["crew"].append(log["name"])
+                    entry["logs"].append(log["path"])
+
+        # PTO (every day of each request that falls in the grid)
+        for r in _pto_requests():
+            s = max(datetime.date.fromisoformat(r["start"]), grid_start)
+            e = min(datetime.date.fromisoformat(r["end"]), grid_end)
+            while s <= e:
+                days[s.isoformat()]["pto"].append({"name": r["name"], "label": _pto_label(r["types"]),
+                                                   "hours": r["hours"], "start": r["start"], "end": r["end"]})
+                s += datetime.timedelta(days=1)
+
+        # Birthdays: month/day only, active employees
+        birthdays_ok = True
+        try:
+            pages = notion_utils.query_data_source_all(NOTION_EMPLOYEE_FILES_DATASOURCE_ID,
+                                                       filter_obj={"property": "Status", "select": {"equals": "Active"}})
+            for page in pages:
+                props = page.get("properties", {})
+                bday, _ = _date_range(props, "Birthday")
+                name = notion_utils.prop_text(props, "Employee Name")
+                if not bday or not name:
+                    continue
+                m, d = int(bday[5:7]), int(bday[8:10])
+                for year in {grid_start.year, grid_end.year}:
+                    try:
+                        when = datetime.date(year, m, d)
+                    except ValueError:  # Feb 29 in a non-leap year
+                        when = datetime.date(year, 2, 28)
+                    if when.isoformat() in days:
+                        days[when.isoformat()]["birthdays"].append(name.split()[0] if name.split() else name)
+        except Exception:
+            birthdays_ok = False
+
+        names = _job_names()
+        visible = {s for d in days.values() for s in d["sites"]}
+        job_info = {s: {"name": names.get(s), "first_logged": jobs[s]["first"], "last_logged": jobs[s]["last"],
+                        "days_logged": len(jobs[s]["dates"])} for s in visible}
+        out_days = [{"date": k, "sites": sorted(v["sites"].values(), key=lambda x: x["id"]),
+                     "pto": sorted(v["pto"], key=lambda x: x["name"]), "holiday": v["holiday"],
+                     "birthdays": sorted(v["birthdays"])} for k, v in sorted(days.items())]
+        return jsonify({"status": "ok", "month": first.strftime("%Y-%m"), "today": today.isoformat(),
+                        "days": out_days, "jobs": job_info, "birthdays_loaded": birthdays_ok})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

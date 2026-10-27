@@ -196,6 +196,56 @@
   .fw-foot-note { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
   .fw-range { display: flex; gap: 8px; margin-bottom: 12px; }
   .pb-range { flex-wrap: wrap; }
+  /* Chipperfield: PTO banner + Calendar */
+  #company-chipperfield { --site-bg:#e7f0fb; --site-text:#1f5aa6; --pto-bg:#fdf3d8; --pto-text:#8a6300; --evt-text:#5b3fb0; }
+  [data-theme="dark"] #company-chipperfield { --site-bg:#18304d; --site-text:#9cc4f5; --pto-bg:#3a3113; --pto-text:#ffce5c; --evt-text:#c8b8f5; }
+  main.cal-wide { max-width: 1100px; }
+  .pto-banner { display: flex; gap: 10px; align-items: center; background: var(--pto-bg); color: var(--pto-text); border: 1px solid var(--line); border-radius: 14px; padding: 11px 14px; margin: 0 0 8px; font-size: 14px; cursor: pointer; }
+  .pto-banner .ico { font-size: 17px; }
+  .pto-banner .go { margin-left: auto; font-size: 12px; text-decoration: underline; white-space: nowrap; }
+  .cal-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; }
+  .cal-top h2 { font-size: 18px; margin: 0 4px; min-width: 150px; text-align: center; }
+  .cal-nav { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; font-size: 13px; }
+  .cal-legend { margin-left: auto; display: flex; gap: 12px; font-size: 12px; color: var(--ink-soft); flex-wrap: wrap; }
+  .cal-legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
+  .cal-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) repeat(2, minmax(0, .55fr)); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: var(--surface); }
+  .cal-dow { font-size: 12px; font-weight: 600; color: var(--ink-soft); padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--page); }
+  .cal-day { min-height: 112px; padding: 7px 8px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; cursor: pointer; background: var(--surface); text-align: left; font: inherit; color: inherit; border-top: none; border-left: none; min-width: 0; }
+  .cal-day:nth-child(7n) { border-right: none; }
+  .cal-day.weekend { background: color-mix(in srgb, var(--page) 60%, var(--surface)); }
+  .cal-day.out .cal-num { opacity: .4; }
+  .cal-num { font-size: 12px; font-weight: 600; color: var(--ink-soft); align-self: flex-start; }
+  .cal-day.today .cal-num { background: var(--green); color: #1c1f1a; border-radius: 999px; padding: 1px 7px; }
+  .cal-day.sel { outline: 2px solid var(--green-dark); outline-offset: -2px; }
+  .cal-day:focus-visible { outline: 3px solid var(--green-dark); outline-offset: -3px; }
+  .cal-pill { font-size: 11.5px; line-height: 1.25; padding: 3px 6px; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .cal-pill.site { background: var(--site-bg); color: var(--site-text); }
+  .cal-pill.pto { background: var(--pto-bg); color: var(--pto-text); }
+  .cal-more { font-size: 11.5px; color: var(--green-dark); font-weight: 600; text-decoration: underline; margin-top: auto; }
+  .cal-dots { display: flex; gap: 3px; justify-content: center; align-items: center; min-height: 6px; }
+  .cal-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+  .cal-panel { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px; position: relative; }
+  .cal-panel.float { position: fixed; right: 24px; top: 240px; width: 380px; max-height: calc(100vh - 260px); overflow: auto; box-shadow: 0 12px 40px rgba(0,0,0,.2); z-index: 50; }
+  .cal-panel h3 { margin: 0 0 2px; font-size: 16px; padding-right: 28px; }
+  .cal-close { position: absolute; right: 12px; top: 10px; border: none; background: none; font-size: 18px; color: var(--ink-soft); cursor: pointer; }
+  .cal-sec { border-top: 1px solid var(--line); padding: 10px 0; }
+  .cal-sec:last-child { padding-bottom: 0; }
+  .cal-lbl { font-size: 11px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
+  .cal-line { font-size: 13px; margin: 6px 0; }
+  .cal-line .row { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .cal-line .sub { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+  .cal-line a { font-size: 12px; color: var(--green-dark); margin-left: auto; }
+  .cal-muted { color: var(--ink-soft); font-size: 13px; }
+  /* Phones: compact month with one job number + dots; day details listed below */
+  @media (max-width: 640px) {
+    .cal-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); border-radius: 14px; }
+    .cal-dow { text-align: center; padding: 6px 0; font-size: 11px; }
+    .cal-day { min-height: 64px; padding: 4px 2px; align-items: center; gap: 3px; }
+    .cal-day .cal-num { align-self: center; }
+    .cal-pill { font-size: 9.5px; padding: 2px 3px; }
+    .cal-legend { margin-left: 0; width: 100%; justify-content: center; }
+    .cal-top h2 { min-width: 0; flex: 1; }
+  }
   /* Gravel Sales: material colors (validated categorical palette; color follows the material) */
   #mccook-gravel-display { --mat-1:#2a78d6; --mat-2:#eb6834; --mat-3:#1baf7a; --mat-4:#eda100; --mat-5:#e87ba4; --mat-6:#008300; --mat-7:#6250d6; --mat-8:#e34948; --avg-line:#5b5f56; }
   [data-theme="dark"] #mccook-gravel-display { --mat-1:#3987e5; --mat-2:#d95926; --mat-3:#199e70; --mat-4:#c98500; --mat-5:#d55181; --mat-6:#008300; --mat-7:#9085e9; --mat-8:#e66767; --avg-line:#a3a89c; }
@@ -272,10 +322,34 @@
 
 <!-- Chipperfield Ag -->
 <div id="company-chipperfield" style="display:none;">
-  <main style="padding-bottom:0;">
+  <main style="padding-bottom:0;" id="chip-main">
     <p class="logout-link back-link" style="margin:0 0 16px;">← Back to companies</p>
+    <div class="lookup-tabs" id="chip-tabs">
+      <div class="lookup-tab active" data-tab="overview">Overview</div>
+      <div class="lookup-tab" data-tab="calendar">Calendar</div>
+    </div>
+
+    <div id="chip-calendar" style="display:none;">
+      <div class="cal-top">
+        <button class="cal-nav" id="cal-prev" aria-label="Previous month">◀</button>
+        <h2 id="cal-title">Calendar</h2>
+        <button class="cal-nav" id="cal-next" aria-label="Next month">▶</button>
+        <button class="fw-chip" id="cal-today">Today</button>
+        <div class="cal-legend">
+          <span style="--c:var(--site-text)">Job sites / WOs</span>
+          <span style="--c:var(--pto-text)">PTO / time off</span>
+          <span style="--c:var(--evt-text)">Holidays &amp; birthdays (tap a day)</span>
+        </div>
+      </div>
+      <p class="section-sub" id="cal-status" aria-live="polite">Loading…</p>
+      <div class="cal-grid" id="cal-grid" role="grid"></div>
+      <div id="cal-panel-slot" style="margin-top:12px;"></div>
+    </div>
+
+    <div id="chip-overview">
     <p class="section-heading" style="margin-top:0;">Daily reports</p>
     <p class="section-sub">Management log and job logs from the crew, most recent first.</p>
+    <div id="pto-banner"></div>
     <div class="log-date-filter" id="log-date-filter">
       <label>From <input type="date" id="log-date-from"></label>
       <label>To <input type="date" id="log-date-to"></label>
@@ -300,13 +374,14 @@
     <p class="section-heading">Sales Pipeline</p>
     <p class="section-sub">New, Initial Takeoff, and Proposal to Review leads.</p>
     <div id="sales-pipeline-display"></div>
+    </div>
   </main>
 
-  <main id="main" style="padding-top:0;">
+  <main id="main" style="padding-top:0;" class="chip-overview-extra">
     <div class="empty">Loading dashboard…</div>
   </main>
 
-  <main style="padding-top:0;">
+  <main style="padding-top:0;" class="chip-overview-extra">
     <p class="section-heading" style="margin-top:0;">Lookups</p>
     <p class="section-sub">Browse full historical data by category.</p>
     <div class="lookup-tabs" id="lookup-tabs">
@@ -567,6 +642,7 @@ function showApp() {
   loadFabshopDailyLog();
   loadFabshopLeads();
   loadDailyReports();
+  loadPtoBanner();
   loadCurrentJobs();
   loadPoByJob();
   loadSalesPipeline();
@@ -623,6 +699,173 @@ document.querySelectorAll('[data-company]').forEach(el => {
 document.querySelectorAll(".back-link").forEach(el => {
   el.addEventListener("click", () => showCompany(null));
 });
+
+// ---------- Chipperfield: Overview / Calendar tabs, PTO banner ----------
+function showChipTab(tab) {
+  const cal = tab === "calendar";
+  document.getElementById("chip-overview").style.display = cal ? "none" : "block";
+  document.querySelectorAll("#company-chipperfield .chip-overview-extra").forEach(el => el.style.display = cal ? "none" : "");
+  document.getElementById("chip-calendar").style.display = cal ? "block" : "none";
+  document.getElementById("chip-main").classList.toggle("cal-wide", cal);
+  document.querySelectorAll("#chip-tabs .lookup-tab").forEach(el =>
+    el.classList.toggle("active", el.getAttribute("data-tab") === tab));
+  if (!cal) calClosePanel();
+  if (cal && !calData) loadCalendar(calMonth);
+}
+document.querySelectorAll("#chip-tabs .lookup-tab").forEach(el =>
+  el.addEventListener("click", () => showChipTab(el.getAttribute("data-tab"))));
+
+function calFmt(iso, opts) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", opts || { weekday: "short", month: "short", day: "numeric" });
+}
+function calRange(start, end) {
+  return start === end ? calFmt(start) : `${calFmt(start)} – ${calFmt(end)}`;
+}
+
+async function loadPtoBanner() {
+  const el = document.getElementById("pto-banner");
+  try {
+    const res = await fetch("/api/pto-banner");
+    const data = await res.json();
+    if (!res.ok || data.status === "error") throw new Error(data.message || "Failed");
+    el.innerHTML = (data.items || []).map((r, i) => `
+      <div class="pto-banner" role="button" tabindex="0" data-pto="${i}">
+        <span class="ico" aria-hidden="true">📅</span>
+        <div><b>Upcoming ${fwEsc(r.label)}</b> ${fwEsc(r.name)} for ${fwEsc(calRange(r.start, r.end))}${r.starts_today ? " · starts today" : ""}</div>
+        <span class="go">View in calendar</span>
+      </div>`).join("");
+    el.querySelectorAll("[data-pto]").forEach(b => {
+      const r = data.items[+b.dataset.pto];
+      const go = () => { showChipTab("calendar"); calSelected = r.start; loadCalendar(r.start.slice(0, 7)); };
+      b.addEventListener("click", go);
+      b.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+    });
+  } catch (err) {
+    el.innerHTML = "";  // the banner is a convenience; never block the logs
+  }
+}
+
+// ---------- Chipperfield: Calendar ----------
+let calMonth = new Date().toISOString().slice(0, 7);
+let calData = null;
+let calSelected = null;
+const calPhone = () => window.matchMedia("(max-width: 640px)").matches;
+
+document.getElementById("cal-prev").addEventListener("click", () => loadCalendar(calShift(calMonth, -1)));
+document.getElementById("cal-next").addEventListener("click", () => loadCalendar(calShift(calMonth, 1)));
+document.getElementById("cal-today").addEventListener("click", () => {
+  calSelected = calData ? calData.today : null;
+  loadCalendar((calData && calData.today || new Date().toISOString()).slice(0, 7));
+});
+function calShift(month, n) {
+  const [y, m] = month.split("-").map(Number);
+  const d = new Date(y, m - 1 + n, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+async function loadCalendar(month) {
+  calMonth = month;
+  const statusEl = document.getElementById("cal-status");
+  document.getElementById("cal-title").textContent = calFmt(month + "-01", { month: "long", year: "numeric" });
+  statusEl.textContent = "Loading…";
+  try {
+    const res = await fetch("/api/calendar?month=" + month);
+    const data = await res.json();
+    if (!res.ok || data.status === "error") throw new Error(data.message || "Failed to load");
+    if (data.month !== calMonth) return;  // a newer month was asked for meanwhile
+    calData = data;
+    statusEl.textContent = data.birthdays_loaded ? "Tap a day for job names, PTO, holidays and birthdays."
+      : "Tap a day for details. (Birthdays couldn't be loaded — the Employee Files database may not be shared with the dashboard.)";
+    renderCalendar();
+  } catch (err) {
+    statusEl.textContent = "Could not load the calendar: " + err.message;
+    document.getElementById("cal-grid").innerHTML = "";
+  }
+}
+
+function renderCalendar() {
+  const data = calData;
+  if (!data) return;
+  const phone = calPhone();
+  const grid = document.getElementById("cal-grid");
+  const head = (phone ? ["M", "T", "W", "T", "F", "S", "S"] : ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+    .map(d => `<div class="cal-dow" role="columnheader">${d}</div>`).join("");
+  grid.innerHTML = head + data.days.map(day => {
+    const [y, m, d] = day.date.split("-").map(Number);
+    const dow = new Date(y, m - 1, d).getDay();
+    const cls = ["cal-day",
+      day.date.slice(0, 7) !== data.month ? "out" : "",
+      dow === 0 || dow === 6 ? "weekend" : "",
+      day.date === data.today ? "today" : "",
+      day.date === calSelected ? "sel" : ""].filter(Boolean).join(" ");
+    const sites = day.sites.map(s => s.id);
+    const extras = (day.holiday ? 1 : 0) + day.birthdays.length;
+    const label = `${calFmt(day.date, { weekday: "long", month: "long", day: "numeric" })}: ${sites.length} job site(s), ${day.pto.length} off${day.holiday ? ", " + day.holiday : ""}${day.birthdays.length ? ", " + day.birthdays.length + " birthday(s)" : ""}`;
+    let body;
+    if (phone) {
+      // One job number, then dots for everything else
+      const dots = [];
+      if (sites.length > 1) dots.push("var(--site-text)");
+      if (day.pto.length) dots.push("var(--pto-text)");
+      if (extras) dots.push("var(--evt-text)");
+      body = (sites[0] ? `<span class="cal-pill site">${fwEsc(sites[0])}</span>` : "")
+        + `<span class="cal-dots">${dots.map(c => `<i class="cal-dot" style="background:${c}"></i>`).join("")}</span>`;
+    } else {
+      const shown = sites.slice(0, 2), extraSites = sites.length - shown.length;
+      body = shown.map(s => `<span class="cal-pill site">${fwEsc(s)}</span>`).join("")
+        + day.pto.map(p => `<span class="cal-pill pto" title="${fwEsc(p.label)}">✈ ${fwEsc(p.name)}</span>`).join("")
+        + (extraSites || extras ? `<span class="cal-more">More${extraSites ? ` (+${extraSites})` : ""}</span>` : "");
+    }
+    return `<button type="button" class="${cls}" data-date="${day.date}" aria-label="${fwEsc(label)}"><span class="cal-num">${d}</span>${body}</button>`;
+  }).join("");
+  grid.querySelectorAll(".cal-day").forEach(btn => btn.addEventListener("click", () => {
+    calSelected = btn.dataset.date;
+    grid.querySelectorAll(".cal-day.sel").forEach(x => x.classList.remove("sel"));
+    btn.classList.add("sel");
+    calOpenPanel(calSelected);
+  }));
+  if (calSelected && data.days.some(d => d.date === calSelected)) calOpenPanel(calSelected); else calClosePanel();
+}
+
+function calOpenPanel(date) {
+  const day = calData.days.find(d => d.date === date);
+  if (!day) return;
+  const jobs = calData.jobs || {};
+  const sites = day.sites.map(s => {
+    const j = jobs[s.id] || {};
+    const span = j.first_logged ? `Logged on ${j.days_logged} day(s) · first ${calFmt(j.first_logged, { month: "short", day: "numeric", year: "numeric" })}, latest ${calFmt(j.last_logged, { month: "short", day: "numeric", year: "numeric" })}` : "";
+    return `<div class="cal-line"><div class="row"><span class="cal-pill site">${fwEsc(s.id)}</span><span>${fwEsc(j.name || "No job name on file")}</span>
+      ${s.logs[0] ? `<a href="#" data-open-path="${logFileAttr(s.logs[0])}" data-open-mode="view">View log</a>` : ""}</div>
+      <div class="sub">Crew: ${fwEsc(s.crew.join(", "))}</div>${span ? `<div class="sub">${fwEsc(span)}</div>` : ""}</div>`;
+  }).join("");
+  const pto = day.pto.map(p => `<div class="cal-line"><div class="row"><span class="cal-pill pto">✈ ${fwEsc(p.name)}</span><span>${fwEsc(p.label)}${p.hours ? " · " + fwEsc(p.hours) + " hrs" : ""}</span></div>
+      <div class="sub">${fwEsc(calRange(p.start, p.end))}</div></div>`).join("");
+  const html = `
+    <button class="cal-close" aria-label="Close">✕</button>
+    <h3>${fwEsc(calFmt(date, { weekday: "long", month: "long", day: "numeric", year: "numeric" }))}</h3>
+    <p class="item-sub" style="margin:0 0 8px;">Everything on file for this day</p>
+    <div class="cal-sec"><div class="cal-lbl">Job sites / work orders</div>${sites || '<div class="cal-muted">None logged</div>'}</div>
+    <div class="cal-sec"><div class="cal-lbl">PTO / time off</div>${pto || '<div class="cal-muted">No one out</div>'}</div>
+    <div class="cal-sec"><div class="cal-lbl">Holiday</div>${day.holiday ? `<div class="cal-line">${fwEsc(day.holiday)}</div>` : '<div class="cal-muted">None</div>'}</div>
+    <div class="cal-sec"><div class="cal-lbl">Birthdays</div>${day.birthdays.length ? day.birthdays.map(b => `<div class="cal-line">🎂 ${fwEsc(b)}</div>`).join("") : '<div class="cal-muted">None</div>'}</div>`;
+  calClosePanel();
+  const panel = document.createElement("div");
+  panel.id = "cal-panel";
+  panel.className = "cal-panel" + (calPhone() ? "" : " float");
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", "Day details");
+  panel.innerHTML = html;
+  panel.querySelector(".cal-close").addEventListener("click", () => {
+    calSelected = null;
+    document.querySelectorAll("#cal-grid .cal-day.sel").forEach(x => x.classList.remove("sel"));
+    calClosePanel();
+  });
+  document.getElementById("cal-panel-slot").appendChild(panel);
+}
+function calClosePanel() { const p = document.getElementById("cal-panel"); if (p) p.remove(); }
+document.addEventListener("keydown", e => { if (e.key === "Escape") calClosePanel(); });
+window.matchMedia("(max-width: 640px)").addEventListener("change", () => { if (calData) renderCalendar(); });
 
 // ---------- McCook Concrete: tabs + Plant Breakdowns ----------
 // Unit for the amounts entered on the MCI daily report. Set this once it's

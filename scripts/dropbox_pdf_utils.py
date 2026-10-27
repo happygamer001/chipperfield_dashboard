@@ -443,6 +443,41 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT, start=None, end=None):
     return results
 
 
+def list_log_index(years):
+    """
+    Every Daily Job Log PDF in the given year folders, read from the FILE NAMES
+    only (no downloads): [{"date": "YYYY-MM-DD", "name", "job_or_wo", "path"}].
+    Cheap enough to scan all years - used by the calendar to place job numbers
+    on the days they were logged and to count how long each job has run.
+    """
+    dbx = get_dropbox_client()
+    out = []
+    for year in years:
+        try:
+            res = dbx.files_list_folder(f"{DROPBOX_BASE_FOLDER}/{year}")
+            entries = list(res.entries)
+            while res.has_more:
+                res = dbx.files_list_folder_continue(res.cursor)
+                entries.extend(res.entries)
+        except Exception:
+            continue
+        for entry in entries:
+            parsed = _parse_dropbox_filename(entry.name)
+            if not parsed or parsed["is_image"] or parsed["ext"] != "pdf":
+                continue
+            log_date = _yymmdd_to_date(parsed["date"])
+            if not log_date:
+                continue
+            segs = parsed["segments"]
+            out.append({
+                "date": log_date.isoformat(),
+                "name": segs[0],
+                "job_or_wo": djl_titles.normalize_identifier(segs[1] if len(segs) > 1 else ""),
+                "path": entry.path_display,
+            })
+    return out
+
+
 # ==========================================
 # SAVED LOG TEXT (read each PDF once, remember it)
 # ==========================================
