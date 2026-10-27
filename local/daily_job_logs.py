@@ -15,6 +15,8 @@ HOW TO RUN
                                                  overwriting existing PDFs/.txt files with the full log. Old copies
                                                  saved under a different name ("261001 | Craig.pdf") are moved to
                                                  Original Unformatted Files. Photos are not touched.
+    python daily_job_logs.py photos 30           Re-reads the last 30 days of log emails and uploads only the photos
+                                                 missing from Dropbox. PDFs are not touched.
     python daily_job_logs.py move-summaries      ONE-TIME: moves the old summary .txt files out of the Daily Job Logs
                                                  folders into Dashboard/Daily Log Summaries. Changes no PDFs.
     python daily_job_logs.py preview 10          Look at the last 10 log emails. Uploads NOTHING.
@@ -60,6 +62,9 @@ import tempfile
 import io
 import datetime
 import unicodedata
+import base64
+import zlib
+from urllib.parse import urlparse, parse_qs, unquote
 
 import dropbox
 import requests
@@ -170,7 +175,7 @@ def load_settings():
                 key, value = line.split("=", 1)
                 values[key.strip()] = value.strip().strip('"').strip("'")
     for key in ("EMAIL_USER", "EMAIL_PASS", "DROPBOX_APP_KEY", "DROPBOX_APP_SECRET",
-                "DROPBOX_REFRESH_TOKEN", "DAILY_WINDOW_DAYS"):
+                "DROPBOX_REFRESH_TOKEN", "DAILY_WINDOW_DAYS", "TYPEFORM_API_TOKEN"):
         if os.environ.get(key):
             values[key] = os.environ[key]
     return values
@@ -752,20 +757,84 @@ def read_email(msg):
     return subject, body_text, body_html, attachments
 
 
+PHOTO_EXT = re.compile(r'\.(jpe?g|png|heic|heif|webp)$', re.IGNORECASE)
+
+
+def _unwrap_tracking_link(href):
+    """
+    Typeform's notification emails wrap every link in a tracking redirect
+    (email.followups.typeform.io/c/<compressed data>). The real address is the
+    "l" value inside that compressed data - for a photo, something like
+    https://api.typeform.com/responses/files/<id>/IMG_1159.jpeg
+    Returns the real address, or the href unchanged if it isn't a tracking link.
+    """
+    if "/c/" not in href or "followups.typeform.io" not in href:
+        return href
+    try:
+        payload = href.split("/c/", 1)[1].split("?", 1)[0]
+        raw = zlib.decompress(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))).decode("utf-8", "ignore")
+        real = parse_qs(raw).get("l", [""])[0]
+        return unquote(real) or href
+    except Exception:
+        return href
+
+
 def collect_photo_items(body_html, attachments):
-    photo_items = []
+    """
+    Photos for one log: image attachments, plus every photo link in the email.
+    A link counts as a photo when its real address (after unwrapping Typeform's
+    tracking redirect) or its link text ends in an image extension, or it points
+    at Typeform's file storage. Returns (kind, ext, content) with kind 'bytes'/'url'.
+    """
+    photo_items, seen = [], set()
     for att_name, att_bytes in attachments:
         ext = os.path.splitext(att_name)[1].lower()
-        if ext in ['.jpg', '.jpeg', '.png', '.heic', '.webp']:
+        if PHOTO_EXT.search(att_name or ""):
             photo_items.append(('bytes', ext, att_bytes))
 
     if body_html:
         soup = BeautifulSoup(body_html, 'html.parser')
         for a_tag in soup.find_all('a', href=True):
-            href = a_tag['href']
-            if re.search(r'\.(jpg|jpeg|png|heic|webp)', href, re.IGNORECASE) or ("typeform" in href.lower() and "files" in href.lower()):
-                photo_items.append(('url', '.jpeg', href))
+            real = _unwrap_tracking_link(a_tag['href'].strip())
+            text = a_tag.get_text(" ", strip=True)
+            path = urlparse(real).path
+            is_photo = (PHOTO_EXT.search(path) or PHOTO_EXT.search(text)
+                        or ("typeform" in real.lower() and "/files/" in real.lower()))
+            if not is_photo or real in seen:
+                continue
+            seen.add(real)
+            name = os.path.basename(path) if PHOTO_EXT.search(path) else text
+            ext = os.path.splitext(name)[1].lower() or ".jpeg"
+            photo_items.append(('url', ext, real))
     return photo_items
+
+
+def _looks_like_image(data):
+    return bool(data) and (data[:3] == b"\xff\xd8\xff" or data[:8] == b"\x89PNG\r\n\x1a\n"
+                           or data[4:12] in (b"ftypheic", b"ftypheix", b"ftypmif1", b"ftypmsf1", b"ftyphevc")
+                           or (data[:4] == b"RIFF" and data[8:12] == b"WEBP"))
+
+
+def download_photo(url):
+    """
+    Downloads one photo. Typeform's file storage normally needs an access token
+    (TYPEFORM_API_TOKEN in djl_settings.txt); without one, or if the link has
+    expired, this raises with the reason so it lands on the review list instead
+    of being skipped silently. Only real image data is accepted.
+    """
+    token = SETTINGS.get("TYPEFORM_API_TOKEN")
+    headers = {"User-Agent": "Chipperfield-DailyJobLogs/1.0"}
+    resp = requests.get(url, headers=headers, timeout=30, allow_redirects=True)
+    if resp.status_code in (401, 403) and token:
+        resp = requests.get(url, headers={**headers, "Authorization": f"Bearer {token}"}, timeout=30)
+    if resp.status_code in (401, 403):
+        raise RuntimeError(f"Typeform refused the download ({resp.status_code})"
+                           + ("" if token else " - add TYPEFORM_API_TOKEN to djl_settings.txt"))
+    if resp.status_code != 200:
+        raise RuntimeError(f"download failed ({resp.status_code})")
+    if not _looks_like_image(resp.content):
+        raise RuntimeError(f"not an image (got {resp.headers.get('Content-Type', 'unknown type')}) - link may have expired")
+    return resp.content
 
 
 def open_log_mailbox():
@@ -939,11 +1008,53 @@ def archive_old_copy(folder, old_pdf_name, existing_files):
     return moved
 
 
+def upload_photos(meta, name_part, job_part, folder, existing_files, photo_items, counts):
+    """Uploads a log's photos that aren't in Dropbox yet; every failure goes on the review list."""
+    for idx, (p_type, ext, content) in enumerate(photo_items, start=1):
+        ext = ".jpeg" if ext in (".jpg", ".jpeg", "") else ext
+        names = [build_filename(meta["date"], name_part, job_part, f"Image{idx}", e) for e in (ext, ".jpeg")]
+        if any(n in existing_files for n in names):
+            continue
+        photo_filename = names[0]
+        try:
+            img_bytes = content if p_type == 'bytes' else download_photo(content)
+            safe_dropbox_upload(img_bytes, f"{folder}/{photo_filename}")
+            existing_files.add(photo_filename)
+            counts["photos"] = counts.get("photos", 0) + 1
+            print(f"🖼️ Uploaded Site Photo: {photo_filename}")
+        except Exception as err:
+            counts["photo failures"] = counts.get("photo failures", 0) + 1
+            print(f"⚠️ Photo not saved: {photo_filename} ({err})")
+            add_review("Photos", photo_filename, "PHOTO NOT SAVED", str(err))
+
+
+def run_photo_backfill(days):
+    """Re-reads the last `days` days of log emails and uploads only the photos that are
+    missing from Dropbox. PDFs and summaries are not touched."""
+    print(f"\n==========================================")
+    print(f"PHOTO BACKFILL: last {days} days (PDFs untouched)")
+    print(f"==========================================")
+    counts = {"logs checked": 0, "photos": 0, "photo failures": 0}
+    for subject, body_text, body_html, attachments in fetch_log_emails(days=days):
+        try:
+            source_text = body_text if body_text.strip() else html_to_text(body_html)
+            meta = extract_log_metadata(source_text, subject)
+            name_part, job_part = title_parts_for(meta)
+            folder = get_year_subfolder(meta["date"])
+            counts["logs checked"] += 1
+            upload_photos(meta, name_part, job_part, folder, get_existing_dropbox_files(folder),
+                          collect_photo_items(body_html, attachments), counts)
+        except Exception as err:
+            print(f"❌ Could not process email: {subject} ({err})")
+            add_review("Photos", subject, "EMAIL FAILED TO PROCESS", str(err))
+    print("\nPhotos: " + ", ".join(f"{v} {k}" for k, v in counts.items()))
+
+
 def run_gmail_djl_uploader(days=None, rebuild=False):
     print(f"\n==========================================")
     print(f"STEP 1: INGESTING GMAIL LOGS & PHOTOS" + (f"  (REBUILD: last {days} days)" if rebuild else ""))
     print(f"==========================================")
-    counts = {"new": 0, "rebuilt": 0, "already there": 0, "archived": 0, "failed": 0}
+    counts = {"new": 0, "rebuilt": 0, "already there": 0, "archived": 0, "failed": 0, "photos": 0, "photo failures": 0}
 
     for subject, body_text, body_html, attachments in fetch_log_emails(days=days):
         try:
@@ -984,17 +1095,8 @@ def run_gmail_djl_uploader(days=None, rebuild=False):
                 counts["already there"] += 1
 
             # Site Photos Upload (ImageN labels unchanged; job part follows the PDF title). Never re-uploaded.
-            for idx, (p_type, ext, content) in enumerate(collect_photo_items(body_html, attachments), start=1):
-                photo_filename = build_filename(meta["date"], name_part, job_part, f"Image{idx}", ".jpeg")
-                if photo_filename not in existing_files:
-                    try:
-                        img_bytes = content if p_type == 'bytes' else requests.get(content, timeout=20).content
-                        if img_bytes:
-                            safe_dropbox_upload(img_bytes, f"{target_folder_path}/{photo_filename}")
-                            existing_files.add(photo_filename)
-                            print(f"🖼️ Uploaded Site Photo: {photo_filename}")
-                    except Exception as err:
-                        add_review("Gmail", photo_filename, "PHOTO FAILED TO UPLOAD", str(err))
+            upload_photos(meta, name_part, job_part, target_folder_path, existing_files,
+                          collect_photo_items(body_html, attachments), counts)
         except Exception as err:
             counts["failed"] += 1
             print(f"❌ Could not process email: {subject} ({err})")
@@ -1543,6 +1645,13 @@ def main():
         years = [a for a in args[1:] if re.fullmatch(r'20\d{2}', a)] or None
         connect_dropbox()
         run_other_names_preview(years)
+        return
+
+    if command == "photos":
+        days = int(args[1]) if len(args) > 1 and args[1].isdigit() else 30
+        connect_dropbox()
+        run_photo_backfill(days)
+        save_review_list()
         return
 
     if command == "move-summaries":

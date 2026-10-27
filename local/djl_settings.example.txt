@@ -10,5 +10,9 @@ DROPBOX_APP_KEY=
 DROPBOX_APP_SECRET=
 DROPBOX_REFRESH_TOKEN=
 
+# Typeform personal access token (Typeform > Account > Personal tokens, scope: responses:read).
+# Needed to download the site photos linked in the Typeform emails.
+TYPEFORM_API_TOKEN=
+
 # Optional: how many days back the daily run looks (default 7)
 # DAILY_WINDOW_DAYS=7
