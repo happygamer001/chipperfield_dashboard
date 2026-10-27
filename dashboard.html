@@ -196,6 +196,20 @@
   .fw-foot-note { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
   .fw-range { display: flex; gap: 8px; margin-bottom: 12px; }
   .pb-range { flex-wrap: wrap; }
+  /* Gravel Sales: material colors (validated categorical palette; color follows the material) */
+  #mccook-gravel-display { --mat-1:#2a78d6; --mat-2:#eb6834; --mat-3:#1baf7a; --mat-4:#eda100; --mat-5:#e87ba4; --mat-6:#008300; --mat-7:#6250d6; --mat-8:#e34948; --avg-line:#5b5f56; }
+  [data-theme="dark"] #mccook-gravel-display { --mat-1:#3987e5; --mat-2:#d95926; --mat-3:#199e70; --mat-4:#c98500; --mat-5:#d55181; --mat-6:#008300; --mat-7:#9085e9; --mat-8:#e66767; --avg-line:#a3a89c; }
+  .gs-chart-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin: 0 0 14px; }
+  .gs-chart-title { font-size: 14px; font-weight: 600; margin: 0 0 2px; }
+  .gs-chart-sub { font-size: 12px; color: var(--ink-soft); margin: 0 0 10px; }
+  .gs-chartwrap { position: relative; height: 240px; }
+  .gs-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .gs-table th { text-align: left; font-weight: 600; color: var(--ink-soft); font-size: 12px; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+  .gs-table td { padding: 7px 4px; border-bottom: 1px solid var(--line); }
+  .gs-table td.num, .gs-table th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .gs-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .gs-tables { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .gs-tables { grid-template-columns: 1fr; } }
   .pb-mats { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; margin: 10px 0 0; font-size: 14px; }
   .pb-mats .amt { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
   .pb-custom { font-size: 11px; color: var(--warn-text); margin-left: 6px; }
@@ -326,6 +340,7 @@
     <div class="lookup-tabs" id="mccook-tabs">
       <div class="lookup-tab active" data-tab="reports">Batch Reports &amp; Gravel</div>
       <div class="lookup-tab" data-tab="breakdowns">Plant Breakdowns</div>
+      <div class="lookup-tab" data-tab="gravel">Gravel Sales</div>
     </div>
 
     <div id="mccook-reports-display">
@@ -340,6 +355,36 @@
       <button id="customer-search-btn">Search</button>
     </div>
     <div id="customer-results"></div>
+    </div>
+
+    <div id="mccook-gravel-display" style="display:none;">
+      <p class="section-heading" style="margin-top:0;">Gravel Sales</p>
+      <p class="section-sub">Material shipped out of the gravel pit and what it sold for, from the gravel pit app.</p>
+      <div class="fw-range pb-range" id="gs-range">
+        <button class="fw-chip" data-range="30">30 days</button>
+        <button class="fw-chip active" data-range="90">90 days</button>
+        <button class="fw-chip" data-range="year">This year</button>
+        <button class="fw-chip" data-range="all">All time</button>
+      </div>
+      <p class="section-sub" id="gs-status" aria-live="polite">Loading…</p>
+      <div class="fw-stats" id="gs-stats"></div>
+      <div id="gs-body">
+        <div class="gs-chart-card">
+          <p class="gs-chart-title">Material shipped out (Tons)</p>
+          <p class="gs-chart-sub" id="gs-tons-sub"></p>
+          <div class="gs-chartwrap"><canvas id="gs-tons-chart" role="img" aria-label="Tons shipped out over time, by material. The same numbers are in the By material table below."></canvas></div>
+        </div>
+        <div class="gs-chart-card">
+          <p class="gs-chart-title">Sales ($, material only)</p>
+          <p class="gs-chart-sub" id="gs-sales-sub"></p>
+          <div class="gs-chartwrap"><canvas id="gs-sales-chart" role="img" aria-label="Sales in dollars over time, with the average for the period as a dashed line."></canvas></div>
+        </div>
+        <div class="gs-tables">
+          <div class="gs-chart-card"><p class="gs-chart-title">By material</p><div id="gs-materials"></div></div>
+          <div class="gs-chart-card"><p class="gs-chart-title">By customer</p><div id="gs-customers"></div></div>
+        </div>
+        <p class="fw-explain" id="gs-explain"></p>
+      </div>
     </div>
 
     <div id="mccook-breakdowns-display" style="display:none;">
@@ -589,9 +634,11 @@ let pbLoaded = false;
 function showMccookTab(tab) {
   document.getElementById("mccook-reports-display").style.display = tab === "reports" ? "block" : "none";
   document.getElementById("mccook-breakdowns-display").style.display = tab === "breakdowns" ? "block" : "none";
+  document.getElementById("mccook-gravel-display").style.display = tab === "gravel" ? "block" : "none";
   document.querySelectorAll("#mccook-tabs .lookup-tab").forEach(el =>
     el.classList.toggle("active", el.getAttribute("data-tab") === tab));
   if (tab === "breakdowns" && !pbLoaded) loadPlantBreakdowns();
+  if (tab === "gravel") { if (!gsData) loadGravelSales(); else renderGravelSales(); }
 }
 document.querySelectorAll("#mccook-tabs .lookup-tab").forEach(el =>
   el.addEventListener("click", () => showMccookTab(el.getAttribute("data-tab"))));
@@ -665,6 +712,214 @@ async function loadPlantBreakdowns() {
     eventsEl.innerHTML = '<div class="empty">Could not load plant breakdowns: ' + fwEsc(err.message) + '</div>';
   }
 }
+
+// ---------- McCook Concrete: Gravel Sales ----------
+// Each material keeps the same color everywhere (slot order below); a material
+// not listed takes the next free slot, and anything past 8 folds into "Other".
+const GS_MATERIAL_SLOTS = ["Road Gravel", "Concrete Gravel", "Sand", "Mud Rock", "WhiteRock/Limestone", "Rock", "Fly Ash", "Mix"];
+let gsRange = "90";
+let gsData = null;
+let gsCharts = [];
+
+document.querySelectorAll("#gs-range .fw-chip").forEach(btn =>
+  btn.addEventListener("click", () => { gsRange = btn.getAttribute("data-range"); loadGravelSales(); }));
+
+const gsMoney = n => "$" + Math.round(n || 0).toLocaleString();
+const gsTons = n => (Math.round((n || 0) * 10) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 }) + " T";
+const gsIso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const gsDate = iso => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d); };
+
+function gsRangeDates() {
+  const today = new Date();
+  if (gsRange === "all") return { start: "", end: gsIso(today), label: "all time" };
+  if (gsRange === "year") return { start: `${today.getFullYear()}-01-01`, end: gsIso(today), label: "this year" };
+  const from = new Date(today); from.setDate(from.getDate() - (parseInt(gsRange, 10) - 1));
+  return { start: gsIso(from), end: gsIso(today), label: `the last ${gsRange} days` };
+}
+
+function gsMaterialColor(name, order) {
+  const css = getComputedStyle(document.getElementById("mccook-gravel-display"));
+  let slot = GS_MATERIAL_SLOTS.indexOf(name);
+  if (slot < 0) slot = order.indexOf(name);  // unlisted material: next slot after the listed ones
+  return css.getPropertyValue(`--mat-${Math.min(slot, 7) + 1}`).trim();
+}
+
+async function loadGravelSales() {
+  document.querySelectorAll("#gs-range .fw-chip").forEach(b =>
+    b.classList.toggle("active", b.getAttribute("data-range") === gsRange));
+  const statusEl = document.getElementById("gs-status");
+  statusEl.textContent = "Loading…";
+  document.getElementById("gs-stats").innerHTML = "";
+  document.getElementById("gs-body").style.display = "none";
+  const { start, end } = gsRangeDates();
+  try {
+    const q = start ? `?start=${start}&end=${end}` : "";
+    const res = await fetch("/api/notion/gravel-summary" + q);
+    const data = await res.json();
+    if (!res.ok || data.status === "error") throw new Error(data.message || "Failed to load");
+    gsData = data;
+    renderGravelSales();
+  } catch (err) {
+    gsData = null;
+    statusEl.textContent = "Could not load gravel sales: " + err.message;
+  }
+}
+
+// Builds the x-axis: every weekday (plus any weekend day with a sale) for up to
+// ~3 months, otherwise one point per week (weeks start Monday).
+function gsBuckets(data) {
+  const { start, end, label } = gsRangeDates();
+  const byDay = Object.fromEntries(data.days.map(d => [d.date, d]));
+  const first = start || (data.days[0] && data.days[0].date) || end;
+  const span = (gsDate(end) - gsDate(first)) / 86400000;
+  const weekly = span > 92;
+  const buckets = [];
+  const index = {};
+  for (let d = gsDate(first); d <= gsDate(end); d.setDate(d.getDate() + 1)) {
+    const iso = gsIso(d);
+    const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+    let key, lbl;
+    if (weekly) {
+      const mon = new Date(d); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
+      key = gsIso(mon);
+      lbl = "Wk of " + mon.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    } else {
+      if (isWeekend && !byDay[iso]) continue;
+      key = iso;
+      lbl = d.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
+    }
+    if (!(key in index)) { index[key] = buckets.length; buckets.push({ key, label: lbl, tons: 0, sales: 0, loads: 0, materials: {} }); }
+    const day = byDay[iso];
+    if (day) {
+      const b = buckets[index[key]];
+      b.tons += day.tons; b.sales += day.sales; b.loads += day.loads;
+      Object.entries(day.materials).forEach(([m, t]) => { b.materials[m] = (b.materials[m] || 0) + t; });
+    }
+  }
+  return { buckets, weekly, label };
+}
+
+function renderGravelSales() {
+  const data = gsData;
+  if (!data) return;
+  const statusEl = document.getElementById("gs-status");
+  const t = data.totals;
+  const { buckets, weekly, label } = gsBuckets(data);
+  const unit = weekly ? "week" : "day";
+
+  if (!t.loads) {
+    statusEl.textContent = `No completed gravel sales for ${label}.` + (data.pending.count ? ` ${data.pending.count} ticket(s) are waiting for a weight slip.` : "");
+    document.getElementById("gs-stats").innerHTML = "";
+    document.getElementById("gs-body").style.display = "none";
+    return;
+  }
+  document.getElementById("gs-body").style.display = "block";
+  statusEl.textContent = `${t.loads} load(s) over ${t.selling_days} selling day(s) in ${label}.`;
+
+  const selling = buckets.filter(b => b.loads > 0);
+  const avgSales = selling.length ? selling.reduce((s, b) => s + b.sales, 0) / selling.length : 0;
+  const best = selling.reduce((a, b) => (b.sales > a.sales ? b : a), selling[0]);
+  const slow = selling.reduce((a, b) => (b.sales < a.sales ? b : a), selling[0]);
+  const zeroDays = buckets.filter(b => b.loads === 0).length;
+
+  document.getElementById("gs-stats").innerHTML = `
+    <div class="fw-box"><div class="fw-tile-lbl">Total sales</div><div class="fw-tile-val">${gsMoney(t.sales)}</div><div class="fw-tile-lbl">material only</div></div>
+    <div class="fw-box"><div class="fw-tile-lbl">Material shipped out</div><div class="fw-tile-val">${gsTons(t.tons)}</div><div class="fw-tile-lbl">${t.loads} load(s)</div></div>
+    <div class="fw-box"><div class="fw-tile-lbl">Average sales per selling ${unit}</div><div class="fw-tile-val">${gsMoney(avgSales)}</div><div class="fw-tile-lbl">${selling.length} selling ${unit}(s)${zeroDays ? ` · ${zeroDays} ${weekly ? "week" : "weekday"}(s) with none` : ""}</div></div>
+    <div class="fw-box"><div class="fw-tile-lbl">Best ${unit} · slowest ${unit}</div><div class="fw-tile-val">${gsMoney(best.sales)}</div><div class="fw-tile-lbl">${fwEsc(best.label)} · slowest ${fwEsc(slow.label)}, ${gsMoney(slow.sales)}</div></div>
+    <div class="fw-box"><div class="fw-tile-lbl">Picked up · driver dispatched</div><div class="fw-tile-val">${t.picked_up} · ${t.delivered}</div><div class="fw-tile-lbl">dispatched loads carry the $50 fee (not in sales)</div></div>
+    <div class="fw-box"><div class="fw-tile-lbl">Waiting on weight slip</div><div class="fw-tile-val">${data.pending.count}</div><div class="fw-tile-lbl">${data.pending.count ? `about ${gsTons(data.pending.est_tons)} · ${gsMoney(data.pending.est_sales)}, not in totals` : "none open"}</div></div>`;
+
+  // Materials in a stable order (by tons), colored by the material itself
+  const order = data.materials.map(m => m.name).sort((a, b) => {
+    const ia = GS_MATERIAL_SLOTS.indexOf(a), ib = GS_MATERIAL_SLOTS.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+  });
+  const surface = getComputedStyle(document.documentElement).getPropertyValue("--surface").trim();
+  const grid = getComputedStyle(document.documentElement).getPropertyValue("--line").trim();
+  const soft = getComputedStyle(document.documentElement).getPropertyValue("--ink-soft").trim();
+  const green = getComputedStyle(document.documentElement).getPropertyValue("--green-dark").trim();
+  const avgColor = getComputedStyle(document.getElementById("mccook-gravel-display")).getPropertyValue("--avg-line").trim();
+
+  gsCharts.forEach(c => c.destroy());
+  gsCharts = [];
+  const labels = buckets.map(b => b.label);
+  const axisX = { ticks: { color: soft, maxRotation: 0, autoSkip: true, maxTicksLimit: 7 }, grid: { display: false } };
+
+  gsCharts.push(new Chart(document.getElementById("gs-tons-chart"), {
+    type: "line",
+    data: {
+      labels,
+      datasets: order.map(m => {
+        const color = gsMaterialColor(m, order);
+        return {
+          label: m, data: buckets.map(b => Math.round((b.materials[m] || 0) * 100) / 100),
+          borderColor: surface, borderWidth: 2, backgroundColor: color, fill: true, stack: "tons",
+          pointRadius: 0, pointHoverRadius: 5, pointHoverBackgroundColor: color, pointHoverBorderColor: surface, cubicInterpolationMode: "monotone",
+        };
+      }),
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: order.length > 1, position: "bottom", labels: { color: soft, boxWidth: 10, boxHeight: 10, useBorderRadius: true, borderRadius: 3 } },
+        tooltip: { callbacks: {
+          label: c => ` ${c.dataset.label}: ${gsTons(c.parsed.y)}`,
+          footer: items => "Total: " + gsTons(items.reduce((s, i) => s + i.parsed.y, 0)),
+        } },
+      },
+      scales: { x: axisX, y: { stacked: true, beginAtZero: true, ticks: { color: soft, callback: v => Number(v).toLocaleString() + " T" }, grid: { color: grid } } },
+    },
+  }));
+
+  gsCharts.push(new Chart(document.getElementById("gs-sales-chart"), {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        { label: "Sales", data: buckets.map(b => Math.round(b.sales * 100) / 100),
+          borderColor: green, backgroundColor: green + "33", fill: true, borderWidth: 2,
+          pointRadius: buckets.length > 40 ? 0 : 3, pointHoverRadius: 5, pointBackgroundColor: green, pointBorderColor: surface, cubicInterpolationMode: "monotone" },
+        { label: `Average per selling ${unit}`, data: buckets.map(() => Math.round(avgSales)),
+          borderColor: avgColor, borderDash: [6, 4], borderWidth: 2, pointRadius: 0, pointHoverRadius: 0, fill: false },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: true, position: "bottom", labels: { color: soft, boxWidth: 10, boxHeight: 10 } },
+        tooltip: { callbacks: { label: c => ` ${c.dataset.label}: ${gsMoney(c.parsed.y)}`,
+          afterBody: items => { const b = buckets[items[0].dataIndex]; return b.loads ? `${b.loads} load(s), ${gsTons(b.tons)}` : "No sales"; } } },
+      },
+      scales: { x: axisX, y: { beginAtZero: true, ticks: { color: soft, callback: v => "$" + Number(v).toLocaleString() }, grid: { color: grid } } },
+    },
+  }));
+
+  document.getElementById("gs-tons-sub").textContent = weekly ? "Each point is one week, stacked by material." : "Each point is one weekday (weekends shown only when there was a sale), stacked by material.";
+  document.getElementById("gs-sales-sub").textContent = `Dashed line: average per selling ${unit}. Dips to $0 are ${weekly ? "weeks" : "weekdays"} with no completed sales.`;
+
+  const pct = n => t.tons ? Math.round(n / t.tons * 100) + "%" : "—";
+  document.getElementById("gs-materials").innerHTML = `
+    <table class="gs-table"><thead><tr><th>Material</th><th class="num">Tons</th><th class="num">Share</th><th class="num">Loads</th><th class="num">Sales</th></tr></thead><tbody>
+    ${data.materials.map(m => `<tr><td><span class="gs-swatch" style="background:${gsMaterialColor(m.name, order)}"></span>${fwEsc(m.name)}</td><td class="num">${gsTons(m.tons)}</td><td class="num">${pct(m.tons)}</td><td class="num">${m.loads}</td><td class="num">${gsMoney(m.sales)}</td></tr>`).join("")}
+    </tbody></table>`;
+  document.getElementById("gs-customers").innerHTML = `
+    <table class="gs-table"><thead><tr><th>Customer</th><th class="num">Tons</th><th class="num">Loads</th><th class="num">Sales</th></tr></thead><tbody>
+    ${data.customers.map(c => `<tr><td>${fwEsc(c.name)}</td><td class="num">${gsTons(c.tons)}</td><td class="num">${c.loads}</td><td class="num">${gsMoney(c.sales)}</td></tr>`).join("")}
+    </tbody></table>`;
+
+  document.getElementById("gs-explain").textContent =
+    "Sales are material only (tons × price), with no tax or delivery fee. Totals include completed tickets only; tickets still waiting on the customer's weight slip are counted separately. " +
+    (data.excluded_test ? `${data.excluded_test} test ticket(s) are left out. ` : "") +
+    "Customer names are shown as typed in the gravel pit app.";
+}
+
+// Recolor the gravel charts when the light/dark theme changes.
+new MutationObserver(() => {
+  if (gsData && document.getElementById("mccook-gravel-display").style.display !== "none") renderGravelSales();
+}).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
 async function loadBatchReports() {
   const displayEl = document.getElementById("batch-reports-display");
