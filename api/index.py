@@ -1209,6 +1209,114 @@ def notion_plant_breakdowns():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@app.route("/api/notion/gravel-summary", methods=["GET"])
+@require_role("admin", "calvin")
+def notion_gravel_summary():
+    """
+    Gravel pit sales for McCook Concrete's "Gravel Sales" tab, from the 💰 Sales
+    database the gravel pit app writes to. ?start=YYYY-MM-DD&end=YYYY-MM-DD.
+
+    - A sale's total is MATERIAL ONLY: "Total Amount" (no tax, no delivery fee),
+      or tons x price per ton when the amount is blank.
+    - Complete sales make up the totals and graphs. Incomplete ones are waiting
+      on the customer's weight slip, so their tons/amount are estimates; they are
+      counted separately.
+    - Delivery: "Delivery:" in the notes = a driver was dispatched; "Customer
+      Pick Up" = the customer hauled it.
+    - Rows whose customer is "Test" are left out.
+    """
+    try:
+        def _iso(name):
+            v = (request.args.get(name) or "").strip()
+            try:
+                return datetime.date.fromisoformat(v).isoformat() if v else None
+            except ValueError:
+                raise ValueError(f"'{name}' must be a date like 2026-10-01")
+        start, end = _iso("start"), _iso("end")
+
+        conditions = []
+        if start:
+            conditions.append({"property": "Sale Date", "date": {"on_or_after": start}})
+        if end:
+            conditions.append({"property": "Sale Date", "date": {"on_or_before": end}})
+        filter_obj = {"and": conditions} if conditions else None
+        pages = notion_utils.query_data_source_all(NOTION_GRAVEL_SALES_DATASOURCE_ID,
+                                                   filter_obj=filter_obj, max_pages=40)
+
+        days, materials, customers = {}, {}, {}
+        totals = {"tons": 0.0, "sales": 0.0, "loads": 0, "delivered": 0, "picked_up": 0}
+        pending = {"count": 0, "est_tons": 0.0, "est_sales": 0.0}
+        excluded_test = 0
+
+        for page in pages:
+            props = page.get("properties", {})
+            customer = (notion_utils.prop_text(props, "Customer Name") or "").strip() or "No customer"
+            if customer.lower() == "test":
+                excluded_test += 1
+                continue
+            day = (notion_utils.prop_date(props, "Sale Date") or page.get("created_time", ""))[:10]
+            if not day or (start and day < start) or (end and day > end):
+                continue
+            tons = notion_utils.prop_number(props, "Quantity (Tons)") or 0
+            amount = notion_utils.prop_number(props, "Total Amount")
+            if not amount:
+                amount = tons * (notion_utils.prop_number(props, "Price Per Ton") or 0)
+            material = notion_utils.prop_select(props, "Material") or "Other"
+
+            if (notion_utils.prop_select(props, "Status") or "") == "Incomplete":
+                pending["count"] += 1
+                pending["est_tons"] += tons
+                pending["est_sales"] += amount
+                continue
+
+            notes = notion_utils.prop_text(props, "Notes") or ""
+            if "Delivery:" in notes:
+                totals["delivered"] += 1
+            elif "Customer Pick Up" in notes:
+                totals["picked_up"] += 1
+
+            d = days.setdefault(day, {"date": day, "tons": 0.0, "sales": 0.0, "loads": 0, "materials": {}})
+            d["tons"] += tons
+            d["sales"] += amount
+            d["loads"] += 1
+            d["materials"][material] = d["materials"].get(material, 0) + tons
+
+            # Customer names are typed in, so "Red Willow #1" and "Red willow #1"
+            # are the same customer: group case-insensitively, show the first spelling.
+            for bucket, key, label in ((materials, material, material),
+                                       (customers, " ".join(customer.lower().split()), customer)):
+                b = bucket.setdefault(key, {"name": label, "tons": 0.0, "sales": 0.0, "loads": 0})
+                b["tons"] += tons
+                b["sales"] += amount
+                b["loads"] += 1
+
+            totals["tons"] += tons
+            totals["sales"] += amount
+            totals["loads"] += 1
+
+        r2 = lambda x: round(x, 2)
+        day_list = []
+        for d in sorted(days.values(), key=lambda x: x["date"]):
+            day_list.append({"date": d["date"], "tons": r2(d["tons"]), "sales": r2(d["sales"]), "loads": d["loads"],
+                             "materials": {k: r2(v) for k, v in d["materials"].items()}})
+        rank = lambda bucket: [dict(b, tons=r2(b["tons"]), sales=r2(b["sales"]))
+                               for b in sorted(bucket.values(), key=lambda b: -b["tons"])]
+        return jsonify({
+            "status": "ok",
+            "start": start, "end": end,
+            "totals": {**totals, "tons": r2(totals["tons"]), "sales": r2(totals["sales"]),
+                       "selling_days": len(day_list)},
+            "days": day_list,
+            "materials": rank(materials),
+            "customers": rank(customers),
+            "pending": {"count": pending["count"], "est_tons": r2(pending["est_tons"]),
+                        "est_sales": r2(pending["est_sales"])},
+            "excluded_test": excluded_test,
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.route("/api/notion/gravel-sales", methods=["GET"])
 @require_role("admin")
 def notion_gravel_sales():
