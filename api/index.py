@@ -115,6 +115,13 @@ FIELD_ID_ROLE_MAP_PATH = os.environ.get(
 NOTION_BATCH_REPORTS_DATASOURCE_ID = os.environ.get(
     "NOTION_BATCH_REPORTS_DATASOURCE_ID", "ec5dda0d-7c82-4c4a-a613-fa28c7702c9c"
 )
+# Plant Breakdown Material Tracker (McCook Concrete Operations Hub). Filled by the
+# MCI driver app: when the batch manager ticks "Plant Breakdown" on the daily
+# report, one row per material lost (Material, Amount, Material Type, Report
+# Date, Batch Manager, Daily Report Ref).
+NOTION_PLANT_BREAKDOWN_DATASOURCE_ID = os.environ.get(
+    "NOTION_PLANT_BREAKDOWN_DATASOURCE_ID", "69468d28-40ff-4dcb-add7-5bf97ff90dd2"
+)
 NOTION_GRAVEL_SALES_DATASOURCE_ID = os.environ.get(
     "NOTION_GRAVEL_SALES_DATASOURCE_ID", "80c0157b-05b2-46f8-9c19-b6f63c6e99af"
 )
@@ -1112,6 +1119,92 @@ def notion_batch_reports():
                 "status": "pending",
             })
         return jsonify({"count": len(items), "items": items})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/notion/plant-breakdowns", methods=["GET"])
+@require_role("admin", "calvin")
+def notion_plant_breakdowns():
+    """
+    Material lost to plant breakdowns, for McCook Concrete's "Plant Breakdowns" tab.
+    ?start=YYYY-MM-DD&end=YYYY-MM-DD (either may be left out = no limit that side).
+    Returns totals per material for the period, plus one entry per breakdown day
+    with each material's amount and that day's batch report issues for context.
+    """
+    try:
+        def _iso(name):
+            v = (request.args.get(name) or "").strip()
+            try:
+                return datetime.date.fromisoformat(v).isoformat() if v else None
+            except ValueError:
+                raise ValueError(f"'{name}' must be a date like 2026-10-01")
+        start, end = _iso("start"), _iso("end")
+
+        rows = notion_utils.query_data_source_all(NOTION_PLANT_BREAKDOWN_DATASOURCE_ID)
+
+        days = {}
+        for page in rows:
+            props = page.get("properties", {})
+            day = (notion_utils.prop_date(props, "Report Date") or page.get("created_time", ""))[:10]
+            if not day or (start and day < start) or (end and day > end):
+                continue
+            amount = notion_utils.prop_number(props, "Amount") or 0
+            material = notion_utils.prop_text(props, "Material") or "Unknown material"
+            entry = days.setdefault(day, {"date": day, "batch_managers": [], "materials": [],
+                                          "issues": "", "batch_report_url": None, "notion_urls": []})
+            manager = notion_utils.prop_text(props, "Batch Manager")
+            if manager and manager not in entry["batch_managers"]:
+                entry["batch_managers"].append(manager)
+            entry["materials"].append({
+                "material": material,
+                "amount": amount,
+                "type": notion_utils.prop_select(props, "Material Type") or "Standard",
+            })
+            if page.get("url"):
+                entry["notion_urls"].append(page["url"])
+
+        # That day's batch report "Issues Presented" usually says what broke down.
+        if days:
+            try:
+                no_issue = {"n/a", "na", "none", "no", "no issues", "-", ""}
+                for page in notion_utils.query_data_source_all(NOTION_BATCH_REPORTS_DATASOURCE_ID):
+                    props = page.get("properties", {})
+                    day = (notion_utils.prop_date(props, "Report Date") or notion_utils.prop_date(props, "Date") or "")[:10]
+                    if day in days:
+                        issues = (notion_utils.prop_text(props, "Issues Presented") or "").strip()
+                        if issues.lower() not in no_issue and issues not in days[day]["issues"]:
+                            days[day]["issues"] = (days[day]["issues"] + "\n" + issues).strip()
+                        days[day]["batch_report_url"] = days[day]["batch_report_url"] or page.get("url")
+            except Exception:
+                pass  # issues are context only; the material numbers still show
+
+        totals = {}
+        for entry in days.values():
+            merged = {}
+            for m in entry["materials"]:
+                key = m["material"].strip().lower()
+                if key in merged:
+                    merged[key]["amount"] += m["amount"]
+                else:
+                    merged[key] = dict(m)
+            entry["materials"] = sorted(merged.values(), key=lambda m: -m["amount"])
+            entry["total_amount"] = round(sum(m["amount"] for m in entry["materials"]), 2)
+            for m in entry["materials"]:
+                key = m["material"].strip().lower()
+                t = totals.setdefault(key, {"material": m["material"], "type": m["type"], "amount": 0, "days": 0})
+                t["amount"] = round(t["amount"] + m["amount"], 2)
+                t["days"] += 1
+
+        events = sorted(days.values(), key=lambda e: e["date"], reverse=True)
+        return jsonify({
+            "status": "ok",
+            "start": start, "end": end,
+            "breakdown_days": len(events),
+            "total_amount": round(sum(e["total_amount"] for e in events), 2),
+            "totals": sorted(totals.values(), key=lambda t: -t["amount"]),
+            "events": events,
+        })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 

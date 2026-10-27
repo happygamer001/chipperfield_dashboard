@@ -195,6 +195,11 @@
   .fw-row .chev { color: var(--ink-soft); font-size: 18px; }
   .fw-foot-note { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
   .fw-range { display: flex; gap: 8px; margin-bottom: 12px; }
+  .pb-range { flex-wrap: wrap; }
+  .pb-mats { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; margin: 10px 0 0; font-size: 14px; }
+  .pb-mats .amt { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .pb-custom { font-size: 11px; color: var(--warn-text); margin-left: 6px; }
+  .pb-issues { font-size: 13px; color: var(--ink-soft); margin: 10px 0 0; white-space: pre-line; }
   .fw-chartwrap { position: relative; height: 260px; }
   .fw-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
   .fw-explain { font-size: 13px; color: var(--ink-soft); line-height: 1.5; margin: 0 0 8px; }
@@ -318,6 +323,12 @@
 <div id="company-mccook" style="display:none;">
   <main>
     <p class="logout-link back-link" style="margin:0 0 16px;">← Back to companies</p>
+    <div class="lookup-tabs" id="mccook-tabs">
+      <div class="lookup-tab active" data-tab="reports">Batch Reports &amp; Gravel</div>
+      <div class="lookup-tab" data-tab="breakdowns">Plant Breakdowns</div>
+    </div>
+
+    <div id="mccook-reports-display">
     <p class="section-heading" style="margin-top:0;">MCI Batch Reports</p>
     <p class="section-sub" id="batch-reports-status">Loading…</p>
     <div id="batch-reports-display"></div>
@@ -329,6 +340,21 @@
       <button id="customer-search-btn">Search</button>
     </div>
     <div id="customer-results"></div>
+    </div>
+
+    <div id="mccook-breakdowns-display" style="display:none;">
+      <p class="section-heading" style="margin-top:0;">Plant Breakdowns</p>
+      <p class="section-sub">Material lost when the plant broke down, as logged by the batch manager on the MCI daily report.</p>
+      <div class="fw-range pb-range" id="pb-range">
+        <button class="fw-chip" data-range="30">30 days</button>
+        <button class="fw-chip active" data-range="90">90 days</button>
+        <button class="fw-chip" data-range="year">This year</button>
+        <button class="fw-chip" data-range="all">All time</button>
+      </div>
+      <p class="section-sub" id="pb-status" aria-live="polite">Loading…</p>
+      <div class="fw-stats" id="pb-stats"></div>
+      <div id="pb-events"></div>
+    </div>
   </main>
 </div>
 
@@ -552,6 +578,93 @@ document.querySelectorAll('[data-company]').forEach(el => {
 document.querySelectorAll(".back-link").forEach(el => {
   el.addEventListener("click", () => showCompany(null));
 });
+
+// ---------- McCook Concrete: tabs + Plant Breakdowns ----------
+// Unit for the amounts entered on the MCI daily report. Set this once it's
+// confirmed (e.g. "tons" or "yd³") and it's shown after every number.
+const PLANT_UNIT = "";
+let pbRange = "90";
+let pbLoaded = false;
+
+function showMccookTab(tab) {
+  document.getElementById("mccook-reports-display").style.display = tab === "reports" ? "block" : "none";
+  document.getElementById("mccook-breakdowns-display").style.display = tab === "breakdowns" ? "block" : "none";
+  document.querySelectorAll("#mccook-tabs .lookup-tab").forEach(el =>
+    el.classList.toggle("active", el.getAttribute("data-tab") === tab));
+  if (tab === "breakdowns" && !pbLoaded) loadPlantBreakdowns();
+}
+document.querySelectorAll("#mccook-tabs .lookup-tab").forEach(el =>
+  el.addEventListener("click", () => showMccookTab(el.getAttribute("data-tab"))));
+document.querySelectorAll("#pb-range .fw-chip").forEach(btn =>
+  btn.addEventListener("click", () => { pbRange = btn.getAttribute("data-range"); loadPlantBreakdowns(); }));
+
+function pbAmount(n) {
+  const v = (Math.round((n || 0) * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return PLANT_UNIT ? `${v} ${PLANT_UNIT}` : v;
+}
+
+function pbRangeDates() {
+  const today = new Date();
+  const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  if (pbRange === "all") return { start: "", end: "", label: "all time" };
+  if (pbRange === "year") return { start: `${today.getFullYear()}-01-01`, end: iso(today), label: "this year" };
+  const from = new Date(today); from.setDate(from.getDate() - (parseInt(pbRange, 10) - 1));
+  return { start: iso(from), end: iso(today), label: `the last ${pbRange} days` };
+}
+
+async function loadPlantBreakdowns() {
+  pbLoaded = true;
+  document.querySelectorAll("#pb-range .fw-chip").forEach(b =>
+    b.classList.toggle("active", b.getAttribute("data-range") === pbRange));
+  const statusEl = document.getElementById("pb-status");
+  const statsEl = document.getElementById("pb-stats");
+  const eventsEl = document.getElementById("pb-events");
+  const { start, end, label } = pbRangeDates();
+  statusEl.textContent = "Loading…";
+  statsEl.innerHTML = "";
+  eventsEl.innerHTML = "";
+
+  try {
+    const q = start ? `?start=${start}&end=${end}` : "";
+    const res = await fetch("/api/notion/plant-breakdowns" + q);
+    const data = await res.json();
+    if (!res.ok || data.status === "error") throw new Error(data.message || "Failed to load");
+
+    if (!data.breakdown_days) {
+      statusEl.textContent = `No plant breakdowns recorded for ${label}.`;
+      eventsEl.innerHTML = '<div class="empty">Breakdowns show here once the batch manager ticks "Plant Breakdown" on the MCI daily report and enters the material lost.</div>';
+      return;
+    }
+
+    statusEl.textContent = `${data.breakdown_days} breakdown day(s) in ${label}, most recent first.`;
+    statsEl.innerHTML = `
+      <div class="fw-box"><div class="fw-tile-lbl">Breakdown days</div><div class="fw-tile-val">${data.breakdown_days}</div></div>
+      <div class="fw-box"><div class="fw-tile-lbl">Materials lost</div><div class="fw-tile-val">${data.totals.length}</div></div>
+      ${data.totals.map(t => `
+        <div class="fw-box"><div class="fw-tile-lbl">${fwEsc(t.material)}${t.type === "Custom" ? '<span class="pb-custom">custom</span>' : ""}</div>
+        <div class="fw-tile-val">${pbAmount(t.amount)}</div>
+        <div class="fw-tile-lbl">over ${t.days} day(s)</div></div>`).join("")}`;
+
+    eventsEl.innerHTML = data.events.map(e => `
+      <div class="item">
+        <div class="item-top">
+          <div>
+            <p class="item-title">${fwEsc(fwDay(e.date, true))}, ${e.date.slice(0, 4)}</p>
+            <p class="item-sub">${e.batch_managers.length ? "Batch manager: " + fwEsc(e.batch_managers.join(", ")) + " · " : ""}${e.materials.length} material(s)</p>
+          </div>
+          <span class="tag warn">Breakdown</span>
+        </div>
+        <div class="pb-mats">
+          ${e.materials.map(m => `<span>${fwEsc(m.material)}${m.type === "Custom" ? '<span class="pb-custom">custom</span>' : ""}</span><span class="amt">${pbAmount(m.amount)}</span>`).join("")}
+        </div>
+        ${e.issues ? `<p class="pb-issues"><strong>Issues reported:</strong> ${fwEsc(e.issues)}</p>` : ""}
+        ${e.batch_report_url ? `<p style="margin:8px 0 0;"><a href="${fwEsc(e.batch_report_url)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">Batch report in Notion ↗</a></p>` : ""}
+      </div>`).join("");
+  } catch (err) {
+    statusEl.textContent = "";
+    eventsEl.innerHTML = '<div class="empty">Could not load plant breakdowns: ' + fwEsc(err.message) + '</div>';
+  }
+}
 
 async function loadBatchReports() {
   const displayEl = document.getElementById("batch-reports-display");
