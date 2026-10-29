@@ -1762,6 +1762,14 @@ def main():
         return
 
     rebuild, days = False, None
+    if command == "all" or command.isdigit():
+        # One catch-up run for everything: job logs, management/Fab Shop logs, Equipment
+        # Repair forms and photos from the last N days. Anything already in Dropbox is
+        # skipped, so nothing is overwritten.  python daily_job_logs.py all 30
+        raw = args[0] if command.isdigit() else (args[1] if len(args) > 1 else "30")
+        days = int(raw) if raw.isdigit() else 30
+        command = "run"
+        print(f"\n📥 CATCH-UP: logs, repair forms and photos from the last {days} days (existing files are skipped).")
     if command == "rebuild":
         rebuild = True
         days = int(args[1]) if len(args) > 1 and args[1].isdigit() else 90

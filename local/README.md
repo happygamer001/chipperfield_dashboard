@@ -87,6 +87,7 @@ schtasks /Create /TN "Daily Job Logs" /TR "\"C:\DailyJobLogs\run_daily_job_logs.
 | Command | What it does |
 |---|---|
 | `python daily_job_logs.py` | Daily run, the same thing the scheduled task does |
+| `python daily_job_logs.py all 30` | Catch-up: job logs, repair forms **and** photos from the last 30 days (any number). Skips anything already in Dropbox |
 | `python daily_job_logs.py preview 10` | Builds the last 10 logs locally. Uploads nothing |
 | `python daily_job_logs.py backfill 2026` | Lists the title fixes for a year folder. Renames nothing |
 | `python daily_job_logs.py apply backfill_2026.csv` | Applies a reviewed rename list. Summaries are renamed to match |
