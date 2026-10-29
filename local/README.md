@@ -19,6 +19,7 @@ Nic's **Equipment Repair** Typeform is picked up too (any email with "repair" in
 - `YYMMDD | Nic | Equipment Repair.pdf`, plus its photos as `... | Equipment Repair | Image1.jpeg`
 - A second repair on the same day is `Equipment Repair 2`, then `3`, and so on.
 - The date comes from the form's date question, or the day the email arrived if there isn't one.
+- To pull in repairs from further back: `python daily_job_logs.py repairs 30` (any number of days).
 - The name comes from the form's name question, or **Nic** if there isn't one. To change that, add `REPAIR_DEFAULT_NAME=Name` to `djl_settings.txt`.
 
 ## One-time setup on the PC
@@ -91,4 +92,5 @@ schtasks /Create /TN "Daily Job Logs" /TR "\"C:\DailyJobLogs\run_daily_job_logs.
 | `python daily_job_logs.py apply backfill_2026.csv` | Applies a reviewed rename list. Summaries are renamed to match |
 | `python daily_job_logs.py move-summaries` | One-time: moves the summary `.txt` files out of the job log folders |
 | `python daily_job_logs.py photos 30` | Uploads any missing site photos from the last 30 days. Leaves PDFs alone |
+| `python daily_job_logs.py repairs 30` | Uploads Nic's Equipment Repair forms (and their photos) from the last 30 days. Skips ones already in Dropbox and leaves the job logs alone |
 | `python daily_job_logs.py other` | Lists logs where "Other" was picked for the name |

@@ -913,11 +913,12 @@ def open_log_mailbox():
     raise RuntimeError("Could not open Gmail (All Mail or Inbox).")
 
 
-def search_log_email_ids(mail, days):
+def search_log_email_ids(mail, days, repairs_only=False):
     """Ids of log emails from the last `days` days, oldest first."""
     since = datetime.date.today() - datetime.timedelta(days=days)
     # Gmail narrows it to subjects containing "log" or "repair"; is_log_subject() re-checks each one.
-    gmail_query = f"after:{since:%Y/%m/%d} (subject:log OR subject:repair OR subject:repairs)"
+    subjects = "subject:repair OR subject:repairs" if repairs_only else "subject:log OR subject:repair OR subject:repairs"
+    gmail_query = f"after:{since:%Y/%m/%d} ({subjects})"
     try:
         # Gmail's own search: only log emails are downloaded, which keeps a 90-day rebuild quick.
         typ, messages = mail.search(None, "X-GM-RAW", f'"{gmail_query}"')
@@ -929,12 +930,12 @@ def search_log_email_ids(mail, days):
     return messages[0].split()
 
 
-def fetch_log_emails(limit=None, days=None):
+def fetch_log_emails(limit=None, days=None, repairs_only=False):
     """Yields parsed log emails, oldest first (so repair numbers stay stable).
     With limit (preview), only the most recent ones, newest first."""
     days = days or int(SETTINGS.get("DAILY_WINDOW_DAYS") or DAILY_WINDOW_DAYS)
     mail, mailbox = open_log_mailbox()
-    email_ids = search_log_email_ids(mail, days)
+    email_ids = search_log_email_ids(mail, days, repairs_only)
     if limit:
         email_ids = list(reversed(email_ids))
     print(f"Searching {mailbox}, last {days} day(s): {len(email_ids)} candidate email(s).")
@@ -946,6 +947,8 @@ def fetch_log_emails(limit=None, days=None):
             for response_part in msg_data:
                 if isinstance(response_part, tuple):
                     parsed = read_email(email.message_from_bytes(response_part[1]))
+                    if parsed and repairs_only and not is_repair_form(parsed[0]):
+                        parsed = None
                     if parsed:
                         found += 1
                         yield parsed
@@ -1125,14 +1128,17 @@ def run_photo_backfill(days):
     print("\nPhotos: " + ", ".join(f"{v} {k}" for k, v in counts.items()))
 
 
-def run_gmail_djl_uploader(days=None, rebuild=False):
+def run_gmail_djl_uploader(days=None, rebuild=False, repairs_only=False):
     print(f"\n==========================================")
-    print(f"STEP 1: INGESTING GMAIL LOGS & PHOTOS" + (f"  (REBUILD: last {days} days)" if rebuild else ""))
+    if repairs_only:
+        print(f"EQUIPMENT REPAIR FORMS: last {days} days (logs untouched)")
+    else:
+        print(f"STEP 1: INGESTING GMAIL LOGS & PHOTOS" + (f"  (REBUILD: last {days} days)" if rebuild else ""))
     print(f"==========================================")
     counts = {"new": 0, "rebuilt": 0, "already there": 0, "archived": 0, "failed": 0, "photos": 0, "photo failures": 0}
 
     repairs_seen = {}
-    for subject, body_text, body_html, attachments, received in fetch_log_emails(days=days):
+    for subject, body_text, body_html, attachments, received in fetch_log_emails(days=days, repairs_only=repairs_only):
         try:
             source_text = body_text if body_text.strip() else html_to_text(body_html)
             meta = extract_log_metadata(source_text, subject, received)
@@ -1731,6 +1737,13 @@ def main():
         days = int(args[1]) if len(args) > 1 and args[1].isdigit() else 30
         connect_dropbox()
         run_photo_backfill(days)
+        save_review_list()
+        return
+
+    if command == "repairs":
+        days = int(args[1]) if len(args) > 1 and args[1].isdigit() else 30
+        connect_dropbox()
+        run_gmail_djl_uploader(days=days, repairs_only=True)
         save_review_list()
         return
 
