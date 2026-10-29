@@ -12,6 +12,15 @@ The summaries are kept out of the job log folders on purpose, so those folders h
 
 It reads Gmail **All Mail**, so archived or filtered emails are included. The mailbox is opened read-only, so nothing gets marked as read. Only emails with "log" in the subject are processed: Daily Job Log, Daily Management Log and the Fab Shop daily log. Service requests, job applications and screenings are skipped.
 
+## Equipment Repair forms
+
+Nic's **Equipment Repair** Typeform is picked up too (any email with "repair" in the subject). It's saved with the job logs:
+
+- `YYMMDD | Nic | Equipment Repair.pdf`, plus its photos as `... | Equipment Repair | Image1.jpeg`
+- A second repair on the same day is `Equipment Repair 2`, then `3`, and so on.
+- The date comes from the form's date question, or the day the email arrived if there isn't one.
+- The name comes from the form's name question, or **Nic** if there isn't one. To change that, add `REPAIR_DEFAULT_NAME=Name` to `djl_settings.txt`.
+
 ## One-time setup on the PC
 
 1. **Python 3.10 or newer.** In a Command Prompt, `python --version` should print a version. If it doesn't, install it from python.org and tick "Add python.exe to PATH".

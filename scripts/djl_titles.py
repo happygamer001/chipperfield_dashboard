@@ -310,7 +310,7 @@ def build_identifier(number_text, context_text="", year=None):
 def looks_like_identifier(part):
     if re.search(r'\d{3,}', part):
         return True
-    return bool(re.fullmatch(r'(NO JOB NUMBER|Office|Shop|Equipment Repair|Daily Management Log)', part.strip(), re.IGNORECASE))
+    return bool(re.fullmatch(r'(NO JOB NUMBER|Office|Shop|Equipment Repair(?: \d{1,2})?|Daily Management Log)', part.strip(), re.IGNORECASE))
 
 
 def split_log_filename(filename):
