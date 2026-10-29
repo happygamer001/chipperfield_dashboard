@@ -12,6 +12,15 @@ The summaries are kept out of the job log folders on purpose, so those folders h
 
 It reads Gmail **All Mail**, so archived or filtered emails are included. The mailbox is opened read-only, so nothing gets marked as read. Only emails with "log" in the subject are processed: Daily Job Log, Daily Management Log and the Fab Shop daily log. Service requests, job applications and screenings are skipped.
 
+## Equipment Repair forms
+
+Nic's **Equipment Repair** Typeform is picked up too (any email with "repair" in the subject). It's saved with the job logs:
+
+- `YYMMDD | Nic | Equipment Repair.pdf`, plus its photos as `... | Equipment Repair | Image1.jpeg`
+- A second repair on the same day is `Equipment Repair 2`, then `3`, and so on.
+- The date comes from the form's date question, or the day the email arrived if there isn't one.
+- The name comes from the form's name question, or **Nic** if there isn't one. To change that, add `REPAIR_DEFAULT_NAME=Name` to `djl_settings.txt`.
+
 ## One-time setup on the PC
 
 1. **Python 3.10 or newer.** In a Command Prompt, `python --version` should print a version. If it doesn't, install it from python.org and tick "Add python.exe to PATH".
@@ -21,7 +30,8 @@ It reads Gmail **All Mail**, so archived or filtered emails are included. The ma
    pip install dropbox requests beautifulsoup4 pillow pytesseract pypdf reportlab
    ```
 4. **Copy this `local` folder** somewhere permanent, for example `C:\DailyJobLogs\`.
-5. **Settings:** copy `djl_settings.example.txt` to `djl_settings.txt` in the same folder and fill in the new, rotated Gmail app password and Dropbox values.
+5. **Settings:** copy `djl_settings.example.txt` to `djl_settings.txt` in the same folder and fill in the new, rotated Gmail app password, the Dropbox values and the Typeform token.
+   - **Typeform token:** in Typeform, go to Account > Personal tokens, create one with the `responses:read` scope, and paste it after `TYPEFORM_API_TOKEN=`. Without it, Typeform usually refuses the photo downloads and the photos land on the review list instead.
 6. **Test** by opening a Command Prompt in that folder:
    ```
    python daily_job_logs.py preview 5
@@ -49,6 +59,15 @@ python daily_job_logs.py move-summaries
 - **Duplicates:** if a summary with the same name is already there, the newer one is kept and the older copy goes to `Daily Log Summaries/_replaced`.
 - **Merge the dashboard pull request first, then run this.** The live dashboard needs to know where to find the summaries.
 
+## One-time repair: recover the missing photos
+
+```
+python daily_job_logs.py photos 30
+```
+- **Uploads only missing photos** from the last 30 days (use a bigger number to go further back). PDFs and summaries aren't touched, and photos already in Dropbox are skipped.
+- **Why they were missing:** Typeform wraps every link in its emails in a tracking link, and the script didn't recognise those as photos, so it skipped them. The daily run now saves photos too.
+- **Photos that can't be saved** are listed in `Daily Job Logs/_Needs Review` as "PHOTO NOT SAVED" with the reason, such as a missing token or an expired link.
+
 ## Schedule the daily run
 
 Open a Command Prompt **as the user who will own the task**, change `C:\DailyJobLogs` below if you used a different folder, and run:
@@ -71,4 +90,5 @@ schtasks /Create /TN "Daily Job Logs" /TR "\"C:\DailyJobLogs\run_daily_job_logs.
 | `python daily_job_logs.py backfill 2026` | Lists the title fixes for a year folder. Renames nothing |
 | `python daily_job_logs.py apply backfill_2026.csv` | Applies a reviewed rename list. Summaries are renamed to match |
 | `python daily_job_logs.py move-summaries` | One-time: moves the summary `.txt` files out of the job log folders |
+| `python daily_job_logs.py photos 30` | Uploads any missing site photos from the last 30 days. Leaves PDFs alone |
 | `python daily_job_logs.py other` | Lists logs where "Other" was picked for the name |

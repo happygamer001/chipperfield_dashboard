@@ -15,6 +15,8 @@ HOW TO RUN
                                                  overwriting existing PDFs/.txt files with the full log. Old copies
                                                  saved under a different name ("261001 | Craig.pdf") are moved to
                                                  Original Unformatted Files. Photos are not touched.
+    python daily_job_logs.py photos 30           Re-reads the last 30 days of log emails and uploads only the photos
+                                                 missing from Dropbox. PDFs are not touched.
     python daily_job_logs.py move-summaries      ONE-TIME: moves the old summary .txt files out of the Daily Job Logs
                                                  folders into Dashboard/Daily Log Summaries. Changes no PDFs.
     python daily_job_logs.py preview 10          Look at the last 10 log emails. Uploads NOTHING.
@@ -30,13 +32,14 @@ HOW TO RUN
 CREDENTIALS
     No passwords or tokens are stored in this file. Put them in djl_settings.txt next to the script
     (one KEY=value per line) or in environment variables with the same names:
-        EMAIL_USER, EMAIL_PASS, (optional) DAILY_WINDOW_DAYS,
+        EMAIL_USER, EMAIL_PASS, (optional) DAILY_WINDOW_DAYS, (optional) REPAIR_DEFAULT_NAME,
         DROPBOX_APP_KEY, DROPBOX_APP_SECRET, DROPBOX_REFRESH_TOKEN
     Keep djl_settings.txt out of any git repo / shared folder.
 
 WHICH EMAILS ARE READ
     Gmail "All Mail" (so archived / filtered emails are found too), opened READ-ONLY - nothing is marked read.
-    Only emails whose subject contains the word "log" (Daily Job Log, Daily Management Log, Fab Shop log).
+    Only emails whose subject contains the word "log" (Daily Job Log, Daily Management Log, Fab Shop log),
+    plus Nic's Equipment Repair form (subject contains "repair").
     Other Typeform forms (job applications, screenings, service requests) are skipped and never uploaded.
 
 TITLE RULES
@@ -47,11 +50,13 @@ TITLE RULES
     If "Other" is picked for Your Name, whatever was typed in as the name is the name in the title.
     From 2024 onward, anything missing or unusual is marked in the title (NO NAME, NO JOB NUMBER, CHECK ...)
     and listed in a review file in Dropbox:  Daily Job Logs/_Needs Review
+    Equipment Repair form:  YYMMDD | Nic | Equipment Repair   (a second repair the same day: Equipment Repair 2)
 """
 
 import imaplib
 import email
 from email.header import decode_header
+import email.utils
 import csv
 import re
 import os
@@ -60,6 +65,9 @@ import tempfile
 import io
 import datetime
 import unicodedata
+import base64
+import zlib
+from urllib.parse import urlparse, parse_qs, unquote
 
 import dropbox
 import requests
@@ -108,6 +116,14 @@ SUMMARY_FOLDER_PATH = "/Chipperfield Ag/Chipperfield/Dashboard/Daily Log Summari
 # Daily Management Log, the Fab Shop daily log...). Service requests, job applications
 # and screenings don't, so they're skipped and never uploaded.
 LOG_SUBJECT = re.compile(r'\blogs?\b', re.IGNORECASE)
+
+# Nic's Equipment Repair Typeform. Its subject has "repair" instead of "log". These are
+# saved with the job logs as "YYMMDD | Nic | Equipment Repair"; a second repair on the
+# same day becomes "Equipment Repair 2", and so on.
+REPAIR_SUBJECT = re.compile(r'\brepairs?\b', re.IGNORECASE)
+REPAIR_LABEL = "Equipment Repair"
+# Name used when the repair form has no name question (change with REPAIR_DEFAULT_NAME).
+REPAIR_DEFAULT_NAME = "Nic"
 
 # Jerron's Fab Shop team log has no Job number question; the dashboard's Fab Shop section
 # looks for this exact label in the title.
@@ -170,7 +186,8 @@ def load_settings():
                 key, value = line.split("=", 1)
                 values[key.strip()] = value.strip().strip('"').strip("'")
     for key in ("EMAIL_USER", "EMAIL_PASS", "DROPBOX_APP_KEY", "DROPBOX_APP_SECRET",
-                "DROPBOX_REFRESH_TOKEN", "DAILY_WINDOW_DAYS"):
+                "DROPBOX_REFRESH_TOKEN", "DAILY_WINDOW_DAYS", "TYPEFORM_API_TOKEN",
+                "REPAIR_DEFAULT_NAME"):
         if os.environ.get(key):
             values[key] = os.environ[key]
     return values
@@ -532,7 +549,7 @@ def build_identifier(number_text, context_text="", year=None):
 def looks_like_identifier(part):
     if re.search(r'\d{3,}', part):
         return True
-    return bool(re.fullmatch(r'(NO JOB NUMBER|Office|Shop|Equipment Repair|Daily Management Log|Fab Shop Daily Log)', part.strip(), re.IGNORECASE))
+    return bool(re.fullmatch(r'(NO JOB NUMBER|Office|Shop|Equipment Repair(?: \d{1,2})?|Daily Management Log|Fab Shop Daily Log)', part.strip(), re.IGNORECASE))
 
 
 def split_log_filename(filename):
@@ -565,10 +582,49 @@ def build_filename(date, name, identifier, image_tag="", ext=".pdf"):
     return " | ".join(parts) + ext
 
 
-def extract_log_metadata(body_text, subject=""):
+def is_repair_form(subject):
+    """Nic's Equipment Repair form: "repair" in the subject and not a log."""
+    return bool(REPAIR_SUBJECT.search(subject or "")) and not LOG_SUBJECT.search(subject or "")
+
+
+def extract_repair_metadata(clean_text, fields, subject, received):
+    """Equipment Repair form: the title is always 'YYMMDD | Name | Equipment Repair'."""
+    flags = []
+    raw_date = get_field(fields, "Date", "Today's date") or next(
+        (answer for label, answer in fields if "date" in label.lower() and answer), "")
+    log_date = format_date_for_jacque(raw_date)
+    if log_date == "No_Date" and received:
+        log_date = received.strftime("%y%m%d")          # the day the form was sent
+    if log_date == "No_Date":
+        flags.append("NO DATE")
+    name, _ = read_name(fields)
+    if not name:
+        name = clean_name(_find(fields, "mechanic", "your name", "name")) or \
+            clean_name(SETTINGS.get("REPAIR_DEFAULT_NAME") or REPAIR_DEFAULT_NAME)
+    return {
+        "date": log_date, "year": year_of(log_date), "name": name, "identifier": REPAIR_LABEL,
+        "flags": flags, "clean_text": clean_text, "job_raw": "",
+        "has_log_fields": True, "has_job_field": False, "other_selected": False, "form": "repair",
+    }
+
+
+def assign_repair_number(meta, seen):
+    """A second Equipment Repair from the same person on the same day gets ' 2', then ' 3'...
+    Emails are read oldest first, so the numbers stay the same from one run to the next."""
+    if meta.get("form") != "repair":
+        return
+    key = (meta["date"], meta["name"])
+    seen[key] = seen.get(key, 0) + 1
+    if seen[key] > 1:
+        meta["identifier"] = f"{REPAIR_LABEL} {seen[key]}"
+
+
+def extract_log_metadata(body_text, subject="", received=None):
     """Reads date, name and job/WO numbers from a log. Returns a dict."""
     clean_text, recognized = clean_log_body(body_text)
     fields = parse_typeform_fields(clean_text)
+    if is_repair_form(subject):
+        return extract_repair_metadata(clean_text, fields, subject, received)
     flags = []
 
     # Date
@@ -613,7 +669,7 @@ def extract_log_metadata(body_text, subject=""):
         "flags": flags, "clean_text": clean_text, "job_raw": f"{job_raw} {wo_raw}".strip(),
         "has_log_fields": has_field(fields, "Job number", "Your Name"),
         "has_job_field": has_field(fields, "Job number"),
-        "other_selected": other_selected,
+        "other_selected": other_selected, "form": "log",
     }
 
 
@@ -717,12 +773,21 @@ def decode_subject(msg):
 
 
 def is_log_subject(subject):
-    """True only for log notifications (forwards included) - the subject must contain the word "log"."""
-    return bool(LOG_SUBJECT.search(subject or ""))
+    """True for log notifications (forwards included) - the subject must contain the word "log" -
+    and for the Equipment Repair form ("repair" in the subject)."""
+    return bool(LOG_SUBJECT.search(subject or "") or REPAIR_SUBJECT.search(subject or ""))
+
+
+def received_date(msg):
+    """The day the email arrived, in local time (None if the header is unreadable)."""
+    try:
+        return email.utils.parsedate_to_datetime(msg["Date"]).astimezone().date()
+    except Exception:
+        return None
 
 
 def read_email(msg):
-    """Returns (subject, body_text, body_html, attachments) or None if it is not a log email."""
+    """Returns (subject, body_text, body_html, attachments, received) or None if it is not a log email."""
     subject = decode_subject(msg)
     if not is_log_subject(subject):
         # Other Typeform forms (job applications, screenings...) are noted but never uploaded.
@@ -749,23 +814,87 @@ def read_email(msg):
         elif (is_attachment or content_type.startswith("image/")) and filename:
             attachments.append((filename, payload))
 
-    return subject, body_text, body_html, attachments
+    return subject, body_text, body_html, attachments, received_date(msg)
+
+
+PHOTO_EXT = re.compile(r'\.(jpe?g|png|heic|heif|webp)$', re.IGNORECASE)
+
+
+def _unwrap_tracking_link(href):
+    """
+    Typeform's notification emails wrap every link in a tracking redirect
+    (email.followups.typeform.io/c/<compressed data>). The real address is the
+    "l" value inside that compressed data - for a photo, something like
+    https://api.typeform.com/responses/files/<id>/IMG_1159.jpeg
+    Returns the real address, or the href unchanged if it isn't a tracking link.
+    """
+    if "/c/" not in href or "followups.typeform.io" not in href:
+        return href
+    try:
+        payload = href.split("/c/", 1)[1].split("?", 1)[0]
+        raw = zlib.decompress(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))).decode("utf-8", "ignore")
+        real = parse_qs(raw).get("l", [""])[0]
+        return unquote(real) or href
+    except Exception:
+        return href
 
 
 def collect_photo_items(body_html, attachments):
-    photo_items = []
+    """
+    Photos for one log: image attachments, plus every photo link in the email.
+    A link counts as a photo when its real address (after unwrapping Typeform's
+    tracking redirect) or its link text ends in an image extension, or it points
+    at Typeform's file storage. Returns (kind, ext, content) with kind 'bytes'/'url'.
+    """
+    photo_items, seen = [], set()
     for att_name, att_bytes in attachments:
         ext = os.path.splitext(att_name)[1].lower()
-        if ext in ['.jpg', '.jpeg', '.png', '.heic', '.webp']:
+        if PHOTO_EXT.search(att_name or ""):
             photo_items.append(('bytes', ext, att_bytes))
 
     if body_html:
         soup = BeautifulSoup(body_html, 'html.parser')
         for a_tag in soup.find_all('a', href=True):
-            href = a_tag['href']
-            if re.search(r'\.(jpg|jpeg|png|heic|webp)', href, re.IGNORECASE) or ("typeform" in href.lower() and "files" in href.lower()):
-                photo_items.append(('url', '.jpeg', href))
+            real = _unwrap_tracking_link(a_tag['href'].strip())
+            text = a_tag.get_text(" ", strip=True)
+            path = urlparse(real).path
+            is_photo = (PHOTO_EXT.search(path) or PHOTO_EXT.search(text)
+                        or ("typeform" in real.lower() and "/files/" in real.lower()))
+            if not is_photo or real in seen:
+                continue
+            seen.add(real)
+            name = os.path.basename(path) if PHOTO_EXT.search(path) else text
+            ext = os.path.splitext(name)[1].lower() or ".jpeg"
+            photo_items.append(('url', ext, real))
     return photo_items
+
+
+def _looks_like_image(data):
+    return bool(data) and (data[:3] == b"\xff\xd8\xff" or data[:8] == b"\x89PNG\r\n\x1a\n"
+                           or data[4:12] in (b"ftypheic", b"ftypheix", b"ftypmif1", b"ftypmsf1", b"ftyphevc")
+                           or (data[:4] == b"RIFF" and data[8:12] == b"WEBP"))
+
+
+def download_photo(url):
+    """
+    Downloads one photo. Typeform's file storage normally needs an access token
+    (TYPEFORM_API_TOKEN in djl_settings.txt); without one, or if the link has
+    expired, this raises with the reason so it lands on the review list instead
+    of being skipped silently. Only real image data is accepted.
+    """
+    token = SETTINGS.get("TYPEFORM_API_TOKEN")
+    headers = {"User-Agent": "Chipperfield-DailyJobLogs/1.0"}
+    resp = requests.get(url, headers=headers, timeout=30, allow_redirects=True)
+    if resp.status_code in (401, 403) and token:
+        resp = requests.get(url, headers={**headers, "Authorization": f"Bearer {token}"}, timeout=30)
+    if resp.status_code in (401, 403):
+        raise RuntimeError(f"Typeform refused the download ({resp.status_code})"
+                           + ("" if token else " - add TYPEFORM_API_TOKEN to djl_settings.txt"))
+    if resp.status_code != 200:
+        raise RuntimeError(f"download failed ({resp.status_code})")
+    if not _looks_like_image(resp.content):
+        raise RuntimeError(f"not an image (got {resp.headers.get('Content-Type', 'unknown type')}) - link may have expired")
+    return resp.content
 
 
 def open_log_mailbox():
@@ -787,8 +916,8 @@ def open_log_mailbox():
 def search_log_email_ids(mail, days):
     """Ids of log emails from the last `days` days, oldest first."""
     since = datetime.date.today() - datetime.timedelta(days=days)
-    # Gmail narrows it to subjects containing "log"; is_log_subject() re-checks each one.
-    gmail_query = f"after:{since:%Y/%m/%d} subject:log"
+    # Gmail narrows it to subjects containing "log" or "repair"; is_log_subject() re-checks each one.
+    gmail_query = f"after:{since:%Y/%m/%d} (subject:log OR subject:repair OR subject:repairs)"
     try:
         # Gmail's own search: only log emails are downloaded, which keeps a 90-day rebuild quick.
         typ, messages = mail.search(None, "X-GM-RAW", f'"{gmail_query}"')
@@ -801,10 +930,13 @@ def search_log_email_ids(mail, days):
 
 
 def fetch_log_emails(limit=None, days=None):
-    """Yields parsed log emails, newest first. With limit, only the most recent ones."""
+    """Yields parsed log emails, oldest first (so repair numbers stay stable).
+    With limit (preview), only the most recent ones, newest first."""
     days = days or int(SETTINGS.get("DAILY_WINDOW_DAYS") or DAILY_WINDOW_DAYS)
     mail, mailbox = open_log_mailbox()
-    email_ids = list(reversed(search_log_email_ids(mail, days)))
+    email_ids = search_log_email_ids(mail, days)
+    if limit:
+        email_ids = list(reversed(email_ids))
     print(f"Searching {mailbox}, last {days} day(s): {len(email_ids)} candidate email(s).")
 
     found = 0
@@ -897,6 +1029,16 @@ def build_dashboard_summary(clean_text):
     return clean_text
 
 
+def build_repair_summary(clean_text):
+    """Dashboard summary for an Equipment Repair form: one 'Question: answer' line per answer."""
+    lines = []
+    for label, answer in parse_typeform_fields(clean_text):
+        if label.lower() in ("your name", "name", "date", "today's date") or not _meaningful(answer):
+            continue
+        lines.append(f"{label.rstrip(':?').strip()}: {' '.join(answer.split())}")
+    return "\n".join(lines) or clean_text
+
+
 def get_summary_folder(log_date_yymmdd):
     """Dashboard/Daily Log Summaries/<year> (or the folder itself for No_Date logs)."""
     if log_date_yymmdd and len(log_date_yymmdd) == 6 and log_date_yymmdd.isdigit():
@@ -939,16 +1081,62 @@ def archive_old_copy(folder, old_pdf_name, existing_files):
     return moved
 
 
+def upload_photos(meta, name_part, job_part, folder, existing_files, photo_items, counts):
+    """Uploads a log's photos that aren't in Dropbox yet; every failure goes on the review list."""
+    for idx, (p_type, ext, content) in enumerate(photo_items, start=1):
+        ext = ".jpeg" if ext in (".jpg", ".jpeg", "") else ext
+        names = [build_filename(meta["date"], name_part, job_part, f"Image{idx}", e) for e in (ext, ".jpeg")]
+        if any(n in existing_files for n in names):
+            continue
+        photo_filename = names[0]
+        try:
+            img_bytes = content if p_type == 'bytes' else download_photo(content)
+            safe_dropbox_upload(img_bytes, f"{folder}/{photo_filename}")
+            existing_files.add(photo_filename)
+            counts["photos"] = counts.get("photos", 0) + 1
+            print(f"🖼️ Uploaded Site Photo: {photo_filename}")
+        except Exception as err:
+            counts["photo failures"] = counts.get("photo failures", 0) + 1
+            print(f"⚠️ Photo not saved: {photo_filename} ({err})")
+            add_review("Photos", photo_filename, "PHOTO NOT SAVED", str(err))
+
+
+def run_photo_backfill(days):
+    """Re-reads the last `days` days of log emails and uploads only the photos that are
+    missing from Dropbox. PDFs and summaries are not touched."""
+    print(f"\n==========================================")
+    print(f"PHOTO BACKFILL: last {days} days (PDFs untouched)")
+    print(f"==========================================")
+    counts = {"logs checked": 0, "photos": 0, "photo failures": 0}
+    repairs_seen = {}
+    for subject, body_text, body_html, attachments, received in fetch_log_emails(days=days):
+        try:
+            source_text = body_text if body_text.strip() else html_to_text(body_html)
+            meta = extract_log_metadata(source_text, subject, received)
+            assign_repair_number(meta, repairs_seen)
+            name_part, job_part = title_parts_for(meta)
+            folder = get_year_subfolder(meta["date"])
+            counts["logs checked"] += 1
+            upload_photos(meta, name_part, job_part, folder, get_existing_dropbox_files(folder),
+                          collect_photo_items(body_html, attachments), counts)
+        except Exception as err:
+            print(f"❌ Could not process email: {subject} ({err})")
+            add_review("Photos", subject, "EMAIL FAILED TO PROCESS", str(err))
+    print("\nPhotos: " + ", ".join(f"{v} {k}" for k, v in counts.items()))
+
+
 def run_gmail_djl_uploader(days=None, rebuild=False):
     print(f"\n==========================================")
     print(f"STEP 1: INGESTING GMAIL LOGS & PHOTOS" + (f"  (REBUILD: last {days} days)" if rebuild else ""))
     print(f"==========================================")
-    counts = {"new": 0, "rebuilt": 0, "already there": 0, "archived": 0, "failed": 0}
+    counts = {"new": 0, "rebuilt": 0, "already there": 0, "archived": 0, "failed": 0, "photos": 0, "photo failures": 0}
 
-    for subject, body_text, body_html, attachments in fetch_log_emails(days=days):
+    repairs_seen = {}
+    for subject, body_text, body_html, attachments, received in fetch_log_emails(days=days):
         try:
             source_text = body_text if body_text.strip() else html_to_text(body_html)
-            meta = extract_log_metadata(source_text, subject)
+            meta = extract_log_metadata(source_text, subject, received)
+            assign_repair_number(meta, repairs_seen)
             name_part, job_part = title_parts_for(meta)
 
             target_folder_path = get_year_subfolder(meta["date"])
@@ -964,7 +1152,8 @@ def run_gmail_djl_uploader(days=None, rebuild=False):
                 safe_dropbox_upload(pdf_bytes, f"{target_folder_path}/{pdf_filename}")
                 existing_files.add(pdf_filename)
                 try:
-                    summary = build_dashboard_summary(meta["clean_text"])
+                    summary = (build_repair_summary(meta["clean_text"]) if meta.get("form") == "repair"
+                               else build_dashboard_summary(meta["clean_text"]))
                     safe_dropbox_upload(summary.encode("utf-8"), f"{get_summary_folder(meta['date'])}/{txt_filename}")
                 except Exception as err:
                     add_review("Gmail", txt_filename, "DASHBOARD SUMMARY NOT SAVED", str(err))
@@ -984,17 +1173,8 @@ def run_gmail_djl_uploader(days=None, rebuild=False):
                 counts["already there"] += 1
 
             # Site Photos Upload (ImageN labels unchanged; job part follows the PDF title). Never re-uploaded.
-            for idx, (p_type, ext, content) in enumerate(collect_photo_items(body_html, attachments), start=1):
-                photo_filename = build_filename(meta["date"], name_part, job_part, f"Image{idx}", ".jpeg")
-                if photo_filename not in existing_files:
-                    try:
-                        img_bytes = content if p_type == 'bytes' else requests.get(content, timeout=20).content
-                        if img_bytes:
-                            safe_dropbox_upload(img_bytes, f"{target_folder_path}/{photo_filename}")
-                            existing_files.add(photo_filename)
-                            print(f"🖼️ Uploaded Site Photo: {photo_filename}")
-                    except Exception as err:
-                        add_review("Gmail", photo_filename, "PHOTO FAILED TO UPLOAD", str(err))
+            upload_photos(meta, name_part, job_part, target_folder_path, existing_files,
+                          collect_photo_items(body_html, attachments), counts)
         except Exception as err:
             counts["failed"] += 1
             print(f"❌ Could not process email: {subject} ({err})")
@@ -1010,9 +1190,11 @@ def run_preview(limit=10):
     os.makedirs(out_dir, exist_ok=True)
     rows = []
 
-    for subject, body_text, body_html, attachments in fetch_log_emails(limit=limit):
+    repairs_seen = {}
+    for subject, body_text, body_html, attachments, received in fetch_log_emails(limit=limit):
         source_text = body_text if body_text.strip() else html_to_text(body_html)
-        meta = extract_log_metadata(source_text, subject)
+        meta = extract_log_metadata(source_text, subject, received)
+        assign_repair_number(meta, repairs_seen)
         name_part, job_part = title_parts_for(meta)
         title = build_filename(meta["date"], name_part, job_part)
         photos = len(collect_photo_items(body_html, attachments))
@@ -1543,6 +1725,13 @@ def main():
         years = [a for a in args[1:] if re.fullmatch(r'20\d{2}', a)] or None
         connect_dropbox()
         run_other_names_preview(years)
+        return
+
+    if command == "photos":
+        days = int(args[1]) if len(args) > 1 and args[1].isdigit() else 30
+        connect_dropbox()
+        run_photo_backfill(days)
+        save_review_list()
         return
 
     if command == "move-summaries":

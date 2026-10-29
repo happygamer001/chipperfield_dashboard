@@ -200,6 +200,13 @@
   #company-chipperfield { --site-bg:#e7f0fb; --site-text:#1f5aa6; --pto-bg:#fdf3d8; --pto-text:#8a6300; --evt-text:#5b3fb0; }
   [data-theme="dark"] #company-chipperfield { --site-bg:#18304d; --site-text:#9cc4f5; --pto-bg:#3a3113; --pto-text:#ffce5c; --evt-text:#c8b8f5; }
   main.cal-wide { max-width: 1100px; }
+  #chip-tabs { position: sticky; top: var(--header-h, 64px); z-index: 20; background: var(--page); padding: 8px 0; margin: 0 0 10px; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  #chip-tabs::-webkit-scrollbar { display: none; }
+  #chip-tabs .lookup-tab { white-space: nowrap; flex: 0 0 auto; }
+  .chip-section { scroll-margin-top: calc(var(--header-h, 64px) + 64px); }
+  .log-thumbs { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 0; }
+  .log-thumbs img, .log-thumbs .ph { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; background: var(--page); border: 1px solid var(--line); cursor: pointer; }
+  .log-thumbs .more-ph { width: 64px; height: 64px; border-radius: 10px; border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--ink-soft); cursor: pointer; background: var(--page); }
   .pto-banner { display: flex; gap: 10px; align-items: center; background: var(--pto-bg); color: var(--pto-text); border: 1px solid var(--line); border-radius: 14px; padding: 11px 14px; margin: 0 0 8px; font-size: 14px; cursor: pointer; }
   .pto-banner .ico { font-size: 17px; }
   .pto-banner .go { margin-left: auto; font-size: 12px; text-decoration: underline; white-space: nowrap; }
@@ -324,9 +331,12 @@
 <div id="company-chipperfield" style="display:none;">
   <main style="padding-bottom:0;" id="chip-main">
     <p class="logout-link back-link" style="margin:0 0 16px;">← Back to companies</p>
-    <div class="lookup-tabs" id="chip-tabs">
-      <div class="lookup-tab active" data-tab="overview">Overview</div>
-      <div class="lookup-tab" data-tab="calendar">Calendar</div>
+    <div class="lookup-tabs" id="chip-tabs" role="tablist">
+      <div class="lookup-tab active" data-tab="overview" role="tab" tabindex="0">Overview</div>
+      <div class="lookup-tab" data-tab="jump" data-target="sec-daily" role="tab" tabindex="0">Daily Job Logs</div>
+      <div class="lookup-tab" data-tab="jump" data-target="sec-po" role="tab" tabindex="0">Purchase Orders</div>
+      <div class="lookup-tab" data-tab="jump" data-target="sec-current-jobs" role="tab" tabindex="0">Current Job Analysis</div>
+      <div class="lookup-tab" data-tab="calendar" role="tab" tabindex="0">Calendar</div>
     </div>
 
     <div id="chip-calendar" style="display:none;">
@@ -347,13 +357,14 @@
     </div>
 
     <div id="chip-overview">
-    <p class="section-heading" style="margin-top:0;">Daily reports</p>
+    <p class="section-heading chip-section" id="sec-daily" style="margin-top:0;">Daily reports</p>
     <p class="section-sub">Management log and job logs from the crew, most recent first.</p>
     <div id="pto-banner"></div>
     <div class="log-date-filter" id="log-date-filter">
       <label>From <input type="date" id="log-date-from"></label>
       <label>To <input type="date" id="log-date-to"></label>
       <button class="fw-chip primary" id="log-date-apply">Show</button>
+      <button class="fw-chip" id="log-date-yesterday">Yesterday</button>
       <button class="fw-chip" id="log-date-reset">Last 7 days</button>
     </div>
     <p class="log-date-showing" id="log-date-showing" aria-live="polite">Showing the last 7 days</p>
@@ -363,11 +374,11 @@
     <p class="daily-report-subheading">Management logs</p>
     <div id="mgmt-logs-display" class="daily-report-grid"></div>
 
-    <p class="section-heading">Current Jobs</p>
+    <p class="section-heading chip-section" id="sec-current-jobs">Current Jobs</p>
     <p class="section-sub" id="current-jobs-subheader">Loading…</p>
     <div id="current-jobs-display"></div>
 
-    <p class="section-heading">Purchase Orders</p>
+    <p class="section-heading chip-section" id="sec-po">Purchase Orders</p>
     <p class="section-sub">Grouped by job number and item type — current jobs only.</p>
     <div id="po-by-job-display"></div>
 
@@ -690,6 +701,7 @@ function showCompany(company) {
   });
   document.getElementById("company-picker").style.display = company ? "none" : "block";
   document.getElementById("header-title").textContent = company ? COMPANY_NAMES[company] : "Chipperfield";
+  if (typeof chipHeaderOffset === "function") chipHeaderOffset();
 }
 
 document.querySelectorAll('[data-company]').forEach(el => {
@@ -701,19 +713,60 @@ document.querySelectorAll(".back-link").forEach(el => {
 });
 
 // ---------- Chipperfield: Overview / Calendar tabs, PTO banner ----------
+function setChipTabActive(el) {
+  document.querySelectorAll("#chip-tabs .lookup-tab").forEach(t => {
+    t.classList.toggle("active", t === el);
+    t.setAttribute("aria-selected", t === el ? "true" : "false");
+  });
+  el.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+function chipJump(el) {
+  if (document.getElementById("chip-calendar").style.display !== "none") showChipTab("overview");
+  chipHeaderOffset();
+  setChipTabActive(el);
+  chipJumping = Date.now();
+  document.getElementById(el.dataset.target).scrollIntoView({ behavior: "smooth", block: "start" });
+}
+let chipJumping = 0;
 function showChipTab(tab) {
   const cal = tab === "calendar";
   document.getElementById("chip-overview").style.display = cal ? "none" : "block";
   document.querySelectorAll("#company-chipperfield .chip-overview-extra").forEach(el => el.style.display = cal ? "none" : "");
   document.getElementById("chip-calendar").style.display = cal ? "block" : "none";
   document.getElementById("chip-main").classList.toggle("cal-wide", cal);
-  document.querySelectorAll("#chip-tabs .lookup-tab").forEach(el =>
-    el.classList.toggle("active", el.getAttribute("data-tab") === tab));
+  setChipTabActive(document.querySelector(`#chip-tabs [data-tab="${tab}"]`));
+  if (cal || tab === "overview") window.scrollTo({ top: 0 });
   if (!cal) calClosePanel();
   if (cal && !calData) loadCalendar(calMonth);
 }
-document.querySelectorAll("#chip-tabs .lookup-tab").forEach(el =>
-  el.addEventListener("click", () => showChipTab(el.getAttribute("data-tab"))));
+document.querySelectorAll("#chip-tabs .lookup-tab").forEach(el => {
+  const go = () => el.dataset.tab === "jump" ? chipJump(el) : showChipTab(el.dataset.tab);
+  el.addEventListener("click", go);
+  el.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+});
+// Keep the sticky tab bar just under the (sticky) header, whatever its height.
+function chipHeaderOffset() {
+  // The header is hidden behind the login screen at first (height 0), so this is
+  // re-measured whenever a company page opens and before each jump.
+  const h = document.querySelector("header");
+  const height = h ? h.offsetHeight : 0;
+  if (height > 0) document.documentElement.style.setProperty("--header-h", height + "px");
+}
+window.addEventListener("resize", chipHeaderOffset);
+chipHeaderOffset();
+// While scrolling the Overview, highlight the tab for the section in view.
+(() => {
+  const ids = ["sec-daily", "sec-po", "sec-current-jobs"];
+  const tabFor = id => document.querySelector(`#chip-tabs [data-target="${id}"]`);
+  const obs = new IntersectionObserver(entries => {
+    if (Date.now() - chipJumping < 900) return;  // let a tab-click scroll finish
+    if (document.getElementById("chip-overview").style.display === "none") return;
+    const visible = entries.filter(e => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+    if (visible) setChipTabActive(tabFor(visible.target.id));
+    else if (window.scrollY < 80) setChipTabActive(document.querySelector('#chip-tabs [data-tab="overview"]'));
+  }, { rootMargin: "-30% 0px -60% 0px" });
+  ids.forEach(id => obs.observe(document.getElementById(id)));
+})();
 
 function calFmt(iso, opts) {
   const [y, m, d] = iso.split("-").map(Number);
@@ -1406,6 +1459,13 @@ function applyLogDateFilter() {
 }
 
 document.getElementById("log-date-apply").addEventListener("click", applyLogDateFilter);
+document.getElementById("log-date-yesterday").addEventListener("click", () => {
+  const d = new Date(); d.setDate(d.getDate() - 1);
+  const y = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  document.getElementById("log-date-from").value = y;
+  document.getElementById("log-date-to").value = y;
+  applyLogDateFilter();
+});
 document.getElementById("log-date-reset").addEventListener("click", () => {
   logDateFilter.start = logDateFilter.end = "";
   document.getElementById("log-date-from").value = "";
@@ -1498,11 +1558,30 @@ async function loadDailyReports() {
             ? `<p class="summary" id="summary-${el.id}-${i}">${snippet(r.summary)}</p>
                <a href="#" class="toggle-details" data-toggle-idx="${i}" data-expanded="false" style="font-size:12px;color:var(--green-dark);">View full report</a>`
             : `<p class="summary" style="color:var(--ink-soft);font-style:italic;">No details captured for this entry.</p>`}
+          ${(r.photoPaths || []).length ? `<div class="log-thumbs" data-thumbs="${i}" aria-label="${r.photoPaths.length} site photo(s)">${r.photoPaths.slice(0, 6).map(() => '<span class="ph"></span>').join("")}</div>` : ""}
           ${logFileLinksHtml(r)}
           ${r.notionUrl ? `<p style="margin:6px 0 0;"><a href="${r.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
           ${r.manualNotes.map(n => `<div style="font-size:12px;padding:6px 0;border-top:1px solid var(--line);"><strong>${n.author}:</strong> ${n.text}</div>`).join("")}
         </div>
       `).join("");
+
+      // Photo thumbnails load when the card scrolls into view (links are made on demand).
+      const thumbObs = new IntersectionObserver(entries => entries.forEach(async entry => {
+        if (!entry.isIntersecting) return;
+        thumbObs.unobserve(entry.target);
+        const r = list[+entry.target.dataset.thumbs];
+        const paths = r.photoPaths.slice(0, 6);
+        try {
+          const links = await logFileLinks(paths, "temp");
+          entry.target.innerHTML = paths.map((p, n) => links[p] && links[p].url
+            ? `<img src="${links[p].url}" alt="Site photo ${n + 1}" loading="lazy" data-open-path="${logFileAttr(p)}" data-open-mode="view">`
+            : "").join("")
+            + (r.photoPaths.length > 6 ? `<span class="more-ph" data-open-path="${logFileAttr(r.photoPaths[6])}" data-open-mode="view">+${r.photoPaths.length - 6}</span>` : "");
+        } catch (err) {
+          entry.target.innerHTML = `<span class="item-sub">Photos couldn't load (${fwEsc(err.message)}). Use the Photo links below.</span>`;
+        }
+      }), { rootMargin: "200px" });
+      el.querySelectorAll("[data-thumbs]").forEach(t => thumbObs.observe(t));
 
       el.querySelectorAll("[data-toggle-idx]").forEach(link => {
         link.addEventListener("click", (e) => {
