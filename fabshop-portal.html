@@ -230,6 +230,12 @@
   <main>
     <!-- ---------- Daily Tab ---------- -->
     <div class="page" id="page-daily-tab">
+      <div class="lookup-tabs" id="dt-tabs" role="tablist">
+        <div class="lookup-tab active" data-dt-tab="sheet" role="tab" tabindex="0" aria-selected="true">Fab Tab Sheet</div>
+        <div class="lookup-tab" data-dt-tab="history" role="tab" tabindex="0" aria-selected="false">History</div>
+      </div>
+
+      <div id="dt-sheet">
       <p class="section-heading">Fab Shop Daily Tab</p>
       <p class="section-sub">The digital version of the paper Tab Sheet — submitting this updates Calvin's dashboard directly.</p>
 
@@ -277,9 +283,20 @@
       </div>
       <div id="roster-list"></div>
 
-      <p class="section-heading" style="margin-top:36px;">History</p>
-      <p class="section-sub">Every past submission, with room for updates/comments on each one.</p>
-      <div id="recent-entries-display"></div>
+      </div>
+
+      <div id="dt-history" style="display:none;">
+        <p class="section-heading">History</p>
+        <p class="section-sub">Past Fab Tab Sheets, with room for updates/comments on each one.</p>
+        <div class="log-date-filter">
+          <label>From <input type="date" id="dth-from"></label>
+          <label>To <input type="date" id="dth-to"></label>
+          <button class="fw-chip primary" id="dth-apply" type="button">Show</button>
+          <button class="fw-chip" id="dth-reset" type="button">Last 7 days</button>
+        </div>
+        <p class="log-date-showing" id="dth-showing" aria-live="polite">Showing the last 7 days</p>
+        <div id="recent-entries-display"></div>
+      </div>
     </div>
 
     <!-- ---------- Evaluation ---------- -->
@@ -383,7 +400,7 @@ function showPage(page) {
   };
   document.getElementById("page-title").textContent = titles[page] || "Chipperfield Ag Fabrication";
 
-  if (page === "daily-tab") { loadRoster(); loadRecentEntries(); }
+  if (page === "daily-tab") { loadRoster(); showDailyTabView("sheet"); }
   else if (page === "evaluation") { mountPortalViews(); loadEvaluationData(); }
   else if (page === "sales") { loadLeads(); }
   else if (page === "jerron-logs") { loadJerronLogs(); }
@@ -658,37 +675,96 @@ document.getElementById("submit-daily-tab-btn").addEventListener("click", async 
   }
 });
 
+// ============== Daily Tab: Fab Tab Sheet / History ==============
+function showDailyTabView(view) {
+  document.getElementById("dt-sheet").style.display = view === "sheet" ? "block" : "none";
+  document.getElementById("dt-history").style.display = view === "history" ? "block" : "none";
+  document.querySelectorAll("#dt-tabs .lookup-tab").forEach(t => {
+    const on = t.dataset.dtTab === view;
+    t.classList.toggle("active", on);
+    t.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  if (view === "history") loadRecentEntries();
+}
+document.querySelectorAll("#dt-tabs .lookup-tab").forEach(t => {
+  t.addEventListener("click", () => showDailyTabView(t.dataset.dtTab));
+  t.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showDailyTabView(t.dataset.dtTab); } });
+});
+
+// History shows the last 7 days unless a date range is picked.
+let dthRange = null;   // { start, end } or null for the last 7 days
+function dthIso(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function dthWindow() {
+  if (dthRange) return dthRange;
+  const end = new Date(), start = new Date();
+  start.setDate(start.getDate() - 6);
+  return { start: dthIso(start), end: dthIso(end) };
+}
+function dthLabel() {
+  if (!dthRange) return "the last 7 days";
+  const f = d => fwDay(d, true);
+  return dthRange.start === dthRange.end ? f(dthRange.start) : `${f(dthRange.start)} – ${f(dthRange.end)}`;
+}
+document.getElementById("dth-apply").addEventListener("click", () => {
+  let start = document.getElementById("dth-from").value, end = document.getElementById("dth-to").value;
+  if (!start && !end) { dthRange = null; loadRecentEntries(); return; }
+  start = start || end; end = end || start;
+  if (start > end) [start, end] = [end, start];
+  document.getElementById("dth-from").value = start;
+  document.getElementById("dth-to").value = end;
+  dthRange = { start, end };
+  loadRecentEntries();
+});
+document.getElementById("dth-reset").addEventListener("click", () => {
+  document.getElementById("dth-from").value = "";
+  document.getElementById("dth-to").value = "";
+  dthRange = null;
+  loadRecentEntries();
+});
+["dth-from", "dth-to"].forEach(id => document.getElementById(id).addEventListener("keydown", e => {
+  if (e.key === "Enter") document.getElementById("dth-apply").click();
+}));
+
 async function loadRecentEntries() {
   const el = document.getElementById("recent-entries-display");
+  const showing = document.getElementById("dth-showing");
   el.innerHTML = '<div class="empty">Loading…</div>';
+  showing.textContent = "Showing " + dthLabel();
   try {
     const res = await fetch("/api/fabshop-portal/daily-entries");
     const data = await res.json();
-    const entries = data.entries || [];
+    const win = dthWindow();
+    const entries = (data.entries || []).filter(e => e.date >= win.start && e.date <= win.end);
+    showing.textContent = `Showing ${dthLabel()} · ${entries.length} tab sheet${entries.length === 1 ? "" : "s"}`;
     if (entries.length === 0) {
-      el.innerHTML = '<div class="empty">No submissions yet.</div>';
+      el.innerHTML = `<div class="empty">No Fab Tab Sheets for ${dthLabel()}.</div>`;
       return;
     }
+    const hm = h => fmtHM(h || 0);
     el.innerHTML = entries.map(e => {
       const notesHtml = (e.notes || []).map(n => `
         <div style="font-size:12px;padding:6px 0;border-top:1px solid var(--line);">
-          <strong>${n.author}:</strong> ${n.text}
+          <strong>${fwEsc(n.author)}:</strong> ${fwEsc(n.text)}
           <span style="color:var(--ink-soft);"> · ${new Date(n.created_at).toLocaleDateString()}</span>
         </div>
       `).join("");
+      const people = (e.employees || []).filter(p => p.name).map(p =>
+        `${fwEsc(p.name)} ${hm((+p.billable || 0) + (+p.non_billable || 0) + (+p.mgt_design || 0))}`).join(" · ");
 
       return `
       <div class="item">
         <div class="item-top">
           <div>
-            <p class="item-title">${e.date}</p>
-            <p class="item-sub">Billable ${e.totals.billable} · Non-billable ${e.totals.non_billable} · MGT/Design ${e.totals.mgt_design}</p>
+            <p class="item-title">${fwEsc(fwDay(e.date, true))}</p>
+            <p class="item-sub">Billable ${hm(e.totals.billable)} · Non-billable ${hm(e.totals.non_billable)} · MGT/Design ${hm(e.totals.mgt_design)}</p>
           </div>
-          <span class="tag ok">${e.estimated_value ? "$" + e.estimated_value.toLocaleString() : (e.value_note ? e.value_note : "no value")}</span>
+          <span class="tag ok">${fwEsc(e.estimated_value ? "$" + e.estimated_value.toLocaleString() : (e.value_note ? e.value_note : "no value"))}</span>
         </div>
-        ${e.description ? `<p class="summary">${e.description}</p>` : ''}
-        ${e.new_leads ? `<p class="summary" style="color:var(--ink-soft);">New leads: ${e.new_leads}</p>` : ''}
-        ${e.problems ? `<p class="summary" style="color:var(--danger-text);">Problems: ${e.problems}</p>` : ''}
+        ${people ? `<p class="item-sub" style="margin-top:6px;">${people}</p>` : ""}
+        ${e.description ? `<p class="summary">${fwEsc(e.description)}</p>` : ''}
+        ${e.new_leads ? `<p class="summary" style="color:var(--ink-soft);">New leads: ${fwEsc(e.new_leads)}</p>` : ''}
+        ${e.problems ? `<p class="summary" style="color:var(--danger-text);">Problems: ${fwEsc(e.problems)}</p>` : ''}
+        ${e.completed_by ? `<p class="item-sub" style="margin-top:6px;">Completed by ${fwEsc(e.completed_by)}</p>` : ""}
         <div style="margin-top:10px;">
           ${notesHtml}
           <div style="display:flex;gap:6px;margin-top:8px;">
