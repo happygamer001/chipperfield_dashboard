@@ -181,6 +181,8 @@
 
   .chart-toggle { display: flex; gap: 8px; margin-bottom: 16px; }
 
+  .dth-lbl { font-size: 11px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .05em; margin: 4px 0 6px; }
+  #dth-presets, #dth-types { margin-bottom: 10px; }
   /* ---------- Fab Tab calendar ---------- */
   .fc-head { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; flex-wrap: wrap; }
   .fc-title { font-size: 17px; font-weight: 700; min-width: 150px; text-align: center; }
@@ -314,12 +316,15 @@
       <div id="dt-history" style="display:none;">
         <p class="section-heading">History</p>
         <p class="section-sub">Every tab sheet on file (online form, paper sheets typed in, and older workbook uploads), the shop's Typeform logs, and Daily Job Logs from the shop's welders (Jon, Alex, Jason).</p>
+        <p class="dth-lbl">How far back</p>
         <div class="fw-chips" id="dth-presets" role="group" aria-label="How far back">
           <button class="fw-chip active" type="button" data-dth-preset="7d">Last 7 days</button>
           <button class="fw-chip" type="button" data-dth-preset="3m">3 months</button>
           <button class="fw-chip" type="button" data-dth-preset="9m">9 months</button>
           <button class="fw-chip" type="button" data-dth-preset="all">All time</button>
         </div>
+        <p class="dth-lbl">What to show</p>
+        <div class="fw-chips" id="dth-types" role="group" aria-label="What to show"></div>
         <div class="log-date-filter">
           <label>From <input type="date" id="dth-from"></label>
           <label>To <input type="date" id="dth-to"></label>
@@ -954,6 +959,41 @@ document.getElementById("dth-apply").addEventListener("click", () => {
 // Everything Jerron's shop has on file, by day: online-form tab sheets, paper sheets
 // typed in, old workbook uploads, the shop's Typeform logs and the welders' Daily Job Logs
 // (same data as Calvin's Daily Log).
+// What kinds of entries History shows. Crew logs = the welders' Daily Job Logs plus the
+// shop's own Fab Shop Daily Log (Typeform).
+const DTH_TYPES = [
+  { key: "all", label: "All" },
+  { key: "tabs", label: "Fab Tabs" },
+  { key: "mgmt", label: "Daily Management Logs" },
+  { key: "crew", label: "Crew Logs" },
+];
+let dthType = "all";
+let dthData = null;
+function dthLogType(l) { return l.job_or_wo === "Daily Management Log" ? "mgmt" : "crew"; }
+function dthFilterDay(d, type) {
+  if (type === "all") return d;
+  return Object.assign({}, d, { tab: type === "tabs" ? d.tab : null, logs: type === "tabs" ? [] : (d.logs || []).filter(l => dthLogType(l) === type) });
+}
+function dthCounts(days) {
+  const c = { all: 0, tabs: 0, mgmt: 0, crew: 0 };
+  days.forEach(d => {
+    if (d.tab) { c.tabs++; c.all++; }
+    (d.logs || []).forEach(l => { c[dthLogType(l)]++; c.all++; });
+  });
+  return c;
+}
+function renderDthTypes(counts) {
+  document.getElementById("dth-types").innerHTML = DTH_TYPES.map(t =>
+    `<button class="fw-chip${dthType === t.key ? " active" : ""}" type="button" data-dth-type="${t.key}" aria-pressed="${dthType === t.key}">${t.label}${counts ? ` (${counts[t.key]})` : ""}</button>`).join("");
+}
+document.getElementById("dth-types").addEventListener("click", e => {
+  const b = e.target.closest("[data-dth-type]");
+  if (!b) return;
+  dthType = b.dataset.dthType;
+  renderHistory();
+});
+renderDthTypes(null);
+
 let dthRequest = 0;  // only the newest History request may draw (filters can change mid-load)
 async function loadRecentEntries() {
   const req = ++dthRequest;
@@ -967,43 +1007,61 @@ async function loadRecentEntries() {
     const data = await res.json();
     if (req !== dthRequest) return;
     if (!res.ok || data.status !== "ok") throw new Error(data.message || "Failed to load");
-    const days = data.days || [];
-    showing.textContent = `Showing ${dthLabel()} · ${data.tab_count} tab sheet${data.tab_count === 1 ? "" : "s"}, `
-      + `${data.log_count} log${data.log_count === 1 ? "" : "s"}` + (data.logs_error ? " · Logs couldn't load" : "");
-    if (!days.length) { el.innerHTML = `<div class="empty">Nothing on file for ${dthLabel()}.</div>`; return; }
-    el.innerHTML = days.map(d => `<div class="fs-day">
-      <div class="fs-dayhead"><strong>${fwEsc(fwDay(d.date, true))}</strong><span>${fwEsc(fsDayHeadline(d))}</span></div>
-      <div id="dth-day-${d.date}"></div>
-      ${d.tab && d.tab.source !== "excel" ? `<div style="display:flex;gap:6px;margin:-2px 0 0;">
-        <input type="text" placeholder="Add a comment to this tab sheet…" data-note-input="${d.date}" style="flex:1;">
-        <button class="ghost" type="button" data-note-submit="${d.date}">Add</button></div>` : ""}
-    </div>`).join("");
-    days.forEach(d => renderLogItems(document.getElementById("dth-day-" + d.date), fsDayEntries(d), "Nothing on file."));
-
-    el.querySelectorAll("[data-note-submit]").forEach(btn => {
-      btn.addEventListener("click", async () => {
-        const date = btn.getAttribute("data-note-submit");
-        const input = el.querySelector(`[data-note-input="${date}"]`);
-        const text = input.value.trim();
-        if (!text) return;
-        btn.disabled = true;
-        try {
-          const r = await fetch(`/api/fabshop-portal/daily-entries/${date}/notes`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text })
-          });
-          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Server error");
-          loadRecentEntries();
-        } catch (err) {
-          alert("Could not add comment: " + err.message);
-          btn.disabled = false;
-        }
-      });
-    });
+    dthData = data;
+    renderHistory();
   } catch (err) {
     el.innerHTML = '<div class="empty">Could not load the history: ' + fwEsc(err.message) + '</div>';
   }
+}
+
+// Draws the loaded History with the type filter applied (no reload needed to switch type).
+function renderHistory() {
+  const el = document.getElementById("recent-entries-display");
+  const showing = document.getElementById("dth-showing");
+  if (!dthData) return;
+  const all = dthData.days || [];
+  const counts = dthCounts(all);
+  renderDthTypes(counts);
+  const days = all.map(d => dthFilterDay(d, dthType)).filter(d => d.tab || (d.logs || []).length);
+  const typeLabel = DTH_TYPES.find(t => t.key === dthType).label;
+  showing.textContent = dthType === "all"
+    ? `Showing ${dthLabel()} · ${counts.tabs} tab sheet${counts.tabs === 1 ? "" : "s"}, ${counts.mgmt + counts.crew} log${counts.mgmt + counts.crew === 1 ? "" : "s"}`
+      + (dthData.logs_error ? " · Logs couldn't load" : "")
+    : `Showing ${typeLabel} for ${dthLabel()} · ${counts[dthType]}`;
+  if (!days.length) {
+    el.innerHTML = `<div class="empty">No ${dthType === "all" ? "entries" : typeLabel} for ${dthLabel()}.</div>`;
+    return;
+  }
+  el.innerHTML = days.map(d => `<div class="fs-day">
+    <div class="fs-dayhead"><strong>${fwEsc(fwDay(d.date, true))}</strong><span>${fwEsc(fsDayHeadline(d))}</span></div>
+    <div id="dth-day-${d.date}"></div>
+    ${d.tab && d.tab.source !== "excel" ? `<div style="display:flex;gap:6px;margin:-2px 0 0;">
+      <input type="text" placeholder="Add a comment to this tab sheet…" data-note-input="${d.date}" style="flex:1;">
+      <button class="ghost" type="button" data-note-submit="${d.date}">Add</button></div>` : ""}
+  </div>`).join("");
+  days.forEach(d => renderLogItems(document.getElementById("dth-day-" + d.date), fsDayEntries(d), "Nothing on file."));
+
+  el.querySelectorAll("[data-note-submit]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const date = btn.getAttribute("data-note-submit");
+      const input = el.querySelector(`[data-note-input="${date}"]`);
+      const text = input.value.trim();
+      if (!text) return;
+      btn.disabled = true;
+      try {
+        const r = await fetch(`/api/fabshop-portal/daily-entries/${date}/notes`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text })
+        });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Server error");
+        loadRecentEntries();
+      } catch (err) {
+        alert("Could not add comment: " + err.message);
+        btn.disabled = false;
+      }
+    });
+  });
 }
 
 // ============== Evaluation ==============
