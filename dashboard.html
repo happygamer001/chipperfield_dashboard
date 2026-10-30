@@ -195,6 +195,32 @@
   .fw-row .chev { color: var(--ink-soft); font-size: 18px; }
   .fw-foot-note { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
   .fw-range { display: flex; gap: 8px; margin-bottom: 12px; }
+  /* Fab Shop: tabs, Daily Log, chart day panel */
+  #company-fabshop { --pto-bg:#fdf3d8; --pto-text:#8a6300; }
+  [data-theme="dark"] #company-fabshop { --pto-bg:#3a3113; --pto-text:#ffce5c; }
+  #fabshop-tabs { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  #fabshop-tabs::-webkit-scrollbar { display: none; }
+  #fabshop-tabs .lookup-tab { white-space: nowrap; flex: 0 0 auto; }
+  .fs-hint { font-size: 12px; color: var(--ink-soft); margin: 8px 0 0; }
+  .fs-daychips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .fs-daychips .fw-chip { min-height: 34px; font-size: 13px; padding: 0 10px; }
+  #fw-chart { cursor: pointer; }
+  .fs-panel { margin: 0 0 14px; }
+  .fs-panel .fs-val { font-size: 28px; font-weight: 700; margin: 4px 0 2px; }
+  .fs-panel .fs-log { padding: 10px 0; border-top: 1px dashed var(--line); }
+  .fs-panel .fs-log:first-of-type { border-top: 0; padding-top: 0; }
+  .fs-panel .lf-links { margin-top: 6px; }
+  .fs-panel-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .fs-day { margin: 0 0 18px; }
+  .fs-dayhead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 4px 2px 8px; border-bottom: 2px solid var(--line); margin-bottom: 10px; }
+  .fs-dayhead strong { font-size: 16px; }
+  .fs-dayhead span { font-size: 13px; color: var(--ink-soft); }
+  .fs-day .item { margin-bottom: 10px; }
+  .fs-pto-group { margin-bottom: 14px; }
+  .fs-pto-group h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft); margin: 0 0 6px; }
+  .fs-pto-row { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 6px; font-size: 14px; }
+  .fs-pto-row .pill { background: var(--pto-bg); color: var(--pto-text); border-radius: 8px; padding: 3px 8px; font-weight: 600; font-size: 13px; }
+  .fs-pto-row .sub { color: var(--ink-soft); font-size: 13px; }
   .pb-range { flex-wrap: wrap; }
   /* Chipperfield: PTO banner + Calendar */
   #company-chipperfield { --site-bg:#e7f0fb; --site-text:#1f5aa6; --pto-bg:#fdf3d8; --pto-text:#8a6300; --evt-text:#5b3fb0; }
@@ -496,10 +522,12 @@
     <p class="fw-eyebrow">Chipperfield Ag</p>
     <p class="section-heading" style="margin-top:2px;">Fab Shop</p>
     <p class="section-sub" id="fabshop-status">Loading…</p>
-    <div class="lookup-tabs" id="fabshop-tabs">
-      <div class="lookup-tab active" data-tab="summary">Summary</div>
-      <div class="lookup-tab" data-tab="weekly">Weekly Breakdown</div>
-      <div class="lookup-tab" data-tab="logs">Logs &amp; Leads</div>
+    <div class="lookup-tabs" id="fabshop-tabs" role="tablist">
+      <div class="lookup-tab active" data-tab="summary" role="tab" tabindex="0">Overview</div>
+      <div class="lookup-tab" data-tab="daily" role="tab" tabindex="0">Daily Log</div>
+      <div class="lookup-tab" data-tab="weekly" role="tab" tabindex="0">Weekly Value</div>
+      <div class="lookup-tab" data-tab="absences" role="tab" tabindex="0">Absences &amp; PTO</div>
+      <div class="lookup-tab" data-tab="leads" role="tab" tabindex="0">Leads</div>
     </div>
 
     <div id="fabshop-summary-display">
@@ -510,20 +538,39 @@
       <div class="fw-box">
         <div class="fw-tile-lbl" id="fw-chart-title">Value of work completed</div>
         <div class="fw-chartwrap"><canvas id="fw-chart" role="img" aria-label="Line graph of the value of work completed"></canvas></div>
+        <p class="fs-hint" id="fs-hint">Tap a point to see that day's log and value.</p>
+        <div class="fs-daychips" id="fs-daychips"></div>
       </div>
+      <div id="fs-panel-slot"></div>
       <div class="fw-stats" id="fw-stats"></div>
       <div id="fw-gaps"></div>
       <p class="fw-explain" id="fw-explain"></p>
+    </div>
+
+    <div id="fabshop-daily-display" style="display:none;">
+      <p class="section-heading">Daily Log</p>
+      <p class="section-sub">The shop's Daily Tab (online form) and its Typeform logs, by day.</p>
+      <div class="log-date-filter">
+        <label>From <input type="date" id="fs-date-from"></label>
+        <label>To <input type="date" id="fs-date-to"></label>
+        <button class="fw-chip primary" id="fs-date-apply">Show</button>
+        <button class="fw-chip" id="fs-date-yesterday">Yesterday</button>
+        <button class="fw-chip" id="fs-date-reset">Last 7 days</button>
+      </div>
+      <p class="log-date-showing" id="fs-date-showing" aria-live="polite">Showing the last 7 days</p>
+      <div id="fs-daylog"></div>
+    </div>
+
+    <div id="fabshop-absences-display" style="display:none;">
+      <p class="section-heading">Time off requests</p>
+      <p class="section-sub">PTO, time off and sick time requested by the fab shop crew.</p>
+      <div id="fs-pto"><div class="empty">Loading…</div></div>
       <div id="fw-impact"></div>
     </div>
 
     <div id="fabshop-weekly-display" style="display:none;"></div>
 
-    <div id="fabshop-logs-display" style="display:none;">
-      <p class="section-heading">Daily Team Log</p>
-      <p class="section-sub">From the shop's own daily Typeform, most recent first.</p>
-      <div id="fabshop-log-display" class="daily-report-grid"></div>
-
+    <div id="fabshop-leads-tab" style="display:none;">
       <p class="section-heading">Fab Shop Sales Leads</p>
       <p class="section-sub">From the Sales Intake Tracker.</p>
       <div id="fabshop-leads-display"></div>
@@ -650,7 +697,8 @@ function showApp() {
   loadFabshopSummary("week");
   loadFabshopImpact();
   loadFabshopWeekly(null);
-  loadFabshopDailyLog();
+  loadFabshopDayLog();
+  loadFabshopPto();
   loadFabshopLeads();
   loadDailyReports();
   loadPtoBanner();
@@ -679,18 +727,25 @@ document.querySelectorAll("#lookup-tabs .lookup-tab").forEach(el => {
   el.addEventListener("click", () => showLookupTab(el.getAttribute("data-tab")));
 });
 
+const FABSHOP_TAB_PANES = { summary: "fabshop-summary-display", daily: "fabshop-daily-display", weekly: "fabshop-weekly-display",
+                            absences: "fabshop-absences-display", leads: "fabshop-leads-tab" };
 function showFabshopTab(tab) {
-  document.getElementById("fabshop-summary-display").style.display = (tab === "summary") ? "block" : "none";
-  document.getElementById("fabshop-weekly-display").style.display = (tab === "weekly") ? "block" : "none";
-  document.getElementById("fabshop-logs-display").style.display = (tab === "logs") ? "block" : "none";
+  Object.entries(FABSHOP_TAB_PANES).forEach(([t, id]) => {
+    document.getElementById(id).style.display = (t === tab) ? "block" : "none";
+  });
   document.querySelectorAll("#fabshop-tabs .lookup-tab").forEach(el => {
-    el.classList.toggle("active", el.getAttribute("data-tab") === tab);
+    const on = el.getAttribute("data-tab") === tab;
+    el.classList.toggle("active", on);
+    el.setAttribute("aria-selected", on ? "true" : "false");
   });
   if (tab === "summary" && fwChart) fwChart.resize();
 }
 
 document.querySelectorAll("#fabshop-tabs .lookup-tab").forEach(el => {
   el.addEventListener("click", () => showFabshopTab(el.getAttribute("data-tab")));
+  el.addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showFabshopTab(el.getAttribute("data-tab")); }
+  });
 });
 
 const COMPANY_NAMES = { chipperfield: "Chipperfield", mccook: "McCook Concrete", fabshop: "Fab Shop" };
@@ -1475,6 +1530,84 @@ document.getElementById("log-date-reset").addEventListener("click", () => {
 ["log-date-from", "log-date-to"].forEach(id =>
   document.getElementById(id).addEventListener("keydown", e => { if (e.key === "Enter") applyLogDateFilter(); }));
 
+// Fills a .log-thumbs box with up to 6 photo thumbnails (+N tile for the rest).
+async function fillLogThumbs(target, photoPaths) {
+  const paths = (photoPaths || []).slice(0, 6);
+  if (!paths.length) return;
+  try {
+    const links = await logFileLinks(paths, "temp");
+    target.innerHTML = paths.map((p, n) => links[p] && links[p].url
+      ? `<img src="${links[p].url}" alt="Site photo ${n + 1}" loading="lazy" data-open-path="${logFileAttr(p)}" data-open-mode="view">`
+      : "").join("")
+      + (photoPaths.length > 6 ? `<span class="more-ph" data-open-path="${logFileAttr(photoPaths[6])}" data-open-mode="view">+${photoPaths.length - 6}</span>` : "");
+  } catch (err) {
+    target.innerHTML = `<span class="item-sub">Photos couldn't load (${fwEsc(err.message)}). Use the Photo links below.</span>`;
+  }
+}
+
+function logSnippet(text, sentenceCount = 2) {
+  if (!text) return "";
+  // Split on sentence-ending punctuation, keep the punctuation with each piece
+  const sentences = text.match(/[^.!?]+[.!?]+(\s|$)/g) || [text];
+  const preview = sentences.slice(0, sentenceCount).join("").trim();
+  return sentences.length > sentenceCount ? preview + "…" : preview;
+}
+
+// One card per log (Chipperfield daily reports and the Fab Shop Daily Log).
+function renderLogItems(el, list, emptyMsg) {
+  if (list.length === 0) {
+    el.innerHTML = `<div class="empty">${emptyMsg}</div>`;
+    return;
+  }
+  el.innerHTML = list.map((r, i) => `
+    <div class="item">
+      <div class="item-top">
+        <div>
+          <p class="item-title">${fwEsc(r.title)}</p>
+          <p class="item-sub">${fwEsc(r.subtitle)}</p>
+        </div>
+        <span class="tag ${r.tagClass}">${fwEsc(r.tagText)}</span>
+      </div>
+      ${r.extraHtml || ""}
+      ${r.summary
+        ? `<p class="summary" id="summary-${el.id}-${i}">${fwEsc(logSnippet(r.summary))}</p>
+           <a href="#" class="toggle-details" data-toggle-idx="${i}" data-expanded="false" style="font-size:12px;color:var(--green-dark);">View full report</a>`
+        : `<p class="summary" style="color:var(--ink-soft);font-style:italic;">No details captured for this entry.</p>`}
+      ${(r.photoPaths || []).length ? `<div class="log-thumbs" data-thumbs="${i}" aria-label="${r.photoPaths.length} site photo(s)">${r.photoPaths.slice(0, 6).map(() => '<span class="ph"></span>').join("")}</div>` : ""}
+      ${logFileLinksHtml(r)}
+      ${r.notionUrl ? `<p style="margin:6px 0 0;"><a href="${r.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
+      ${(r.manualNotes || []).map(n => `<div style="font-size:12px;padding:6px 0;border-top:1px solid var(--line);"><strong>${fwEsc(n.author)}:</strong> ${fwEsc(n.text)}</div>`).join("")}
+    </div>
+  `).join("");
+
+  // Photo thumbnails load when the card scrolls into view (links are made on demand).
+  const thumbObs = new IntersectionObserver(entries => entries.forEach(entry => {
+    if (!entry.isIntersecting) return;
+    thumbObs.unobserve(entry.target);
+    fillLogThumbs(entry.target, list[+entry.target.dataset.thumbs].photoPaths);
+  }), { rootMargin: "200px" });
+  el.querySelectorAll("[data-thumbs]").forEach(t => thumbObs.observe(t));
+
+  el.querySelectorAll("[data-toggle-idx]").forEach(link => {
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      const idx = parseInt(link.getAttribute("data-toggle-idx"), 10);
+      const r = list[idx];
+      const p = document.getElementById(`summary-${el.id}-${idx}`);
+      const expanded = link.getAttribute("data-expanded") === "true";
+      if (expanded) {
+        p.textContent = logSnippet(r.summary);
+        link.textContent = "View full report";
+        link.setAttribute("data-expanded", "false");
+      } else {
+        p.textContent = r.summary;
+        link.textContent = "Show less";
+        link.setAttribute("data-expanded", "true");
+      }
+    });
+  });
+}
+
 async function loadDailyReports() {
   const showingEl = document.getElementById("log-date-showing");
   showingEl.textContent = "Showing " + logDateRangeLabel();
@@ -1532,76 +1665,7 @@ async function loadDailyReports() {
       mgmt.sort((a, b) => (b.subtitle || "").localeCompare(a.subtitle || ""));
     }
 
-    const snippet = (text, sentenceCount = 2) => {
-      if (!text) return "";
-      // Split on sentence-ending punctuation, keep the punctuation with each piece
-      const sentences = text.match(/[^.!?]+[.!?]+(\s|$)/g) || [text];
-      const preview = sentences.slice(0, sentenceCount).join("").trim();
-      return sentences.length > sentenceCount ? preview + "…" : preview;
-    };
-
-    const renderGroup = (el, list, emptyMsg) => {
-      if (list.length === 0) {
-        el.innerHTML = `<div class="empty">${emptyMsg}</div>`;
-        return;
-      }
-      el.innerHTML = list.map((r, i) => `
-        <div class="item">
-          <div class="item-top">
-            <div>
-              <p class="item-title">${r.title}</p>
-              <p class="item-sub">${r.subtitle}</p>
-            </div>
-            <span class="tag ${r.tagClass}">${r.tagText}</span>
-          </div>
-          ${r.summary
-            ? `<p class="summary" id="summary-${el.id}-${i}">${snippet(r.summary)}</p>
-               <a href="#" class="toggle-details" data-toggle-idx="${i}" data-expanded="false" style="font-size:12px;color:var(--green-dark);">View full report</a>`
-            : `<p class="summary" style="color:var(--ink-soft);font-style:italic;">No details captured for this entry.</p>`}
-          ${(r.photoPaths || []).length ? `<div class="log-thumbs" data-thumbs="${i}" aria-label="${r.photoPaths.length} site photo(s)">${r.photoPaths.slice(0, 6).map(() => '<span class="ph"></span>').join("")}</div>` : ""}
-          ${logFileLinksHtml(r)}
-          ${r.notionUrl ? `<p style="margin:6px 0 0;"><a href="${r.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
-          ${r.manualNotes.map(n => `<div style="font-size:12px;padding:6px 0;border-top:1px solid var(--line);"><strong>${n.author}:</strong> ${n.text}</div>`).join("")}
-        </div>
-      `).join("");
-
-      // Photo thumbnails load when the card scrolls into view (links are made on demand).
-      const thumbObs = new IntersectionObserver(entries => entries.forEach(async entry => {
-        if (!entry.isIntersecting) return;
-        thumbObs.unobserve(entry.target);
-        const r = list[+entry.target.dataset.thumbs];
-        const paths = r.photoPaths.slice(0, 6);
-        try {
-          const links = await logFileLinks(paths, "temp");
-          entry.target.innerHTML = paths.map((p, n) => links[p] && links[p].url
-            ? `<img src="${links[p].url}" alt="Site photo ${n + 1}" loading="lazy" data-open-path="${logFileAttr(p)}" data-open-mode="view">`
-            : "").join("")
-            + (r.photoPaths.length > 6 ? `<span class="more-ph" data-open-path="${logFileAttr(r.photoPaths[6])}" data-open-mode="view">+${r.photoPaths.length - 6}</span>` : "");
-        } catch (err) {
-          entry.target.innerHTML = `<span class="item-sub">Photos couldn't load (${fwEsc(err.message)}). Use the Photo links below.</span>`;
-        }
-      }), { rootMargin: "200px" });
-      el.querySelectorAll("[data-thumbs]").forEach(t => thumbObs.observe(t));
-
-      el.querySelectorAll("[data-toggle-idx]").forEach(link => {
-        link.addEventListener("click", (e) => {
-          e.preventDefault();
-          const idx = parseInt(link.getAttribute("data-toggle-idx"), 10);
-          const r = list[idx];
-          const p = document.getElementById(`summary-${el.id}-${idx}`);
-          const expanded = link.getAttribute("data-expanded") === "true";
-          if (expanded) {
-            p.textContent = snippet(r.summary);
-            link.textContent = "View full report";
-            link.setAttribute("data-expanded", "false");
-          } else {
-            p.textContent = r.summary;
-            link.textContent = "Show less";
-            link.setAttribute("data-expanded", "true");
-          }
-        });
-      });
-    };
+    const renderGroup = renderLogItems;
 
     const when = logDateFilter.start ? "for " + logDateRangeLabel() : "in the last 7 days";
     renderGroup(crewEl, crew, `No crew job logs ${when}.`);
@@ -1732,40 +1796,6 @@ async function loadCurrentJobs() {
   }
 }
 
-async function loadFabshopDailyLog() {
-  const el = document.getElementById("fabshop-log-display");
-  el.innerHTML = '<div class="empty">Loading…</div>';
-
-  try {
-    const res = await fetch("/api/recent-logs?days=7");
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || "Failed to load");
-
-    const entries = (data.logs || []).filter(l => l.job_or_wo === "Fab Shop Daily Log");
-
-    if (entries.length === 0) {
-      el.innerHTML = '<div class="empty">No Fab Shop log entries in the last 7 days.</div>';
-      return;
-    }
-
-    el.innerHTML = entries.map(l => `
-      <div class="item">
-        <div class="item-top">
-          <div>
-            <p class="item-title">${l.name}</p>
-            <p class="item-sub">${l.date} · ${l.photo_count} photo(s)</p>
-          </div>
-          <span class="tag ok">Fab Shop</span>
-        </div>
-        ${l.summary ? `<p class="summary">${l.summary}</p>` : `<p class="summary" style="color:var(--ink-soft);font-style:italic;">No details captured for this entry.</p>`}
-        ${logFileLinksHtml({ title: l.name, subtitle: l.date + " · " + l.photo_count + " photo(s)", summary: l.summary || "", pdfPath: l.dropbox_pdf_path || null, photoPaths: l.photo_paths || [] })}
-      </div>
-    `).join("");
-  } catch (err) {
-    el.innerHTML = '<div class="empty">Could not load Fab Shop log: ' + err.message + '</div>';
-  }
-}
-
 async function loadFabshopLeads() {
   const el = document.getElementById("fabshop-leads-display");
   el.innerHTML = '<div class="empty">Loading…</div>';
@@ -1866,6 +1896,12 @@ function renderFabshopSummary(data) {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
+      // Tap anywhere above a day (or week) to open it - no need to hit the dot exactly
+      interaction: { mode: "index", intersect: false },
+      onClick: (evt, _els, chart) => {
+        const hit = chart.getElementsAtEventForMode(evt, "index", { intersect: false }, true);
+        if (hit.length) fsOpenPanel(data.points[hit[0].index], data.range);
+      },
       plugins: {
         legend: { display: false },
         tooltip: { callbacks: { label: c => c.parsed.y == null ? (data.points[c.dataIndex].pending ? "No dollar value" : "No data") : fwMoney(c.parsed.y) } },
@@ -1886,9 +1922,236 @@ function renderFabshopSummary(data) {
     `<div class="fw-gap">No data on file for ${g.weeks} weeks (${fwDay(g.from, false).replace(/^\w+ /, "")} to ${fwDay(g.to, false).replace(/^\w+ /, "")}). The line breaks there; it does not mean $0.</div>`
   ).join("");
 
+  fsSummary = data;
+  document.getElementById("fs-hint").textContent = isWeek
+    ? "Tap a point (or a day below) to see that day's log and value."
+    : "Tap a point to see that week's logs and value.";
+  document.getElementById("fs-daychips").innerHTML = isWeek ? data.points.map((p, i) =>
+    `<button class="fw-chip" data-fs-point="${i}">${fwEsc(p.label)} · ${p.value == null ? (p.pending ? "no $" : "—") : fwMoney(p.value)}</button>`).join("") : "";
+  if (fsPanelKey && !data.points.some(p => p.key === fsPanelKey)) fsClosePanel();
+
   document.getElementById("fw-explain").textContent = isWeek
     ? "Each point is one day's estimated value of work completed, from the Daily Tab. Days with no tab on file, or with no dollar value written, are left blank."
     : "Each point is one week's estimated value, starting from earlier history and the Daily Tab. Earlier history is still being added, so gaps show where no data is on file yet. Days with no dollar value are left out, so a week with several can read low.";
+}
+
+
+// ---------- Fab Shop: what a chart point holds (day panel) ----------
+let fsSummary = null;
+let fsPanelKey = null;
+
+document.getElementById("fs-daychips").addEventListener("click", e => {
+  const b = e.target.closest("[data-fs-point]");
+  if (b && fsSummary) fsOpenPanel(fsSummary.points[+b.dataset.fsPoint], fsSummary.range);
+});
+
+function fsClosePanel() {
+  fsPanelKey = null;
+  document.getElementById("fs-panel-slot").innerHTML = "";
+  document.querySelectorAll("#fs-daychips .fw-chip").forEach(c => c.classList.remove("active"));
+}
+
+function fsAddDays(iso, n) {
+  const d = new Date(iso + "T12:00:00");
+  d.setDate(d.getDate() + n);
+  return fsIso(d);
+}
+function fsIso(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Turns one day from /api/fabshop-day-log into cards for renderLogItems().
+function fsDayEntries(day) {
+  const out = [];
+  const t = day.tab;
+  if (t) {
+    const lines = [];
+    if (t.description) lines.push(t.description);
+    if (t.problems) lines.push("Problems: " + t.problems);
+    if (t.new_leads) lines.push("New lead: " + t.new_leads);
+    const pills = []
+      .concat(t.people.map(p => `<span class="fw-pill wo" style="background:var(--page);color:var(--ink);">${fwEsc(p.name)} ${fwEsc(p.total_hm)}</span>`))
+      .concat(t.wo_tags.map(w => `<span class="fw-pill wo">${fwEsc(w)}</span>`))
+      .concat(t.elsewhere.map(x => `<span class="fw-pill ${x.kind === "mci" ? "mci" : "other"}">→ ${fwEsc(x.label)}</span>`))
+      .concat((t.absences || []).filter(a => a.name !== "Entire fab shop").map(a =>
+        `<span class="fw-pill ${a.type === "left_early" ? "early" : "out"}">${fwEsc(a.name)} ${a.type === "left_early" ? "left early" : "out"}${a.reason && a.reason !== "not listed" ? " (" + fwEsc(a.reason) + ")" : ""}</span>`));
+    const isHistory = t.source === "excel";
+    out.push({
+      title: isHistory ? "Spreadsheet history" : "Daily Tab" + (t.completed_by ? " · " + t.completed_by : ""),
+      subtitle: `${fwDay(day.date, true)} · ${t.total_hm} hrs · Value ${fwValueLabel(t)}`,
+      summary: lines.join("\n\n"),
+      tagClass: "ok", tagText: isHistory ? "History" : "Online form",
+      extraHtml: (t.shop_closed ? '<div class="fw-closed" style="margin-top:8px;">Entire fab shop out</div>' : "")
+        + (pills.length ? `<div class="fw-pills" style="margin-top:8px;">${pills.join("")}</div>` : ""),
+      pdfPath: null, photoPaths: [], notionUrl: null,
+      manualNotes: (t.notes || []).map(n => ({ author: n.author, text: n.text })),
+    });
+  }
+  (day.logs || []).forEach(l => {
+    const mgmt = l.job_or_wo === "Daily Management Log";
+    out.push({
+      title: l.name + (mgmt ? "" : " | Fab Shop Daily Log"),
+      subtitle: `${fwDay(l.date, true)} · ${l.photo_count || 0} photo(s)`,
+      summary: l.summary || "",
+      tagClass: "ok", tagText: mgmt ? "Management log" : "Typeform log",
+      pdfPath: l.dropbox_pdf_path || null, photoPaths: l.photo_paths || [], notionUrl: null,
+      manualNotes: l.manual_notes || [],
+    });
+  });
+  return out;
+}
+
+function fsDayHeadline(day) {
+  const t = day.tab;
+  const bits = [];
+  if (t) { bits.push("Value " + fwValueLabel(t)); bits.push(t.total_hm + " hrs"); }
+  else bits.push("No Daily Tab on file");
+  if (day.logs.length) bits.push(day.logs.length + " Typeform log" + (day.logs.length === 1 ? "" : "s"));
+  if (day.holiday) bits.push("Holiday: " + day.holiday);
+  return bits.join(" · ");
+}
+
+async function fsOpenPanel(point, range) {
+  if (!point) return;
+  const isWeek = range === "week";
+  const start = point.key, end = isWeek ? point.key : fsAddDays(point.key, 6);
+  fsPanelKey = point.key;
+  document.querySelectorAll("#fs-daychips .fw-chip").forEach(c =>
+    c.classList.toggle("active", fsSummary && fsSummary.points[+c.dataset.fsPoint].key === point.key));
+  const slot = document.getElementById("fs-panel-slot");
+  const title = isWeek
+    ? fwDay(start, true)
+    : "Week of " + new Date(start + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  slot.innerHTML = `<div class="cal-panel fs-panel" id="fs-panel" role="region" aria-label="Details for ${fwEsc(title)}">
+    <button class="cal-close" aria-label="Close">✕</button><h3>${fwEsc(title)}</h3><div class="cal-muted">Loading…</div></div>`;
+  slot.querySelector(".cal-close").addEventListener("click", fsClosePanel);
+  slot.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  try {
+    const res = await fetch(`/api/fabshop-day-log?start=${start}&end=${end}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Failed to load");
+    if (fsPanelKey !== point.key) return; // another point was tapped meanwhile
+    const value = point.value == null ? (point.pending ? "No dollar value written" : "Nothing on file") : fwMoney(point.value);
+    const days = data.days || [];
+    const sections = days.map(day => {
+      const entries = fsDayEntries(day);
+      const body = entries.map(r => {
+        const idx = logFileRegister(r);
+        return `<div class="fs-log">
+          <div class="row" style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;">
+            <strong style="font-size:14px;">${fwEsc(r.title)}</strong><span class="tag ok">${fwEsc(r.tagText)}</span></div>
+          ${r.extraHtml || ""}
+          ${r.summary ? `<p class="fw-text" style="margin-top:6px;">${fwEsc(fwSnippet(r.summary).text)}</p>` : '<p class="cal-muted" style="margin:6px 0 0;">No details captured.</p>'}
+          ${r.photoPaths.length ? `<div class="log-thumbs" data-fs-thumbs="${idx}"></div>` : ""}
+          <div class="lf-links"><a href="#" data-preview="${idx}">Preview</a>${r.pdfPath ? `<a href="#" data-open-path="${logFileAttr(r.pdfPath)}" data-open-mode="view">Open PDF ↗</a>` : ""}</div>
+        </div>`;
+      }).join("");
+      return `<div class="cal-sec"><div class="cal-lbl">${fwEsc(isWeek ? "On file" : fwDay(day.date, true))} · ${fwEsc(fsDayHeadline(day))}</div>${body}</div>`;
+    }).join("");
+    const panel = document.getElementById("fs-panel");
+    panel.innerHTML = `<button class="cal-close" aria-label="Close">✕</button>
+      <h3>${fwEsc(title)}</h3>
+      <div class="cal-lbl" style="margin:8px 0 0;">Estimated value${isWeek ? "" : " (week)"}</div>
+      <div class="fs-val">${fwEsc(value)}</div>
+      ${data.logs_error ? `<div class="cal-muted">Typeform logs couldn't load: ${fwEsc(data.logs_error)}</div>` : ""}
+      ${sections || `<div class="cal-sec"><div class="cal-muted">No Daily Tab or Typeform log on file for ${isWeek ? "this day" : "this week"}.</div></div>`}
+      <div class="fs-panel-actions"><button class="fw-chip" id="fs-panel-open">Open in Daily Log</button></div>`;
+    panel.querySelector(".cal-close").addEventListener("click", fsClosePanel);
+    panel.querySelector("#fs-panel-open").addEventListener("click", () => {
+      document.getElementById("fs-date-from").value = start;
+      document.getElementById("fs-date-to").value = end;
+      showFabshopTab("daily");
+      applyFsDateFilter();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+    panel.querySelectorAll("[data-fs-thumbs]").forEach(t => fillLogThumbs(t, LOG_PREVIEWS[+t.dataset.fsThumbs].photoPaths));
+  } catch (err) {
+    const panel = document.getElementById("fs-panel");
+    if (panel) panel.querySelector(".cal-muted").textContent = "Could not load this day: " + err.message;
+  }
+}
+
+// ---------- Fab Shop: Daily Log tab ----------
+let fsDateFilter = { start: null, end: null };
+
+function fsRangeLabel() {
+  if (!fsDateFilter.start) return "the last 7 days";
+  const f = d => fwDay(d, true);
+  return fsDateFilter.start === fsDateFilter.end ? f(fsDateFilter.start) : `${f(fsDateFilter.start)} – ${f(fsDateFilter.end)}`;
+}
+
+function applyFsDateFilter() {
+  let start = document.getElementById("fs-date-from").value;
+  let end = document.getElementById("fs-date-to").value;
+  if (!start && !end) { fsDateFilter = { start: null, end: null }; loadFabshopDayLog(); return; }
+  start = start || end; end = end || start;
+  if (start > end) [start, end] = [end, start];
+  if ((new Date(end) - new Date(start)) / 86400000 > 92) {
+    document.getElementById("fs-date-showing").textContent = "Pick a range of 3 months or less.";
+    return;
+  }
+  document.getElementById("fs-date-from").value = start;
+  document.getElementById("fs-date-to").value = end;
+  fsDateFilter = { start, end };
+  loadFabshopDayLog();
+}
+document.getElementById("fs-date-apply").addEventListener("click", applyFsDateFilter);
+document.getElementById("fs-date-yesterday").addEventListener("click", () => {
+  const y = fsAddDays(fsIso(new Date()), -1);
+  document.getElementById("fs-date-from").value = y;
+  document.getElementById("fs-date-to").value = y;
+  applyFsDateFilter();
+});
+document.getElementById("fs-date-reset").addEventListener("click", () => {
+  document.getElementById("fs-date-from").value = "";
+  document.getElementById("fs-date-to").value = "";
+  applyFsDateFilter();
+});
+["fs-date-from", "fs-date-to"].forEach(id =>
+  document.getElementById(id).addEventListener("keydown", e => { if (e.key === "Enter") applyFsDateFilter(); }));
+
+async function loadFabshopDayLog() {
+  const el = document.getElementById("fs-daylog");
+  const showing = document.getElementById("fs-date-showing");
+  showing.textContent = "Showing " + fsRangeLabel();
+  el.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const q = fsDateFilter.start ? `start=${fsDateFilter.start}&end=${fsDateFilter.end}` : "";
+    const res = await fetch("/api/fabshop-day-log" + (q ? "?" + q : ""));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Failed to load");
+    const days = data.days || [];
+    showing.textContent = `Showing ${fsRangeLabel()} · ${data.tab_count} Daily Tab(s), ${data.log_count} Typeform log(s)`
+      + (data.logs_error ? " · Typeform logs couldn't load" : "");
+    if (!days.length) { el.innerHTML = `<div class="empty">Nothing logged for ${fsRangeLabel()}.</div>`; return; }
+    el.innerHTML = days.map(d => `<div class="fs-day">
+      <div class="fs-dayhead"><strong>${fwEsc(fwDay(d.date, true))}</strong><span>${fwEsc(fsDayHeadline(d))}</span></div>
+      <div id="fs-day-${d.date}"></div></div>`).join("");
+    days.forEach(d => renderLogItems(document.getElementById("fs-day-" + d.date), fsDayEntries(d), "Nothing on file."));
+  } catch (err) {
+    el.innerHTML = '<div class="empty">Could not load the Fab Shop log: ' + fwEsc(err.message) + '</div>';
+  }
+}
+
+// ---------- Fab Shop: time off requests ----------
+async function loadFabshopPto() {
+  const el = document.getElementById("fs-pto");
+  try {
+    const res = await fetch("/api/fabshop-pto");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || "Failed to load");
+    const items = data.items || [];
+    const row = p => `<div class="fs-pto-row"><span><span class="pill">✈ ${fwEsc(p.name)}</span> ${fwEsc(p.label)}${p.hours ? " · " + fwEsc(p.hours) + " hrs" : ""}</span>
+      <span class="sub">${fwEsc(calRange(p.start, p.end))}${p.url ? ` · <a href="${fwEsc(p.url)}" target="_blank" rel="noopener" style="color:var(--green-dark);">Notion ↗</a>` : ""}</span></div>`;
+    const group = (label, list) => list.length ? `<div class="fs-pto-group"><h3>${label}</h3>${list.map(row).join("")}</div>` : "";
+    const now = items.filter(i => i.when === "now"), up = items.filter(i => i.when === "upcoming"),
+      past = items.filter(i => i.when === "past").reverse();
+    el.innerHTML = (group("Out today", now) + group("Coming up (next 90 days)", up) + group("Recent (last 30 days)", past))
+      || '<div class="empty">No time off requested by the fab shop crew in the last 30 or next 90 days.</div>';
+    el.insertAdjacentHTML("beforeend", `<p class="fw-explain">From the PTO request forms in Notion, matched by first name to the fab shop crew list (${fwEsc((data.roster || []).join(", "))}).</p>`);
+  } catch (err) {
+    el.innerHTML = '<div class="empty">Could not load time off requests: ' + fwEsc(err.message) + '</div>';
+  }
 }
 
 // ---------- Fab Shop: holiday + absence impact ----------

@@ -46,6 +46,7 @@ from dropbox_pdf_utils import (  # noqa: E402
     extract_text_from_pdf_bytes,
     DAYS_TO_SHOW_DEFAULT,
     DROPBOX_BASE_FOLDER,
+    MAX_RANGE_DAYS,
 )
 from daily_log_uploader import run_gmail_djl_uploader  # noqa: E402
 import notion_utils  # noqa: E402
@@ -261,25 +262,28 @@ def recent_logs():
                 raise ValueError(f"'{name}' must be a date like 2026-10-01")
         start, end = _iso("start"), _iso("end")
         logs = get_recent_daily_logs(days=days, start=start, end=end)
-
-        dbx = get_dropbox_client()
-        all_notes = _read_json_from_dropbox(dbx, DAILY_LOG_NOTES_PATH, {})
-        title_overrides = _read_json_from_dropbox(dbx, DAILY_LOG_TITLE_OVERRIDES_PATH, {})
-
-        for log in logs:
-            pdf_path = log.get("dropbox_pdf_path")
-            if pdf_path and pdf_path in title_overrides:
-                override = title_overrides[pdf_path]
-                if override.get("name"):
-                    log["name"] = override["name"]
-                if override.get("job_or_wo") is not None:
-                    log["job_or_wo"] = override["job_or_wo"]
-                log["title_corrected"] = True
-            log["manual_notes"] = _notes_for_log(all_notes, log)
-
+        _apply_log_corrections(get_dropbox_client(), logs)
         return jsonify({"days": days, "count": len(logs), "logs": logs})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def _apply_log_corrections(dbx, logs):
+    """Admin title corrections and manual notes, applied to logs from Dropbox."""
+    all_notes = _read_json_from_dropbox(dbx, DAILY_LOG_NOTES_PATH, {})
+    title_overrides = _read_json_from_dropbox(dbx, DAILY_LOG_TITLE_OVERRIDES_PATH, {})
+
+    for log in logs:
+        pdf_path = log.get("dropbox_pdf_path")
+        if pdf_path and pdf_path in title_overrides:
+            override = title_overrides[pdf_path]
+            if override.get("name"):
+                log["name"] = override["name"]
+            if override.get("job_or_wo") is not None:
+                log["job_or_wo"] = override["job_or_wo"]
+            log["title_corrected"] = True
+        log["manual_notes"] = _notes_for_log(all_notes, log)
+    return logs
 
 
 @app.route("/api/log-links", methods=["POST"])
@@ -2506,6 +2510,101 @@ def fabshop_impact():
             "total_est_value": money(hours_lost_total + hol_hours),
             "recent_events": sorted(events, key=lambda x: x["date"], reverse=True)[:25],
         })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def _is_fabshop_log(log):
+    """Typeform logs that belong on the Fab Shop page: the shop's daily team log,
+    plus Jerron's Daily Management Log (same rule as the portal's 'My logs')."""
+    kind = log.get("job_or_wo") or ""
+    return kind == "Fab Shop Daily Log" or (
+        kind == "Daily Management Log" and "jerron" in (log.get("name") or "").lower())
+
+
+def _date_arg(name):
+    raw = (request.args.get(name) or "").strip()
+    if not raw:
+        return None
+    return datetime.date.fromisoformat(raw)
+
+
+@app.route("/api/fabshop-day-log", methods=["GET"])
+@require_role("admin", "calvin")
+def fabshop_day_log():
+    """
+    Everything the Fab Shop logged, grouped by day (newest first):
+      tab  - the Daily Tab from the online form (hours, value, notes), or older
+             spreadsheet history, as one Weekly Breakdown day card
+      logs - Typeform logs in Dropbox (Fab Shop Daily Log, Jerron's management log)
+    ?start=YYYY-MM-DD&end=YYYY-MM-DD (default: the last 7 days, max 93 days).
+    """
+    try:
+        try:
+            start, end = _date_arg("start"), _date_arg("end")
+        except ValueError:
+            return jsonify({"status": "error", "message": "Dates must look like 2026-10-29"}), 400
+        today = _today_central()
+        end = end or today
+        start = start or (end - datetime.timedelta(days=6))
+        if start > end:
+            start, end = end, start
+        start = max(start, end - datetime.timedelta(days=MAX_RANGE_DAYS - 1))
+        lo, hi = start.isoformat(), end.isoformat()
+
+        dbx = get_dropbox_client()
+        live = {e.get("date"): e for e in _read_json_from_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, []) if e.get("date")}
+        days = {}
+        for d in _merge_fabshop_data(dbx)["daily"]:
+            if d.get("date") and lo <= d["date"] <= hi:
+                days[d["date"]] = {"date": d["date"], "tab": _fabshop_day_card(d, live.get(d["date"])), "logs": []}
+
+        logs_error = None
+        try:
+            logs = [l for l in _apply_log_corrections(dbx, get_recent_daily_logs(start=start, end=end))
+                    if _is_fabshop_log(l)]
+        except Exception as err:          # the Daily Tabs still show if Dropbox logs can't be read
+            logs, logs_error = [], str(err)
+        for l in logs:
+            if lo <= (l.get("date") or "") <= hi:
+                days.setdefault(l["date"], {"date": l["date"], "tab": None, "logs": []})["logs"].append(l)
+
+        out = sorted(days.values(), key=lambda x: x["date"], reverse=True)
+        for day in out:
+            day["holiday"] = _holiday_name(day["date"])
+        return jsonify({
+            "status": "ok", "start": lo, "end": hi, "days": out,
+            "tab_count": sum(1 for d in out if d["tab"]),
+            "log_count": sum(len(d["logs"]) for d in out),
+            "logs_error": logs_error,
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-pto", methods=["GET"])
+@require_role("admin", "calvin")
+def fabshop_pto():
+    """PTO / time off / sick time for the fab shop crew, from the same Notion
+    request forms as the Chipperfield calendar. Matched by first name against the
+    fab shop employee list. Upcoming (next 90 days) and recent (last 30 days)."""
+    try:
+        dbx = get_dropbox_client()
+        roster = _read_json_from_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, list(DEFAULT_FABSHOP_EMPLOYEES)) or []
+        first_names = {str(n).strip().split()[0].lower() for n in roster if str(n).strip()}
+        today = _today_central()
+        lo = (today - datetime.timedelta(days=30)).isoformat()
+        hi = (today + datetime.timedelta(days=90)).isoformat()
+        items = []
+        for r in _pto_requests():
+            first = (r["name"].split() or [""])[0].lower()
+            if first not in first_names or r["end"] < lo or r["start"] > hi:
+                continue
+            items.append({**r, "label": _pto_label(r["types"]),
+                          "when": "now" if r["start"] <= today.isoformat() <= r["end"]
+                          else ("upcoming" if r["start"] > today.isoformat() else "past")})
+        items.sort(key=lambda r: r["start"])
+        return jsonify({"status": "ok", "today": today.isoformat(), "roster": roster, "items": items})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
