@@ -170,6 +170,10 @@
   @media (max-width: 640px) { .employee-row { grid-template-columns: 1fr 1fr; } }
   .emp-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
   .emp-card.closed { opacity: .45; pointer-events: none; }
+  .emp-status { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; vertical-align: 1px; }
+  .emp-status:empty { display: none; }
+  .emp-status.ft { background: var(--ok-bg); color: var(--ok-text); }
+  .emp-status.pt { background: var(--blue-bg); color: var(--blue-text); }
   .emp-total { font-size: 12px; color: var(--ink-soft); margin: 2px 0 8px; }
   .emp-total.bad { color: var(--danger-text); font-weight: 600; }
   .radio-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
@@ -504,7 +508,7 @@ function addEmployeeRow(prefillName, prefill) {
   div.innerHTML = `
     <div class="employee-row">
       <div>
-        <label>Name</label>
+        <label>Name <span class="emp-status" data-role="emp-status"></span></label>
         <select data-role="emp-name">${optionsHtml || '<option value="">No roster yet</option>'}</select>
       </div>
       <div>
@@ -535,6 +539,9 @@ function addEmployeeRow(prefillName, prefill) {
     </div>
   `;
   container.appendChild(div);
+  const nameSel = div.querySelector('[data-role="emp-name"]');
+  nameSel.addEventListener("change", () => showEmpStatus(div));
+  showEmpStatus(div);
 
   const upd = () => updateEmpTotal(div);
   div.querySelectorAll('[data-role^="emp-b"],[data-role="emp-nonbillable"],[data-role="emp-mgt"]').forEach(i => i.addEventListener("input", upd));
@@ -558,6 +565,18 @@ function addEmployeeRow(prefillName, prefill) {
   updateEmpTotal(div);
   return div;
 }
+
+// Full Time / Part Time label beside each person's name (none for Jerron, the manager)
+let ROSTER_STATUS = {};
+let ROSTER_STATUS_CHOICES = ["Full Time", "Part Time"];
+function showEmpStatus(card) {
+  const name = card.querySelector('[data-role="emp-name"]').value;
+  const el = card.querySelector('[data-role="emp-status"]');
+  const st = ROSTER_STATUS[name] || "";
+  el.textContent = st;
+  el.className = "emp-status" + (st ? " " + (st === "Full Time" ? "ft" : "pt") : "");
+}
+function refreshEmpStatuses() { document.querySelectorAll("#employee-rows .emp-card").forEach(showEmpStatus); }
 
 function updateEmpTotal(card) {
   const vals = ["emp-billable", "emp-nonbillable", "emp-mgt"].map(r => parseHM(card.querySelector(`[data-role="${r}"]`).value));
@@ -658,6 +677,9 @@ async function loadRoster() {
     const data = await res.json();
     ROSTER = data.employees || [];
     ROSTER_OPTIONAL = data.optional || [];
+    ROSTER_STATUS = data.status || {};
+    ROSTER_STATUS_CHOICES = data.status_choices || ROSTER_STATUS_CHOICES;
+    refreshEmpStatuses();
 
     const rosterEl = document.getElementById("roster-list");
     rosterEl.innerHTML = ROSTER.map(name => {
@@ -665,13 +687,29 @@ async function loadRoster() {
       return `
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--line);">
         <span style="font-size:13px;">${esc(name)} <span style="color:var(--ink-soft);font-size:12px;">· ${optional ? "added when needed" : "on every new sheet"}</span></span>
-        <span style="display:flex;gap:6px;">
+        <span style="display:flex;gap:6px;flex-wrap:wrap;">
+          <select data-roster-status="${esc(name)}" aria-label="Employment status for ${esc(name)}" style="width:auto;padding:6px 10px;font-size:13px;">
+            <option value="">No label</option>
+            ${ROSTER_STATUS_CHOICES.map(c => `<option value="${esc(c)}" ${ROSTER_STATUS[name] === c ? "selected" : ""}>${esc(c)}</option>`).join("")}
+          </select>
           <button class="ghost" type="button" data-roster-optional="${esc(name)}" data-optional="${optional ? "0" : "1"}">${optional ? "Put on every sheet" : "Only when added"}</button>
           <button class="danger" type="button" data-roster-remove="${esc(name)}">Remove</button>
         </span>
       </div>`;
     }).join("") || '<div class="empty">No employees yet.</div>';
     rosterEl.querySelectorAll("[data-roster-remove]").forEach(b => b.addEventListener("click", () => removeRosterEmployee(b.dataset.rosterRemove)));
+    rosterEl.querySelectorAll("[data-roster-status]").forEach(sel => sel.addEventListener("change", async () => {
+      const name = sel.dataset.rosterStatus;
+      sel.disabled = true;
+      try {
+        await fetch("/api/fabshop-portal/employees/status", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, status: sel.value })
+        });
+        if (sel.value) ROSTER_STATUS[name] = sel.value; else delete ROSTER_STATUS[name];
+        refreshEmpStatuses();
+      } finally { sel.disabled = false; }
+    }));
     rosterEl.querySelectorAll("[data-roster-optional]").forEach(b => b.addEventListener("click", async () => {
       b.disabled = true;
       await fetch("/api/fabshop-portal/employees/optional", {

@@ -1734,6 +1734,13 @@ FABSHOP_OPTIONAL_PATH = os.environ.get(
     "FABSHOP_OPTIONAL_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/fabshop_employees_optional.json"
 )
 DEFAULT_FABSHOP_OPTIONAL = ["Josh"]
+# Employment status shown on each person's row of the Fab Tab Sheet. No label for
+# Jerron (shop manager). Changed from the roster manager in the portal.
+FABSHOP_STATUS_PATH = os.environ.get(
+    "FABSHOP_STATUS_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/fabshop_employee_status.json"
+)
+DEFAULT_FABSHOP_STATUS = {"Jon": "Full Time", "Jason": "Part Time", "Alex": "Part Time"}
+FABSHOP_STATUS_CHOICES = ("Full Time", "Part Time")
 
 
 @app.route("/api/fabshop-portal/employees", methods=["GET"])
@@ -1742,7 +1749,10 @@ def fabshop_portal_get_employees():
         dbx = get_dropbox_client()
         employees = _read_json_from_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, DEFAULT_FABSHOP_EMPLOYEES)
         optional = _read_json_from_dropbox(dbx, FABSHOP_OPTIONAL_PATH, DEFAULT_FABSHOP_OPTIONAL)
-        return jsonify({"employees": employees, "optional": [n for n in optional if n in employees]})
+        status = _read_json_from_dropbox(dbx, FABSHOP_STATUS_PATH, DEFAULT_FABSHOP_STATUS)
+        return jsonify({"employees": employees, "optional": [n for n in optional if n in employees],
+                        "status": {n: v for n, v in status.items() if v in FABSHOP_STATUS_CHOICES},
+                        "status_choices": list(FABSHOP_STATUS_CHOICES)})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -1779,6 +1789,27 @@ def fabshop_portal_set_optional():
             optional.append(name)
         _write_json_to_dropbox(dbx, FABSHOP_OPTIONAL_PATH, optional)
         return jsonify({"status": "ok", "optional": optional})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-portal/employees/status", methods=["POST"])
+def fabshop_portal_set_status():
+    """{"name": "Jason", "status": "Part Time"} - "" removes the label."""
+    try:
+        body = request.get_json(force=True) or {}
+        name = (body.get("name") or "").strip()
+        value = (body.get("status") or "").strip()
+        if not name or (value and value not in FABSHOP_STATUS_CHOICES):
+            return jsonify({"status": "error", "message": "Name and Full Time / Part Time (or blank) required"}), 400
+        dbx = get_dropbox_client()
+        status = dict(_read_json_from_dropbox(dbx, FABSHOP_STATUS_PATH, dict(DEFAULT_FABSHOP_STATUS)))
+        if value:
+            status[name] = value
+        else:
+            status.pop(name, None)
+        _write_json_to_dropbox(dbx, FABSHOP_STATUS_PATH, status)
+        return jsonify({"status": "ok", "employee_status": status})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
