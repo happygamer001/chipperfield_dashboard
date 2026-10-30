@@ -536,7 +536,8 @@ async function loadEntryForDate() {
   } catch (e) { return; }
   const entry = ENTRY_CACHE.find(e => e.date === date);
   const rows = document.getElementById("employee-rows");
-  if (!entry) return;
+  // A date with nothing on file starts blank (don't carry over another day's answers)
+  if (!entry) { clearDailyTabFields(); return; }
   rows.innerHTML = "";
   const abs = {}; (entry.absences || []).forEach(a => { abs[a.name] = a; });
   (entry.employees || []).forEach(emp => addEmployeeRow(emp.name, Object.assign({}, emp, { absence: abs[emp.name] })));
@@ -551,6 +552,30 @@ async function loadEntryForDate() {
   const closed = document.getElementById("dt-shop-closed"); closed.checked = !!entry.shop_closed; closed.dispatchEvent(new Event("change"));
 }
 document.getElementById("dt-date").addEventListener("change", loadEntryForDate);
+
+// Today's date in the shop's local time (toISOString would give tomorrow's date after 7pm)
+function localToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Empties every answer on the Fab Tab Sheet and puts back one row per roster employee.
+function clearDailyTabFields() {
+  document.getElementById("employee-rows").innerHTML = "";
+  ROSTER.forEach(name => addEmployeeRow(name));
+  ["dt-description", "dt-new-leads", "dt-problems", "dt-value-note", "dt-estimated-value", "dt-completed-by"]
+    .forEach(id => { document.getElementById(id).value = ""; });
+  const closed = document.getElementById("dt-shop-closed");
+  closed.checked = false; closed.dispatchEvent(new Event("change"));
+}
+
+// After a submit: a fresh sheet for today. If today already has a sheet on file it is
+// loaded instead, so resubmitting never wipes what's there.
+function resetDailyTabForm() {
+  document.getElementById("dt-date").value = localToday();
+  clearDailyTabFields();
+  loadEntryForDate();
+}
 
 document.getElementById("add-employee-row-btn").addEventListener("click", () => addEmployeeRow());
 
@@ -671,8 +696,11 @@ document.getElementById("submit-daily-tab-btn").addEventListener("click", async 
     const data = await res.json();
     if (data.status !== "ok") throw new Error(data.message || "Submit failed");
     ENTRY_CACHE = null;
-    statusEl.textContent = "Submitted — Calvin's dashboard updated.";
+    const when = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    resetDailyTabForm();
+    statusEl.textContent = `Submitted the tab sheet for ${when}. Calvin's dashboard is updated, and the form is cleared for the next one.`;
     statusEl.style.color = "var(--ok-text)";
+    document.getElementById("dt-date").scrollIntoView({ behavior: "smooth", block: "center" });
     loadRecentEntries();
   } catch (err) {
     statusEl.textContent = "Failed: " + err.message;
@@ -1109,7 +1137,7 @@ async function loadJerronLogs() {
 }
 
 // Default the daily tab date field to today
-document.getElementById("dt-date").value = new Date().toISOString().slice(0, 10);
+document.getElementById("dt-date").value = localToday();
 </script>
 
 <script>
