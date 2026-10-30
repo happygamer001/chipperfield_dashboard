@@ -266,6 +266,7 @@
 
       <label>Date</label>
       <input type="date" id="dt-date">
+      <p class="section-sub" id="dt-editing-note" style="display:none;margin:6px 0 0;color:var(--warn-text);">A sheet is already on file for this date. You're editing it; Save changes replaces it (comments are kept).</p>
 
       <label style="display:flex;align-items:center;gap:10px;margin:12px 0;font-size:15px;">
         <input type="checkbox" id="dt-shop-closed" style="width:auto;margin:0;"> Entire fab shop out today
@@ -444,7 +445,8 @@ function showPage(page) {
   };
   document.getElementById("page-title").textContent = titles[page] || "Chipperfield Ag Fabrication";
 
-  if (page === "daily-tab") { loadRoster(); showDailyTabView("sheet"); }
+  // If the date shown already has a sheet on file, open it for editing rather than a blank one
+  if (page === "daily-tab") { loadRoster().then(loadEntryForDate); showDailyTabView("sheet"); }
   else if (page === "evaluation") { mountPortalViews(); loadEvaluationData(); }
   else if (page === "sales") { loadLeads(); }
   else if (page === "jerron-logs") { loadJerronLogs(); }
@@ -577,6 +579,7 @@ async function loadEntryForDate() {
   const rows = document.getElementById("employee-rows");
   // A date with nothing on file starts blank (don't carry over another day's answers)
   if (!entry) { clearDailyTabFields(); return; }
+  setSubmitMode(true);
   rows.innerHTML = "";
   const abs = {}; (entry.absences || []).forEach(a => { abs[a.name] = a; });
   (entry.employees || []).forEach(emp => addEmployeeRow(emp.name, Object.assign({}, emp, { absence: abs[emp.name] })));
@@ -592,6 +595,28 @@ async function loadEntryForDate() {
 }
 document.getElementById("dt-date").addEventListener("change", loadEntryForDate);
 
+// "Save changes" when the picked date already has a sheet on file, "Submit" otherwise
+function setSubmitMode(editing) {
+  document.getElementById("submit-daily-tab-btn").textContent = editing ? "Save changes" : "Submit Daily Tab";
+  document.getElementById("dt-editing-note").style.display = editing ? "block" : "none";
+}
+
+// Edit buttons on History and Calendar cards open that date's sheet in the form
+FS_EDIT_TABS = true;
+document.addEventListener("click", ev => {
+  const b = ev.target.closest("[data-edit-tab]");
+  if (!b) return;
+  ev.preventDefault();
+  const date = b.dataset.editTab;
+  showDailyTabView("sheet");
+  document.getElementById("dt-date").value = date;
+  ENTRY_CACHE = null;
+  loadEntryForDate();
+  const st = document.getElementById("dt-status");
+  st.textContent = "";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+});
+
 // Today's date in the shop's local time (toISOString would give tomorrow's date after 7pm)
 function localToday() {
   const d = new Date();
@@ -599,9 +624,13 @@ function localToday() {
 }
 
 // Empties every answer on the Fab Tab Sheet and puts back one row per roster employee.
+let ROSTER_OPTIONAL = [];
+function defaultRoster() { return ROSTER.filter(n => !ROSTER_OPTIONAL.includes(n)); }
+
 function clearDailyTabFields() {
   document.getElementById("employee-rows").innerHTML = "";
-  ROSTER.forEach(name => addEmployeeRow(name));
+  defaultRoster().forEach(name => addEmployeeRow(name));
+  setSubmitMode(false);
   ["dt-description", "dt-new-leads", "dt-problems", "dt-value-note", "dt-estimated-value", "dt-completed-by"]
     .forEach(id => { document.getElementById(id).value = ""; });
   const closed = document.getElementById("dt-shop-closed");
@@ -623,25 +652,41 @@ async function loadRoster() {
     const res = await fetch("/api/fabshop-portal/employees");
     const data = await res.json();
     ROSTER = data.employees || [];
+    ROSTER_OPTIONAL = data.optional || [];
 
     const rosterEl = document.getElementById("roster-list");
-    rosterEl.innerHTML = ROSTER.map(name => `
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);">
-        <span style="font-size:13px;">${name}</span>
-        <button class="danger" onclick="removeRosterEmployee('${name}')">Remove</button>
-      </div>
-    `).join("") || '<div class="empty">No employees yet.</div>';
+    rosterEl.innerHTML = ROSTER.map(name => {
+      const optional = ROSTER_OPTIONAL.includes(name);
+      return `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--line);">
+        <span style="font-size:13px;">${esc(name)} <span style="color:var(--ink-soft);font-size:12px;">· ${optional ? "added when needed" : "on every new sheet"}</span></span>
+        <span style="display:flex;gap:6px;">
+          <button class="ghost" type="button" data-roster-optional="${esc(name)}" data-optional="${optional ? "0" : "1"}">${optional ? "Put on every sheet" : "Only when added"}</button>
+          <button class="danger" type="button" data-roster-remove="${esc(name)}">Remove</button>
+        </span>
+      </div>`;
+    }).join("") || '<div class="empty">No employees yet.</div>';
+    rosterEl.querySelectorAll("[data-roster-remove]").forEach(b => b.addEventListener("click", () => removeRosterEmployee(b.dataset.rosterRemove)));
+    rosterEl.querySelectorAll("[data-roster-optional]").forEach(b => b.addEventListener("click", async () => {
+      b.disabled = true;
+      await fetch("/api/fabshop-portal/employees/optional", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: b.dataset.rosterOptional, optional: b.dataset.optional === "1" })
+      });
+      loadRoster();
+    }));
 
     // One-click buttons for each roster member — adds their row instantly,
     // no need to open a dropdown and pick their name.
     const quickAddEl = document.getElementById("employee-quick-add");
     quickAddEl.innerHTML = ROSTER.map(name =>
-      `<button class="ghost" type="button" onclick="quickAddEmployee('${name}')">+ ${name}</button>`
+      `<button class="ghost" type="button" data-quick-add="${esc(name)}">+ ${esc(name)}</button>`
     ).join("");
+    quickAddEl.querySelectorAll("[data-quick-add]").forEach(b => b.addEventListener("click", () => quickAddEmployee(b.dataset.quickAdd)));
 
-    // Seed the daily tab with one row per roster employee, if empty
+    // Seed the daily tab with one row per regular employee, if empty ("only when added" names are left off)
     if (document.getElementById("employee-rows").children.length === 0) {
-      ROSTER.forEach(name => addEmployeeRow(name));
+      defaultRoster().forEach(name => addEmployeeRow(name));
     }
   } catch (err) {
     console.error("Failed to load roster:", err);
@@ -736,8 +781,9 @@ document.getElementById("submit-daily-tab-btn").addEventListener("click", async 
     if (data.status !== "ok") throw new Error(data.message || "Submit failed");
     ENTRY_CACHE = null;
     const when = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    const wasEdit = document.getElementById("submit-daily-tab-btn").textContent === "Save changes";
     resetDailyTabForm();
-    statusEl.textContent = `Submitted the tab sheet for ${when}. Calvin's dashboard is updated, and the form is cleared for the next one.`;
+    statusEl.textContent = `${wasEdit ? "Saved your changes to" : "Submitted"} the tab sheet for ${when}. Calvin's dashboard is updated, and the form is cleared for the next one.`;
     statusEl.style.color = "var(--ok-text)";
     document.getElementById("dt-date").scrollIntoView({ behavior: "smooth", block: "center" });
     loadRecentEntries();

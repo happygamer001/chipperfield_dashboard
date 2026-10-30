@@ -1728,6 +1728,12 @@ def fabshop_revenue():
 # ==========================================
 
 DEFAULT_FABSHOP_EMPLOYEES = ["Jon", "Jerron", "Josh", "Caleb", "Jason"]
+# Roster names that are NOT put on a new Fab Tab Sheet automatically, only offered
+# as "+ Name" buttons (e.g. Josh, who fills in now and then).
+FABSHOP_OPTIONAL_PATH = os.environ.get(
+    "FABSHOP_OPTIONAL_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/fabshop_employees_optional.json"
+)
+DEFAULT_FABSHOP_OPTIONAL = ["Josh"]
 
 
 @app.route("/api/fabshop-portal/employees", methods=["GET"])
@@ -1735,7 +1741,8 @@ def fabshop_portal_get_employees():
     try:
         dbx = get_dropbox_client()
         employees = _read_json_from_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, DEFAULT_FABSHOP_EMPLOYEES)
-        return jsonify({"employees": employees})
+        optional = _read_json_from_dropbox(dbx, FABSHOP_OPTIONAL_PATH, DEFAULT_FABSHOP_OPTIONAL)
+        return jsonify({"employees": employees, "optional": [n for n in optional if n in employees]})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -1754,6 +1761,24 @@ def fabshop_portal_add_employee():
             employees.append(name)
             _write_json_to_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, employees)
         return jsonify({"status": "ok", "employees": employees})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-portal/employees/optional", methods=["POST"])
+def fabshop_portal_set_optional():
+    """{"name": "Josh", "optional": true} - true: only added to a sheet when picked."""
+    try:
+        body = request.get_json(force=True) or {}
+        name = (body.get("name") or "").strip()
+        if not name:
+            return jsonify({"status": "error", "message": "Name is required"}), 400
+        dbx = get_dropbox_client()
+        optional = [n for n in _read_json_from_dropbox(dbx, FABSHOP_OPTIONAL_PATH, list(DEFAULT_FABSHOP_OPTIONAL)) if n != name]
+        if body.get("optional"):
+            optional.append(name)
+        _write_json_to_dropbox(dbx, FABSHOP_OPTIONAL_PATH, optional)
+        return jsonify({"status": "ok", "optional": optional})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -1830,6 +1855,12 @@ def fabshop_portal_submit_daily_tab():
         # Preserve any existing comments/notes on this date if resubmitting
         existing = next((e for e in entries if e.get("date") == body["date"]), None)
         entry = _build_fabshop_entry(body, existing.get("notes", []) if existing else [])
+        if existing:
+            # An edit: keep where the sheet came from and when it was first submitted
+            if existing.get("source"):
+                entry["source"] = existing["source"]
+            entry["first_submitted_at"] = existing.get("first_submitted_at") or existing.get("submitted_at")
+            entry["edited_at"] = entry["submitted_at"]
 
         entries = [e for e in entries if e.get("date") != entry["date"]]  # replace same-day resubmission
         entries.append(entry)
@@ -2259,6 +2290,7 @@ def _fabshop_day_card(day, live_entry):
             "new_leads": live_entry.get("new_leads") or "",
             "problems": live_entry.get("problems") or "",
             "completed_by": live_entry.get("completed_by") or "",
+            "edited_at": live_entry.get("edited_at") or "",
             "notes": live_entry.get("notes") or [],
             "absences": [dict(a, name=_display_name(a["name"])) for a in abs_list],
             "shop_closed": closed,
