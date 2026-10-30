@@ -287,7 +287,7 @@
 
       <div id="dt-history" style="display:none;">
         <p class="section-heading">History</p>
-        <p class="section-sub">Past Fab Tab Sheets, with room for updates/comments on each one.</p>
+        <p class="section-sub">Every tab sheet on file (online form, paper sheets typed in, and older workbook uploads) plus the shop's Typeform logs. Up to 3 months at a time.</p>
         <div class="log-date-filter">
           <label>From <input type="date" id="dth-from"></label>
           <label>To <input type="date" id="dth-to"></label>
@@ -710,6 +710,10 @@ document.getElementById("dth-apply").addEventListener("click", () => {
   if (!start && !end) { dthRange = null; loadRecentEntries(); return; }
   start = start || end; end = end || start;
   if (start > end) [start, end] = [end, start];
+  if ((new Date(end) - new Date(start)) / 86400000 > 92) {
+    document.getElementById("dth-showing").textContent = "Pick a range of 3 months or less.";
+    return;
+  }
   document.getElementById("dth-from").value = start;
   document.getElementById("dth-to").value = end;
   dthRange = { start, end };
@@ -725,56 +729,30 @@ document.getElementById("dth-reset").addEventListener("click", () => {
   if (e.key === "Enter") document.getElementById("dth-apply").click();
 }));
 
+// Everything Jerron's shop has on file, by day: online-form tab sheets, paper sheets
+// typed in, old workbook uploads, and the shop's Typeform logs (same data as Calvin's Daily Log).
 async function loadRecentEntries() {
   const el = document.getElementById("recent-entries-display");
   const showing = document.getElementById("dth-showing");
   el.innerHTML = '<div class="empty">Loading…</div>';
   showing.textContent = "Showing " + dthLabel();
   try {
-    const res = await fetch("/api/fabshop-portal/daily-entries");
-    const data = await res.json();
     const win = dthWindow();
-    const entries = (data.entries || []).filter(e => e.date >= win.start && e.date <= win.end);
-    showing.textContent = `Showing ${dthLabel()} · ${entries.length} tab sheet${entries.length === 1 ? "" : "s"}`;
-    if (entries.length === 0) {
-      el.innerHTML = `<div class="empty">No Fab Tab Sheets for ${dthLabel()}.</div>`;
-      return;
-    }
-    const hm = h => fmtHM(h || 0);
-    el.innerHTML = entries.map(e => {
-      const notesHtml = (e.notes || []).map(n => `
-        <div style="font-size:12px;padding:6px 0;border-top:1px solid var(--line);">
-          <strong>${fwEsc(n.author)}:</strong> ${fwEsc(n.text)}
-          <span style="color:var(--ink-soft);"> · ${new Date(n.created_at).toLocaleDateString()}</span>
-        </div>
-      `).join("");
-      const people = (e.employees || []).filter(p => p.name).map(p =>
-        `${fwEsc(p.name)} ${hm((+p.billable || 0) + (+p.non_billable || 0) + (+p.mgt_design || 0))}`).join(" · ");
-
-      return `
-      <div class="item">
-        <div class="item-top">
-          <div>
-            <p class="item-title">${fwEsc(fwDay(e.date, true))}</p>
-            <p class="item-sub">Billable ${hm(e.totals.billable)} · Non-billable ${hm(e.totals.non_billable)} · MGT/Design ${hm(e.totals.mgt_design)}</p>
-          </div>
-          <span class="tag ok">${fwEsc(e.estimated_value ? "$" + e.estimated_value.toLocaleString() : (e.value_note ? e.value_note : "no value"))}</span>
-        </div>
-        ${people ? `<p class="item-sub" style="margin-top:6px;">${people}</p>` : ""}
-        ${e.description ? `<p class="summary">${fwEsc(e.description)}</p>` : ''}
-        ${e.new_leads ? `<p class="summary" style="color:var(--ink-soft);">New leads: ${fwEsc(e.new_leads)}</p>` : ''}
-        ${e.problems ? `<p class="summary" style="color:var(--danger-text);">Problems: ${fwEsc(e.problems)}</p>` : ''}
-        ${e.completed_by ? `<p class="item-sub" style="margin-top:6px;">Completed by ${fwEsc(e.completed_by)}</p>` : ""}
-        <div style="margin-top:10px;">
-          ${notesHtml}
-          <div style="display:flex;gap:6px;margin-top:8px;">
-            <input type="text" placeholder="Add a comment…" data-note-input="${e.date}" style="flex:1;">
-            <button class="ghost" type="button" data-note-submit="${e.date}">Add</button>
-          </div>
-        </div>
-      </div>
-    `;
-    }).join("");
+    const res = await fetch(`/api/fabshop-portal/day-log?start=${win.start}&end=${win.end}`);
+    const data = await res.json();
+    if (!res.ok || data.status !== "ok") throw new Error(data.message || "Failed to load");
+    const days = data.days || [];
+    showing.textContent = `Showing ${dthLabel()} · ${data.tab_count} tab sheet${data.tab_count === 1 ? "" : "s"}, `
+      + `${data.log_count} Typeform log${data.log_count === 1 ? "" : "s"}` + (data.logs_error ? " · Typeform logs couldn't load" : "");
+    if (!days.length) { el.innerHTML = `<div class="empty">Nothing on file for ${dthLabel()}.</div>`; return; }
+    el.innerHTML = days.map(d => `<div class="fs-day">
+      <div class="fs-dayhead"><strong>${fwEsc(fwDay(d.date, true))}</strong><span>${fwEsc(fsDayHeadline(d))}</span></div>
+      <div id="dth-day-${d.date}"></div>
+      ${d.tab && d.tab.source !== "excel" ? `<div style="display:flex;gap:6px;margin:-2px 0 0;">
+        <input type="text" placeholder="Add a comment to this tab sheet…" data-note-input="${d.date}" style="flex:1;">
+        <button class="ghost" type="button" data-note-submit="${d.date}">Add</button></div>` : ""}
+    </div>`).join("");
+    days.forEach(d => renderLogItems(document.getElementById("dth-day-" + d.date), fsDayEntries(d), "Nothing on file."));
 
     el.querySelectorAll("[data-note-submit]").forEach(btn => {
       btn.addEventListener("click", async () => {
@@ -784,11 +762,12 @@ async function loadRecentEntries() {
         if (!text) return;
         btn.disabled = true;
         try {
-          await fetch(`/api/fabshop-portal/daily-entries/${date}/notes`, {
+          const r = await fetch(`/api/fabshop-portal/daily-entries/${date}/notes`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text })
           });
+          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Server error");
           loadRecentEntries();
         } catch (err) {
           alert("Could not add comment: " + err.message);
@@ -797,7 +776,7 @@ async function loadRecentEntries() {
       });
     });
   } catch (err) {
-    el.innerHTML = '<div class="empty">Could not load recent submissions.</div>';
+    el.innerHTML = '<div class="empty">Could not load the history: ' + fwEsc(err.message) + '</div>';
   }
 }
 

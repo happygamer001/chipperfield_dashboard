@@ -143,12 +143,16 @@ function fsDayEntries(day) {
       .concat(t.elsewhere.map(x => `<span class="fw-pill ${x.kind === "mci" ? "mci" : "other"}">→ ${fwEsc(x.label)}</span>`))
       .concat((t.absences || []).filter(a => a.name !== "Entire fab shop").map(a =>
         `<span class="fw-pill ${a.type === "left_early" ? "early" : "out"}">${fwEsc(a.name)} ${a.type === "left_early" ? "left early" : "out"}${a.reason && a.reason !== "not listed" ? " (" + fwEsc(a.reason) + ")" : ""}</span>`));
-    const isHistory = t.source === "excel";
+    // Where the tab sheet came from: the online form, a paper sheet typed in, or the old workbook upload
+    const by = t.completed_by ? " · " + t.completed_by : "";
+    const origin = t.source === "excel" ? { title: "Uploaded tab sheet (workbook)", tag: "Uploaded" }
+      : t.source === "import" ? { title: "Paper tab sheet" + by, tag: "Paper sheet" }
+      : { title: "Daily Tab" + by, tag: "Online form" };
     out.push({
-      title: isHistory ? "Spreadsheet history" : "Daily Tab" + (t.completed_by ? " · " + t.completed_by : ""),
+      title: origin.title,
       subtitle: `${fwDay(day.date, true)} · ${t.total_hm} hrs · Value ${fwValueLabel(t)}`,
       summary: lines.join("\n\n"),
-      tagClass: "ok", tagText: isHistory ? "History" : "Online form",
+      tagClass: "ok", tagText: origin.tag,
       extraHtml: (t.shop_closed ? '<div class="fw-closed" style="margin-top:8px;">Entire fab shop out</div>' : "")
         + (pills.length ? `<div class="fw-pills" style="margin-top:8px;">${pills.join("")}</div>` : ""),
       pdfPath: null, photoPaths: [], notionUrl: null,
