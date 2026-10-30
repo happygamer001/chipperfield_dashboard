@@ -1874,6 +1874,8 @@ def _build_fabshop_entry(body, preserved_notes=None):
         # Who was out / left early and why (used for Calvin's attendance impact)
         "absences": _clean_absences(body.get("absences")),
         "attendance_ok": [str(n) for n in (body.get("attendance_ok") or [])][:10],
+        # Part-timers on their scheduled day off: not an absence, never counted as hours lost
+        "scheduled_off": [str(n)[:60] for n in (body.get("scheduled_off") or []) if str(n).strip()][:10],
         "shop_closed": bool(body.get("shop_closed")),
     }
 
@@ -2228,7 +2230,7 @@ def _entry_absences(entry):
         return [a for a in explicit if a["name"] == "Entire fab shop"] or \
             [{"name": "Entire fab shop", "type": "out", "reason": "everyone gone"}], True
     named = {a["name"] for a in explicit}
-    ok = set(entry.get("attendance_ok") or [])
+    ok = set(entry.get("attendance_ok") or []) | set(entry.get("scheduled_off") or [])
     if total <= 0 and _holiday_name(date):
         return [], False
     if total <= 0 and date >= FABSHOP_COVERAGE_START:
@@ -2318,6 +2320,7 @@ def _fabshop_day_card(day, live_entry):
         "notes": [],
         "holiday": _holiday_name(day["date"]),
         "absences": [],
+        "scheduled_off": [],
         "shop_closed": False,
         "no_notes": True,
     }
@@ -2343,6 +2346,7 @@ def _fabshop_day_card(day, live_entry):
             "edited_at": live_entry.get("edited_at") or "",
             "notes": live_entry.get("notes") or [],
             "absences": [dict(a, name=_display_name(a["name"])) for a in abs_list],
+            "scheduled_off": [_display_name(n) for n in (live_entry.get("scheduled_off") or [])],
             "shop_closed": closed,
             "no_notes": not (live_entry.get("description") or "").strip(),
         })

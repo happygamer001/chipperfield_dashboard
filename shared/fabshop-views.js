@@ -143,7 +143,8 @@ function fsDayEntries(day) {
       .concat(t.wo_tags.map(w => `<span class="fw-pill wo">${fwEsc(w)}</span>`))
       .concat(t.elsewhere.map(x => `<span class="fw-pill ${x.kind === "mci" ? "mci" : "other"}">→ ${fwEsc(x.label)}</span>`))
       .concat((t.absences || []).filter(a => a.name !== "Entire fab shop").map(a =>
-        `<span class="fw-pill ${a.type === "left_early" ? "early" : "out"}">${fwEsc(a.name)} ${a.type === "left_early" ? "left early" : "out"}${a.reason && a.reason !== "not listed" ? " (" + fwEsc(a.reason) + ")" : ""}</span>`));
+        `<span class="fw-pill ${a.type === "left_early" ? "early" : "out"}">${fwEsc(a.name)} ${a.type === "left_early" ? "left early" : "out"}${a.reason && a.reason !== "not listed" ? " (" + fwEsc(a.reason) + ")" : ""}</span>`))
+      .concat((t.scheduled_off || []).map(n => `<span class="fw-pill holiday">${fwEsc(n)} scheduled off</span>`));
     // Where the tab sheet came from: the online form, a paper sheet typed in, or the old workbook upload
     const origin = t.source === "excel" ? { title: "Uploaded tab sheet (workbook)", tag: "Uploaded" }
       : t.source === "import" ? { title: "Paper tab sheet", tag: "Paper sheet" }
@@ -400,6 +401,7 @@ function fwDayCard(day) {
     .concat(day.holiday ? [`<span class="fw-pill holiday">Holiday: ${fwEsc(day.holiday)}</span>`] : [])
     .concat((day.absences || []).filter(a => a.name !== "Entire fab shop").map(a =>
       `<span class="fw-pill ${a.type === "left_early" ? "early" : "out"}">${fwEsc(a.name)} ${a.type === "left_early" ? "left early" : "out"}${a.reason && a.reason !== "not listed" ? " (" + fwEsc(a.reason) + ")" : ""}</span>`))
+    .concat((day.scheduled_off || []).map(n => `<span class="fw-pill holiday">${fwEsc(n)} scheduled off</span>`))
     .concat(day.value_pending && day.value_note ? [`<span class="fw-pill pending">Written note: ${fwEsc(day.value_note)}</span>`] : []);
   const full = !!fwFull[day.date];
   const snip = fwSnippet(day.description);

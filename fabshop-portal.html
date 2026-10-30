@@ -170,6 +170,8 @@
   @media (max-width: 640px) { .employee-row { grid-template-columns: 1fr 1fr; } }
   .emp-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
   .emp-card.closed { opacity: .45; pointer-events: none; }
+  .emp-card.off .employee-row input, .emp-card.off .emp-total { opacity: .4; }
+  .emp-card.off .emp-total::after { content: " · scheduled off day, no hours needed"; }
   .emp-status { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; vertical-align: 1px; }
   .emp-status:empty { display: none; }
   .emp-status.ft { background: var(--ok-bg); color: var(--ok-text); }
@@ -535,6 +537,7 @@ function addEmployeeRow(prefillName, prefill) {
       <label><input type="radio" name="st-${rowId}" value="present" checked> Present</label>
       <label><input type="radio" name="st-${rowId}" value="out"> Out</label>
       <label><input type="radio" name="st-${rowId}" value="left_early"> Left early</label>
+      <label data-role="sched-off-opt" style="display:none;"><input type="radio" name="st-${rowId}" value="scheduled_off"> Scheduled off day</label>
     </div>
     <div class="emp-reason">
       <div class="radio-row">${reasonsHtml}</div>
@@ -548,7 +551,10 @@ function addEmployeeRow(prefillName, prefill) {
 
   const upd = () => updateEmpTotal(div);
   div.querySelectorAll('[data-role^="emp-b"],[data-role="emp-nonbillable"],[data-role="emp-mgt"]').forEach(i => i.addEventListener("input", upd));
-  div.querySelectorAll(`input[name="st-${rowId}"]`).forEach(r => r.addEventListener("change", () => { div.dataset.status = r.value; }));
+  div.querySelectorAll(`input[name="st-${rowId}"]`).forEach(r => r.addEventListener("change", () => {
+    div.dataset.status = r.value;
+    div.classList.toggle("off", r.value === "scheduled_off");
+  }));
   div.querySelector('[data-role="emp-remove"]').addEventListener("click", () => div.remove());
 
   if (prefill) {
@@ -556,7 +562,11 @@ function addEmployeeRow(prefillName, prefill) {
     div.querySelector('[data-role="emp-billable"]').value = hm(prefill.billable);
     div.querySelector('[data-role="emp-nonbillable"]').value = hm(prefill.non_billable);
     div.querySelector('[data-role="emp-mgt"]').value = hm(prefill.mgt_design);
-    if (prefill.absence) {
+    if (prefill.scheduledOff) {
+      div.dataset.status = "scheduled_off";
+      div.classList.add("off");
+      div.querySelector(`input[name="st-${rowId}"][value="scheduled_off"]`).checked = true;
+    } else if (prefill.absence) {
       div.dataset.status = prefill.absence.type;
       div.querySelector(`input[name="st-${rowId}"][value="${prefill.absence.type}"]`).checked = true;
       const known = ABSENCE_REASONS.find(r => (prefill.absence.reason || "").toLowerCase().startsWith(r.toLowerCase()));
@@ -578,6 +588,15 @@ function showEmpStatus(card) {
   const el = card.querySelector('[data-role="emp-status"]');
   const st = ROSTER_STATUS[name] || "";
   el.textContent = st;
+  const opt = card.querySelector('[data-role="sched-off-opt"]');
+  if (opt) {
+    opt.style.display = st === "Part Time" ? "" : "none";
+    if (st !== "Part Time" && card.dataset.status === "scheduled_off") {
+      card.querySelector('input[value="present"]').checked = true;
+      card.dataset.status = "present";
+      card.classList.remove("off");
+    }
+  }
   el.className = "emp-status" + (st ? " " + (st === "Full Time" ? "ft" : "pt") : "");
 }
 function refreshEmpStatuses() { document.querySelectorAll("#employee-rows .emp-card").forEach(showEmpStatus); }
@@ -613,6 +632,7 @@ async function loadEntryForDate() {
   (entry.employees || []).forEach(emp => addEmployeeRow(emp.name, Object.assign({}, emp, { absence: abs[emp.name] })));
   (entry.absences || []).filter(a => a.name !== "Entire fab shop" && !(entry.employees || []).some(e => e.name === a.name))
     .forEach(a => addEmployeeRow(a.name, { absence: a }));
+  (entry.scheduled_off || []).forEach(n => addEmployeeRow(n, { scheduledOff: true }));
   document.getElementById("dt-description").value = entry.description || "";
   document.getElementById("dt-new-leads").value = entry.new_leads || "";
   document.getElementById("dt-problems").value = entry.problems || "";
@@ -780,12 +800,14 @@ document.getElementById("submit-daily-tab-btn").addEventListener("click", async 
     return;
   }
 
-  const employees = [], absences = [];
+  const employees = [], absences = [], scheduledOff = [];
   const shopClosed = document.getElementById("dt-shop-closed").checked;
   let bad = null;
   document.querySelectorAll("#employee-rows .emp-card").forEach(card => {
     const name = card.querySelector('[data-role="emp-name"]').value;
     if (!name) return;
+    // Scheduled off day (part-timers): no hours, not an absence
+    if (card.dataset.status === "scheduled_off") { if (!shopClosed) scheduledOff.push(name); return; }
     const hrs = ["emp-billable", "emp-nonbillable", "emp-mgt"].map(r => parseHM(card.querySelector(`[data-role="${r}"]`).value));
     if (hrs.some(h => Number.isNaN(h))) { bad = name; return; }
     employees.push({ name, billable: hrs[0], non_billable: hrs[1], mgt_design: hrs[2] });
@@ -808,6 +830,7 @@ document.getElementById("submit-daily-tab-btn").addEventListener("click", async 
     date,
     employees: shopClosed ? [] : employees,
     absences,
+    scheduled_off: scheduledOff,
     shop_closed: shopClosed,
     description: document.getElementById("dt-description").value,
     new_leads: document.getElementById("dt-new-leads").value,
