@@ -125,3 +125,7 @@
 .fw-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
 .fw-explain { font-size: 13px; color: var(--ink-soft); line-height: 1.5; margin: 0 0 8px; }
 .fw-gap { background: var(--warn-bg); color: var(--warn-text); border-radius: 10px; padding: 8px 10px; font-size: 13px; margin-bottom: 8px; }
+/* Card footer: actions on the left, who submitted it on the right */
+.lc-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.lc-by { font-size: 12px; color: var(--ink-soft); margin-left: auto; text-align: right; }
+.lc-by strong { color: var(--ink); font-weight: 600; }

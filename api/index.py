@@ -1727,15 +1727,50 @@ def fabshop_revenue():
 # open. Revisit adding a lightweight role gate here once real usage starts.
 # ==========================================
 
-DEFAULT_FABSHOP_EMPLOYEES = ["Jon", "Jerron", "Josh", "Caleb", "Jason"]
+DEFAULT_FABSHOP_EMPLOYEES = ["Jon", "Jerron", "Josh", "Caleb", "Alex"]
+# Old name -> the name the person goes by. Applied wherever fab shop names are shown, so
+# older sheets, the stored roster and Typeform titles written as "Jason" all read "Alex".
+FABSHOP_NAME_ALIASES = {"Jason": "Alex"}
+
+
+def _fab_name(name):
+    name = (name or "").strip()
+    return FABSHOP_NAME_ALIASES.get(name, name)
+
+
+def _fab_names(names):
+    out = []
+    for n in names or []:
+        n = _fab_name(str(n))
+        if n and n not in out:
+            out.append(n)
+    return out
+# Roster names that are NOT put on a new Fab Tab Sheet automatically, only offered
+# as "+ Name" buttons (e.g. Josh, who fills in now and then).
+FABSHOP_OPTIONAL_PATH = os.environ.get(
+    "FABSHOP_OPTIONAL_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/fabshop_employees_optional.json"
+)
+DEFAULT_FABSHOP_OPTIONAL = ["Josh"]
+# Employment status shown on each person's row of the Fab Tab Sheet. No label for
+# Jerron (shop manager). Changed from the roster manager in the portal.
+FABSHOP_STATUS_PATH = os.environ.get(
+    "FABSHOP_STATUS_PATH", "/Chipperfield Ag/Chipperfield/Dashboard/fabshop_employee_status.json"
+)
+DEFAULT_FABSHOP_STATUS = {"Jon": "Full Time", "Alex": "Part Time"}
+FABSHOP_STATUS_CHOICES = ("Full Time", "Part Time")
 
 
 @app.route("/api/fabshop-portal/employees", methods=["GET"])
 def fabshop_portal_get_employees():
     try:
         dbx = get_dropbox_client()
-        employees = _read_json_from_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, DEFAULT_FABSHOP_EMPLOYEES)
-        return jsonify({"employees": employees})
+        employees = _fab_names(_read_json_from_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, DEFAULT_FABSHOP_EMPLOYEES))
+        optional = _fab_names(_read_json_from_dropbox(dbx, FABSHOP_OPTIONAL_PATH, DEFAULT_FABSHOP_OPTIONAL))
+        status = {_fab_name(k): v for k, v in _read_json_from_dropbox(dbx, FABSHOP_STATUS_PATH, DEFAULT_FABSHOP_STATUS).items()}
+        return jsonify({"employees": employees, "optional": [n for n in optional if n in employees],
+                        "status": {n: v for n, v in status.items() if v in FABSHOP_STATUS_CHOICES},
+                        "status_choices": list(FABSHOP_STATUS_CHOICES),
+                        "aliases": FABSHOP_NAME_ALIASES})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -1744,12 +1779,12 @@ def fabshop_portal_get_employees():
 def fabshop_portal_add_employee():
     try:
         body = request.get_json(force=True)
-        name = (body.get("name") or "").strip()
+        name = _fab_name(body.get("name"))
         if not name:
             return jsonify({"status": "error", "message": "Name is required"}), 400
 
         dbx = get_dropbox_client()
-        employees = _read_json_from_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, list(DEFAULT_FABSHOP_EMPLOYEES))
+        employees = _fab_names(_read_json_from_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, list(DEFAULT_FABSHOP_EMPLOYEES)))
         if name not in employees:
             employees.append(name)
             _write_json_to_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, employees)
@@ -1758,14 +1793,53 @@ def fabshop_portal_add_employee():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@app.route("/api/fabshop-portal/employees/optional", methods=["POST"])
+def fabshop_portal_set_optional():
+    """{"name": "Josh", "optional": true} - true: only added to a sheet when picked."""
+    try:
+        body = request.get_json(force=True) or {}
+        name = _fab_name(body.get("name"))
+        if not name:
+            return jsonify({"status": "error", "message": "Name is required"}), 400
+        dbx = get_dropbox_client()
+        optional = [n for n in _fab_names(_read_json_from_dropbox(dbx, FABSHOP_OPTIONAL_PATH, list(DEFAULT_FABSHOP_OPTIONAL))) if n != name]
+        if body.get("optional"):
+            optional.append(name)
+        _write_json_to_dropbox(dbx, FABSHOP_OPTIONAL_PATH, optional)
+        return jsonify({"status": "ok", "optional": optional})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/fabshop-portal/employees/status", methods=["POST"])
+def fabshop_portal_set_status():
+    """{"name": "Alex", "status": "Part Time"} - "" removes the label."""
+    try:
+        body = request.get_json(force=True) or {}
+        name = _fab_name(body.get("name"))
+        value = (body.get("status") or "").strip()
+        if not name or (value and value not in FABSHOP_STATUS_CHOICES):
+            return jsonify({"status": "error", "message": "Name and Full Time / Part Time (or blank) required"}), 400
+        dbx = get_dropbox_client()
+        status = {_fab_name(k): v for k, v in _read_json_from_dropbox(dbx, FABSHOP_STATUS_PATH, dict(DEFAULT_FABSHOP_STATUS)).items()}
+        if value:
+            status[name] = value
+        else:
+            status.pop(name, None)
+        _write_json_to_dropbox(dbx, FABSHOP_STATUS_PATH, status)
+        return jsonify({"status": "ok", "employee_status": status})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.route("/api/fabshop-portal/employees", methods=["DELETE"])
 def fabshop_portal_remove_employee():
     try:
         body = request.get_json(force=True)
-        name = (body.get("name") or "").strip()
+        name = _fab_name(body.get("name"))
 
         dbx = get_dropbox_client()
-        employees = _read_json_from_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, list(DEFAULT_FABSHOP_EMPLOYEES))
+        employees = _fab_names(_read_json_from_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, list(DEFAULT_FABSHOP_EMPLOYEES)))
         employees = [e for e in employees if e != name]
         _write_json_to_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, employees)
         return jsonify({"status": "ok", "employees": employees})
@@ -1830,6 +1904,12 @@ def fabshop_portal_submit_daily_tab():
         # Preserve any existing comments/notes on this date if resubmitting
         existing = next((e for e in entries if e.get("date") == body["date"]), None)
         entry = _build_fabshop_entry(body, existing.get("notes", []) if existing else [])
+        if existing:
+            # An edit: keep where the sheet came from and when it was first submitted
+            if existing.get("source"):
+                entry["source"] = existing["source"]
+            entry["first_submitted_at"] = existing.get("first_submitted_at") or existing.get("submitted_at")
+            entry["edited_at"] = entry["submitted_at"]
 
         entries = [e for e in entries if e.get("date") != entry["date"]]  # replace same-day resubmission
         entries.append(entry)
@@ -2090,6 +2170,7 @@ FABSHOP_PART_TIMERS = {"Caleb": "Caleb W. (part-time)"}
 
 
 def _display_name(name):
+    name = _fab_name(name)
     return FABSHOP_PART_TIMERS.get(name, name)
 
 
@@ -2259,6 +2340,7 @@ def _fabshop_day_card(day, live_entry):
             "new_leads": live_entry.get("new_leads") or "",
             "problems": live_entry.get("problems") or "",
             "completed_by": live_entry.get("completed_by") or "",
+            "edited_at": live_entry.get("edited_at") or "",
             "notes": live_entry.get("notes") or [],
             "absences": [dict(a, name=_display_name(a["name"])) for a in abs_list],
             "shop_closed": closed,
@@ -2517,6 +2599,7 @@ def fabshop_impact():
 
 # The fab shop's dedicated welders. They also fill in Daily Job Logs for jobs, and
 # those logs show on the Fab Shop pages too (matched on the first name in the title).
+# "Jason" stays in the list: Alex's older Daily Job Logs are titled with that name.
 FABSHOP_WELDERS = {n.strip().lower() for n in os.environ.get("FABSHOP_WELDERS", "Jon,Alex,Jason").split(",") if n.strip()}
 
 
@@ -2586,6 +2669,9 @@ def fabshop_day_log():
         except Exception as err:          # the Daily Tabs still show if Dropbox logs can't be read
             logs, logs_error = [], str(err)
         for l in logs:
+            first, _, rest = (l.get("name") or "").partition(" ")
+            if first in FABSHOP_NAME_ALIASES:
+                l["name"] = (FABSHOP_NAME_ALIASES[first] + (" " + rest if rest else "")).strip()
             if lo <= (l.get("date") or "") <= hi:
                 days.setdefault(l["date"], {"date": l["date"], "tab": None, "logs": []})["logs"].append(l)
 
@@ -2611,7 +2697,9 @@ def fabshop_pto():
     try:
         dbx = get_dropbox_client()
         roster = _read_json_from_dropbox(dbx, FABSHOP_EMPLOYEES_PATH, list(DEFAULT_FABSHOP_EMPLOYEES)) or []
+        roster = _fab_names(roster)
         first_names = {str(n).strip().split()[0].lower() for n in roster if str(n).strip()}
+        first_names |= {old.lower() for old, new in FABSHOP_NAME_ALIASES.items() if new.lower() in first_names}
         today = _today_central()
         lo = (today - datetime.timedelta(days=30)).isoformat()
         hi = (today + datetime.timedelta(days=90)).isoformat()

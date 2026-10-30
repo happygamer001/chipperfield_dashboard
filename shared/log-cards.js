@@ -60,6 +60,8 @@ function renderLogItems(el, list, emptyMsg) {
       ${logFileLinksHtml(r)}
       ${r.notionUrl ? `<p style="margin:6px 0 0;"><a href="${r.notionUrl}" target="_blank" rel="noopener" style="font-size:12px;color:var(--green-dark);">View in Notion ↗</a></p>` : ''}
       ${(r.manualNotes || []).map(n => `<div style="font-size:12px;padding:6px 0;border-top:1px solid var(--line);"><strong>${fwEsc(n.author)}:</strong> ${fwEsc(n.text)}</div>`).join("")}
+      ${r.submittedBy !== undefined || r.footerLeft ? `<div class="lc-foot"><span>${r.footerLeft || ""}</span>
+        ${r.submittedBy !== undefined ? `<span class="lc-by">Submitted by <strong>${fwEsc(r.submittedBy || "not recorded")}</strong>${r.footerNote ? " · " + fwEsc(r.footerNote) : ""}</span>` : ""}</div>` : ""}
     </div>
   `).join("");
 

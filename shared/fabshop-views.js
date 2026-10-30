@@ -9,6 +9,7 @@
      onShow(key)                   // called when a tab is opened
    }) */
 
+let FS_EDIT_TABS = false;  // true on Jerron's portal (tab sheet cards get an Edit button)
 let FS_API = { summary: "/api/fabshop-summary", weekly: "/api/fabshop-weekly", impact: "/api/fabshop-impact",
                dayLog: "/api/fabshop-day-log", pto: "/api/fabshop-pto" };
 
@@ -144,10 +145,9 @@ function fsDayEntries(day) {
       .concat((t.absences || []).filter(a => a.name !== "Entire fab shop").map(a =>
         `<span class="fw-pill ${a.type === "left_early" ? "early" : "out"}">${fwEsc(a.name)} ${a.type === "left_early" ? "left early" : "out"}${a.reason && a.reason !== "not listed" ? " (" + fwEsc(a.reason) + ")" : ""}</span>`));
     // Where the tab sheet came from: the online form, a paper sheet typed in, or the old workbook upload
-    const by = t.completed_by ? " · " + t.completed_by : "";
     const origin = t.source === "excel" ? { title: "Uploaded tab sheet (workbook)", tag: "Uploaded" }
-      : t.source === "import" ? { title: "Paper tab sheet" + by, tag: "Paper sheet" }
-      : { title: "Daily Tab" + by, tag: "Online form" };
+      : t.source === "import" ? { title: "Paper tab sheet", tag: "Paper sheet" }
+      : { title: "Daily Tab", tag: "Online form" };
     out.push({
       title: origin.title,
       subtitle: `${fwDay(day.date, true)} · ${t.total_hm} hrs · Value ${fwValueLabel(t)}`,
@@ -157,6 +157,10 @@ function fsDayEntries(day) {
         + (pills.length ? `<div class="fw-pills" style="margin-top:8px;">${pills.join("")}</div>` : ""),
       pdfPath: null, photoPaths: [], notionUrl: null,
       manualNotes: (t.notes || []).map(n => ({ author: n.author, text: n.text })),
+      submittedBy: t.source === "excel" ? "workbook upload" : (t.completed_by || ""),
+      footerNote: t.edited_at ? "edited " + new Date(t.edited_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "",
+      // Jerron's portal turns this on: online-form and paper sheets get an Edit button
+      footerLeft: FS_EDIT_TABS && t.source !== "excel" ? `<button class="fw-chip" type="button" data-edit-tab="${day.date}">Edit sheet</button>` : "",
     });
   }
   (day.logs || []).forEach(l => {
@@ -168,6 +172,7 @@ function fsDayEntries(day) {
       summary: l.summary || "",
       tagClass: "ok", tagText: mgmt ? "Management log" : shopLog ? "Typeform log" : "Job log",
       pdfPath: l.dropbox_pdf_path || null, photoPaths: l.photo_paths || [], notionUrl: null,
+      submittedBy: l.name || "",
       manualNotes: l.manual_notes || [],
     });
   });
@@ -520,7 +525,7 @@ function fabshopViewsHtml(tabList) {
 
     <div id="fabshop-daily-display" style="display:none;">
       <p class="section-heading">Daily Log</p>
-      <p class="section-sub">The shop's Daily Tab (online form), its Typeform logs, and the welders' (Jon, Alex, Jason) Daily Job Logs, by day.</p>
+      <p class="section-sub">The shop's Daily Tab (online form), its Typeform logs, and the welders' (Jon, Alex) Daily Job Logs, by day.</p>
       <div class="log-date-filter">
         <label>From <input type="date" id="fs-date-from"></label>
         <label>To <input type="date" id="fs-date-to"></label>

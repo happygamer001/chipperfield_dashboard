@@ -170,6 +170,10 @@
   @media (max-width: 640px) { .employee-row { grid-template-columns: 1fr 1fr; } }
   .emp-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
   .emp-card.closed { opacity: .45; pointer-events: none; }
+  .emp-status { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; vertical-align: 1px; }
+  .emp-status:empty { display: none; }
+  .emp-status.ft { background: var(--ok-bg); color: var(--ok-text); }
+  .emp-status.pt { background: var(--blue-bg); color: var(--blue-text); }
   .emp-total { font-size: 12px; color: var(--ink-soft); margin: 2px 0 8px; }
   .emp-total.bad { color: var(--danger-text); font-weight: 600; }
   .radio-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
@@ -181,6 +185,8 @@
 
   .chart-toggle { display: flex; gap: 8px; margin-bottom: 16px; }
 
+  .dth-lbl { font-size: 11px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .05em; margin: 4px 0 6px; }
+  #dth-presets, #dth-types { margin-bottom: 10px; }
   /* ---------- Fab Tab calendar ---------- */
   .fc-head { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; flex-wrap: wrap; }
   .fc-title { font-size: 17px; font-weight: 700; min-width: 150px; text-align: center; }
@@ -266,6 +272,7 @@
 
       <label>Date</label>
       <input type="date" id="dt-date">
+      <p class="section-sub" id="dt-editing-note" style="display:none;margin:6px 0 0;color:var(--warn-text);">A sheet is already on file for this date. You're editing it; Save changes replaces it (comments are kept).</p>
 
       <label style="display:flex;align-items:center;gap:10px;margin:12px 0;font-size:15px;">
         <input type="checkbox" id="dt-shop-closed" style="width:auto;margin:0;"> Entire fab shop out today
@@ -312,13 +319,16 @@
 
       <div id="dt-history" style="display:none;">
         <p class="section-heading">History</p>
-        <p class="section-sub">Every tab sheet on file (online form, paper sheets typed in, and older workbook uploads), the shop's Typeform logs, and Daily Job Logs from the shop's welders (Jon, Alex, Jason).</p>
+        <p class="section-sub">Every tab sheet on file (online form, paper sheets typed in, and older workbook uploads), the shop's Typeform logs, and Daily Job Logs from the shop's welders (Jon, Alex).</p>
+        <p class="dth-lbl">How far back</p>
         <div class="fw-chips" id="dth-presets" role="group" aria-label="How far back">
           <button class="fw-chip active" type="button" data-dth-preset="7d">Last 7 days</button>
           <button class="fw-chip" type="button" data-dth-preset="3m">3 months</button>
           <button class="fw-chip" type="button" data-dth-preset="9m">9 months</button>
           <button class="fw-chip" type="button" data-dth-preset="all">All time</button>
         </div>
+        <p class="dth-lbl">What to show</p>
+        <div class="fw-chips" id="dth-types" role="group" aria-label="What to show"></div>
         <div class="log-date-filter">
           <label>From <input type="date" id="dth-from"></label>
           <label>To <input type="date" id="dth-to"></label>
@@ -444,7 +454,8 @@ function showPage(page) {
   };
   document.getElementById("page-title").textContent = titles[page] || "Chipperfield Ag Fabrication";
 
-  if (page === "daily-tab") { loadRoster(); showDailyTabView("sheet"); }
+  // If the date shown already has a sheet on file, open it for editing rather than a blank one
+  if (page === "daily-tab") { loadRoster().then(loadEntryForDate); showDailyTabView("sheet"); }
   else if (page === "evaluation") { mountPortalViews(); loadEvaluationData(); }
   else if (page === "sales") { loadLeads(); }
   else if (page === "jerron-logs") { loadJerronLogs(); }
@@ -490,14 +501,17 @@ function addEmployeeRow(prefillName, prefill) {
   div.id = rowId;
   div.dataset.status = "present";
 
-  const optionsHtml = ROSTER.map(n => `<option value="${esc(n)}" ${n === prefillName ? "selected" : ""}>${esc(n)}</option>`).join("");
+  prefillName = NAME_ALIASES[prefillName] || prefillName;
+  // A name from an older sheet that's no longer on the roster still shows as itself (never silently another person)
+  const names = prefillName && !ROSTER.includes(prefillName) ? ROSTER.concat([prefillName]) : ROSTER;
+  const optionsHtml = names.map(n => `<option value="${esc(n)}" ${n === prefillName ? "selected" : ""}>${esc(n)}</option>`).join("");
   const reasonsHtml = ABSENCE_REASONS.map((r, i) =>
     `<label><input type="radio" name="rs-${rowId}" value="${r}"> ${r}</label>`).join("");
 
   div.innerHTML = `
     <div class="employee-row">
       <div>
-        <label>Name</label>
+        <label>Name <span class="emp-status" data-role="emp-status"></span></label>
         <select data-role="emp-name">${optionsHtml || '<option value="">No roster yet</option>'}</select>
       </div>
       <div>
@@ -528,6 +542,9 @@ function addEmployeeRow(prefillName, prefill) {
     </div>
   `;
   container.appendChild(div);
+  const nameSel = div.querySelector('[data-role="emp-name"]');
+  nameSel.addEventListener("change", () => showEmpStatus(div));
+  showEmpStatus(div);
 
   const upd = () => updateEmpTotal(div);
   div.querySelectorAll('[data-role^="emp-b"],[data-role="emp-nonbillable"],[data-role="emp-mgt"]').forEach(i => i.addEventListener("input", upd));
@@ -551,6 +568,19 @@ function addEmployeeRow(prefillName, prefill) {
   updateEmpTotal(div);
   return div;
 }
+
+// Full Time / Part Time label beside each person's name (none for Jerron, the manager)
+let ROSTER_STATUS = {};
+let NAME_ALIASES = { Jason: "Alex" };  // old name -> preferred name (also sent by the server)
+let ROSTER_STATUS_CHOICES = ["Full Time", "Part Time"];
+function showEmpStatus(card) {
+  const name = card.querySelector('[data-role="emp-name"]').value;
+  const el = card.querySelector('[data-role="emp-status"]');
+  const st = ROSTER_STATUS[name] || "";
+  el.textContent = st;
+  el.className = "emp-status" + (st ? " " + (st === "Full Time" ? "ft" : "pt") : "");
+}
+function refreshEmpStatuses() { document.querySelectorAll("#employee-rows .emp-card").forEach(showEmpStatus); }
 
 function updateEmpTotal(card) {
   const vals = ["emp-billable", "emp-nonbillable", "emp-mgt"].map(r => parseHM(card.querySelector(`[data-role="${r}"]`).value));
@@ -577,6 +607,7 @@ async function loadEntryForDate() {
   const rows = document.getElementById("employee-rows");
   // A date with nothing on file starts blank (don't carry over another day's answers)
   if (!entry) { clearDailyTabFields(); return; }
+  setSubmitMode(true);
   rows.innerHTML = "";
   const abs = {}; (entry.absences || []).forEach(a => { abs[a.name] = a; });
   (entry.employees || []).forEach(emp => addEmployeeRow(emp.name, Object.assign({}, emp, { absence: abs[emp.name] })));
@@ -592,6 +623,28 @@ async function loadEntryForDate() {
 }
 document.getElementById("dt-date").addEventListener("change", loadEntryForDate);
 
+// "Save changes" when the picked date already has a sheet on file, "Submit" otherwise
+function setSubmitMode(editing) {
+  document.getElementById("submit-daily-tab-btn").textContent = editing ? "Save changes" : "Submit Daily Tab";
+  document.getElementById("dt-editing-note").style.display = editing ? "block" : "none";
+}
+
+// Edit buttons on History and Calendar cards open that date's sheet in the form
+FS_EDIT_TABS = true;
+document.addEventListener("click", ev => {
+  const b = ev.target.closest("[data-edit-tab]");
+  if (!b) return;
+  ev.preventDefault();
+  const date = b.dataset.editTab;
+  showDailyTabView("sheet");
+  document.getElementById("dt-date").value = date;
+  ENTRY_CACHE = null;
+  loadEntryForDate();
+  const st = document.getElementById("dt-status");
+  st.textContent = "";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+});
+
 // Today's date in the shop's local time (toISOString would give tomorrow's date after 7pm)
 function localToday() {
   const d = new Date();
@@ -599,9 +652,13 @@ function localToday() {
 }
 
 // Empties every answer on the Fab Tab Sheet and puts back one row per roster employee.
+let ROSTER_OPTIONAL = [];
+function defaultRoster() { return ROSTER.filter(n => !ROSTER_OPTIONAL.includes(n)); }
+
 function clearDailyTabFields() {
   document.getElementById("employee-rows").innerHTML = "";
-  ROSTER.forEach(name => addEmployeeRow(name));
+  defaultRoster().forEach(name => addEmployeeRow(name));
+  setSubmitMode(false);
   ["dt-description", "dt-new-leads", "dt-problems", "dt-value-note", "dt-estimated-value", "dt-completed-by"]
     .forEach(id => { document.getElementById(id).value = ""; });
   const closed = document.getElementById("dt-shop-closed");
@@ -623,25 +680,61 @@ async function loadRoster() {
     const res = await fetch("/api/fabshop-portal/employees");
     const data = await res.json();
     ROSTER = data.employees || [];
+    ROSTER_OPTIONAL = data.optional || [];
+    ROSTER_STATUS = data.status || {};
+    NAME_ALIASES = data.aliases || NAME_ALIASES;
+    ROSTER_STATUS_CHOICES = data.status_choices || ROSTER_STATUS_CHOICES;
+    refreshEmpStatuses();
 
     const rosterEl = document.getElementById("roster-list");
-    rosterEl.innerHTML = ROSTER.map(name => `
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);">
-        <span style="font-size:13px;">${name}</span>
-        <button class="danger" onclick="removeRosterEmployee('${name}')">Remove</button>
-      </div>
-    `).join("") || '<div class="empty">No employees yet.</div>';
+    rosterEl.innerHTML = ROSTER.map(name => {
+      const optional = ROSTER_OPTIONAL.includes(name);
+      return `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--line);">
+        <span style="font-size:13px;">${esc(name)} <span style="color:var(--ink-soft);font-size:12px;">· ${optional ? "added when needed" : "on every new sheet"}</span></span>
+        <span style="display:flex;gap:6px;flex-wrap:wrap;">
+          <select data-roster-status="${esc(name)}" aria-label="Employment status for ${esc(name)}" style="width:auto;padding:6px 10px;font-size:13px;">
+            <option value="">No label</option>
+            ${ROSTER_STATUS_CHOICES.map(c => `<option value="${esc(c)}" ${ROSTER_STATUS[name] === c ? "selected" : ""}>${esc(c)}</option>`).join("")}
+          </select>
+          <button class="ghost" type="button" data-roster-optional="${esc(name)}" data-optional="${optional ? "0" : "1"}">${optional ? "Put on every sheet" : "Only when added"}</button>
+          <button class="danger" type="button" data-roster-remove="${esc(name)}">Remove</button>
+        </span>
+      </div>`;
+    }).join("") || '<div class="empty">No employees yet.</div>';
+    rosterEl.querySelectorAll("[data-roster-remove]").forEach(b => b.addEventListener("click", () => removeRosterEmployee(b.dataset.rosterRemove)));
+    rosterEl.querySelectorAll("[data-roster-status]").forEach(sel => sel.addEventListener("change", async () => {
+      const name = sel.dataset.rosterStatus;
+      sel.disabled = true;
+      try {
+        await fetch("/api/fabshop-portal/employees/status", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, status: sel.value })
+        });
+        if (sel.value) ROSTER_STATUS[name] = sel.value; else delete ROSTER_STATUS[name];
+        refreshEmpStatuses();
+      } finally { sel.disabled = false; }
+    }));
+    rosterEl.querySelectorAll("[data-roster-optional]").forEach(b => b.addEventListener("click", async () => {
+      b.disabled = true;
+      await fetch("/api/fabshop-portal/employees/optional", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: b.dataset.rosterOptional, optional: b.dataset.optional === "1" })
+      });
+      loadRoster();
+    }));
 
     // One-click buttons for each roster member — adds their row instantly,
     // no need to open a dropdown and pick their name.
     const quickAddEl = document.getElementById("employee-quick-add");
     quickAddEl.innerHTML = ROSTER.map(name =>
-      `<button class="ghost" type="button" onclick="quickAddEmployee('${name}')">+ ${name}</button>`
+      `<button class="ghost" type="button" data-quick-add="${esc(name)}">+ ${esc(name)}</button>`
     ).join("");
+    quickAddEl.querySelectorAll("[data-quick-add]").forEach(b => b.addEventListener("click", () => quickAddEmployee(b.dataset.quickAdd)));
 
-    // Seed the daily tab with one row per roster employee, if empty
+    // Seed the daily tab with one row per regular employee, if empty ("only when added" names are left off)
     if (document.getElementById("employee-rows").children.length === 0) {
-      ROSTER.forEach(name => addEmployeeRow(name));
+      defaultRoster().forEach(name => addEmployeeRow(name));
     }
   } catch (err) {
     console.error("Failed to load roster:", err);
@@ -736,8 +829,9 @@ document.getElementById("submit-daily-tab-btn").addEventListener("click", async 
     if (data.status !== "ok") throw new Error(data.message || "Submit failed");
     ENTRY_CACHE = null;
     const when = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    const wasEdit = document.getElementById("submit-daily-tab-btn").textContent === "Save changes";
     resetDailyTabForm();
-    statusEl.textContent = `Submitted the tab sheet for ${when}. Calvin's dashboard is updated, and the form is cleared for the next one.`;
+    statusEl.textContent = `${wasEdit ? "Saved your changes to" : "Submitted"} the tab sheet for ${when}. Calvin's dashboard is updated, and the form is cleared for the next one.`;
     statusEl.style.color = "var(--ok-text)";
     document.getElementById("dt-date").scrollIntoView({ behavior: "smooth", block: "center" });
     loadRecentEntries();
@@ -908,6 +1002,41 @@ document.getElementById("dth-apply").addEventListener("click", () => {
 // Everything Jerron's shop has on file, by day: online-form tab sheets, paper sheets
 // typed in, old workbook uploads, the shop's Typeform logs and the welders' Daily Job Logs
 // (same data as Calvin's Daily Log).
+// What kinds of entries History shows. Crew logs = the welders' Daily Job Logs plus the
+// shop's own Fab Shop Daily Log (Typeform).
+const DTH_TYPES = [
+  { key: "all", label: "All" },
+  { key: "tabs", label: "Fab Tabs" },
+  { key: "mgmt", label: "Daily Management Logs" },
+  { key: "crew", label: "Crew Logs" },
+];
+let dthType = "all";
+let dthData = null;
+function dthLogType(l) { return l.job_or_wo === "Daily Management Log" ? "mgmt" : "crew"; }
+function dthFilterDay(d, type) {
+  if (type === "all") return d;
+  return Object.assign({}, d, { tab: type === "tabs" ? d.tab : null, logs: type === "tabs" ? [] : (d.logs || []).filter(l => dthLogType(l) === type) });
+}
+function dthCounts(days) {
+  const c = { all: 0, tabs: 0, mgmt: 0, crew: 0 };
+  days.forEach(d => {
+    if (d.tab) { c.tabs++; c.all++; }
+    (d.logs || []).forEach(l => { c[dthLogType(l)]++; c.all++; });
+  });
+  return c;
+}
+function renderDthTypes(counts) {
+  document.getElementById("dth-types").innerHTML = DTH_TYPES.map(t =>
+    `<button class="fw-chip${dthType === t.key ? " active" : ""}" type="button" data-dth-type="${t.key}" aria-pressed="${dthType === t.key}">${t.label}${counts ? ` (${counts[t.key]})` : ""}</button>`).join("");
+}
+document.getElementById("dth-types").addEventListener("click", e => {
+  const b = e.target.closest("[data-dth-type]");
+  if (!b) return;
+  dthType = b.dataset.dthType;
+  renderHistory();
+});
+renderDthTypes(null);
+
 let dthRequest = 0;  // only the newest History request may draw (filters can change mid-load)
 async function loadRecentEntries() {
   const req = ++dthRequest;
@@ -921,43 +1050,61 @@ async function loadRecentEntries() {
     const data = await res.json();
     if (req !== dthRequest) return;
     if (!res.ok || data.status !== "ok") throw new Error(data.message || "Failed to load");
-    const days = data.days || [];
-    showing.textContent = `Showing ${dthLabel()} · ${data.tab_count} tab sheet${data.tab_count === 1 ? "" : "s"}, `
-      + `${data.log_count} log${data.log_count === 1 ? "" : "s"}` + (data.logs_error ? " · Logs couldn't load" : "");
-    if (!days.length) { el.innerHTML = `<div class="empty">Nothing on file for ${dthLabel()}.</div>`; return; }
-    el.innerHTML = days.map(d => `<div class="fs-day">
-      <div class="fs-dayhead"><strong>${fwEsc(fwDay(d.date, true))}</strong><span>${fwEsc(fsDayHeadline(d))}</span></div>
-      <div id="dth-day-${d.date}"></div>
-      ${d.tab && d.tab.source !== "excel" ? `<div style="display:flex;gap:6px;margin:-2px 0 0;">
-        <input type="text" placeholder="Add a comment to this tab sheet…" data-note-input="${d.date}" style="flex:1;">
-        <button class="ghost" type="button" data-note-submit="${d.date}">Add</button></div>` : ""}
-    </div>`).join("");
-    days.forEach(d => renderLogItems(document.getElementById("dth-day-" + d.date), fsDayEntries(d), "Nothing on file."));
-
-    el.querySelectorAll("[data-note-submit]").forEach(btn => {
-      btn.addEventListener("click", async () => {
-        const date = btn.getAttribute("data-note-submit");
-        const input = el.querySelector(`[data-note-input="${date}"]`);
-        const text = input.value.trim();
-        if (!text) return;
-        btn.disabled = true;
-        try {
-          const r = await fetch(`/api/fabshop-portal/daily-entries/${date}/notes`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text })
-          });
-          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Server error");
-          loadRecentEntries();
-        } catch (err) {
-          alert("Could not add comment: " + err.message);
-          btn.disabled = false;
-        }
-      });
-    });
+    dthData = data;
+    renderHistory();
   } catch (err) {
     el.innerHTML = '<div class="empty">Could not load the history: ' + fwEsc(err.message) + '</div>';
   }
+}
+
+// Draws the loaded History with the type filter applied (no reload needed to switch type).
+function renderHistory() {
+  const el = document.getElementById("recent-entries-display");
+  const showing = document.getElementById("dth-showing");
+  if (!dthData) return;
+  const all = dthData.days || [];
+  const counts = dthCounts(all);
+  renderDthTypes(counts);
+  const days = all.map(d => dthFilterDay(d, dthType)).filter(d => d.tab || (d.logs || []).length);
+  const typeLabel = DTH_TYPES.find(t => t.key === dthType).label;
+  showing.textContent = dthType === "all"
+    ? `Showing ${dthLabel()} · ${counts.tabs} tab sheet${counts.tabs === 1 ? "" : "s"}, ${counts.mgmt + counts.crew} log${counts.mgmt + counts.crew === 1 ? "" : "s"}`
+      + (dthData.logs_error ? " · Logs couldn't load" : "")
+    : `Showing ${typeLabel} for ${dthLabel()} · ${counts[dthType]}`;
+  if (!days.length) {
+    el.innerHTML = `<div class="empty">No ${dthType === "all" ? "entries" : typeLabel} for ${dthLabel()}.</div>`;
+    return;
+  }
+  el.innerHTML = days.map(d => `<div class="fs-day">
+    <div class="fs-dayhead"><strong>${fwEsc(fwDay(d.date, true))}</strong><span>${fwEsc(fsDayHeadline(d))}</span></div>
+    <div id="dth-day-${d.date}"></div>
+    ${d.tab && d.tab.source !== "excel" ? `<div style="display:flex;gap:6px;margin:-2px 0 0;">
+      <input type="text" placeholder="Add a comment to this tab sheet…" data-note-input="${d.date}" style="flex:1;">
+      <button class="ghost" type="button" data-note-submit="${d.date}">Add</button></div>` : ""}
+  </div>`).join("");
+  days.forEach(d => renderLogItems(document.getElementById("dth-day-" + d.date), fsDayEntries(d), "Nothing on file."));
+
+  el.querySelectorAll("[data-note-submit]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const date = btn.getAttribute("data-note-submit");
+      const input = el.querySelector(`[data-note-input="${date}"]`);
+      const text = input.value.trim();
+      if (!text) return;
+      btn.disabled = true;
+      try {
+        const r = await fetch(`/api/fabshop-portal/daily-entries/${date}/notes`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text })
+        });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Server error");
+        loadRecentEntries();
+      } catch (err) {
+        alert("Could not add comment: " + err.message);
+        btn.disabled = false;
+      }
+    });
+  });
 }
 
 // ============== Evaluation ==============
