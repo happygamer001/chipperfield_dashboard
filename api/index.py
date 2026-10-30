@@ -2218,7 +2218,8 @@ def _fabshop_day_card(day, live_entry):
     value = float(day.get("estimated_value") or 0)
     card = {
         "date": day["date"],
-        "source": "portal" if live_entry else "excel",
+        # portal = online form, import = typed in from a paper sheet, excel = old workbook upload
+        "source": (live_entry.get("source") or "portal") if live_entry else "excel",
         "total_hm": _hm(b + nb + m),
         "billable_hm": _hm(b), "non_billable_hm": _hm(nb), "mgt_design_hm": _hm(m),
         "billable": b, "non_billable": nb, "mgt_design": m,
