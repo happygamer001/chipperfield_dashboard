@@ -161,11 +161,12 @@ function fsDayEntries(day) {
   }
   (day.logs || []).forEach(l => {
     const mgmt = l.job_or_wo === "Daily Management Log";
+    const shopLog = l.job_or_wo === "Fab Shop Daily Log";
     out.push({
-      title: l.name + (mgmt ? "" : " | Fab Shop Daily Log"),
+      title: l.name + (mgmt ? "" : " | " + (l.job_or_wo || "No job number")),
       subtitle: `${fwDay(l.date, true)} · ${l.photo_count || 0} photo(s)`,
       summary: l.summary || "",
-      tagClass: "ok", tagText: mgmt ? "Management log" : "Typeform log",
+      tagClass: "ok", tagText: mgmt ? "Management log" : shopLog ? "Typeform log" : "Job log",
       pdfPath: l.dropbox_pdf_path || null, photoPaths: l.photo_paths || [], notionUrl: null,
       manualNotes: l.manual_notes || [],
     });
@@ -178,7 +179,7 @@ function fsDayHeadline(day) {
   const bits = [];
   if (t) { bits.push("Value " + fwValueLabel(t)); bits.push(t.total_hm + " hrs"); }
   else bits.push("No Daily Tab on file");
-  if (day.logs.length) bits.push(day.logs.length + " Typeform log" + (day.logs.length === 1 ? "" : "s"));
+  if (day.logs.length) bits.push(day.logs.length + " log" + (day.logs.length === 1 ? "" : "s"));
   if (day.holiday) bits.push("Holiday: " + day.holiday);
   return bits.join(" · ");
 }
@@ -225,8 +226,8 @@ async function fsOpenPanel(point, range) {
       <h3>${fwEsc(title)}</h3>
       <div class="cal-lbl" style="margin:8px 0 0;">Estimated value${isWeek ? "" : " (week)"}</div>
       <div class="fs-val">${fwEsc(value)}</div>
-      ${data.logs_error ? `<div class="cal-muted">Typeform logs couldn't load: ${fwEsc(data.logs_error)}</div>` : ""}
-      ${sections || `<div class="cal-sec"><div class="cal-muted">No Daily Tab or Typeform log on file for ${isWeek ? "this day" : "this week"}.</div></div>`}
+      ${data.logs_error ? `<div class="cal-muted">Logs couldn't load: ${fwEsc(data.logs_error)}</div>` : ""}
+      ${sections || `<div class="cal-sec"><div class="cal-muted">No Daily Tab or log on file for ${isWeek ? "this day" : "this week"}.</div></div>`}
       <div class="fs-panel-actions"><button class="fw-chip" id="fs-panel-open">Open in Daily Log</button></div>`;
     panel.querySelector(".cal-close").addEventListener("click", fsClosePanel);
     panel.querySelector("#fs-panel-open").addEventListener("click", () => {
@@ -279,8 +280,8 @@ async function loadFabshopDayLog() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || "Failed to load");
     const days = data.days || [];
-    showing.textContent = `Showing ${fsRangeLabel()} · ${data.tab_count} Daily Tab(s), ${data.log_count} Typeform log(s)`
-      + (data.logs_error ? " · Typeform logs couldn't load" : "");
+    showing.textContent = `Showing ${fsRangeLabel()} · ${data.tab_count} Daily Tab(s), ${data.log_count} log(s)`
+      + (data.logs_error ? " · Logs couldn't load" : "");
     if (!days.length) { el.innerHTML = `<div class="empty">Nothing logged for ${fsRangeLabel()}.</div>`; return; }
     el.innerHTML = days.map(d => `<div class="fs-day">
       <div class="fs-dayhead"><strong>${fwEsc(fwDay(d.date, true))}</strong><span>${fwEsc(fsDayHeadline(d))}</span></div>
@@ -519,7 +520,7 @@ function fabshopViewsHtml(tabList) {
 
     <div id="fabshop-daily-display" style="display:none;">
       <p class="section-heading">Daily Log</p>
-      <p class="section-sub">The shop's Daily Tab (online form) and its Typeform logs, by day.</p>
+      <p class="section-sub">The shop's Daily Tab (online form), its Typeform logs, and the welders' (Jon, Alex, Jason) Daily Job Logs, by day.</p>
       <div class="log-date-filter">
         <label>From <input type="date" id="fs-date-from"></label>
         <label>To <input type="date" id="fs-date-to"></label>

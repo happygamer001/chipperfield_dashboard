@@ -180,6 +180,30 @@
   .emp-card[data-status="out"] .emp-reason, .emp-card[data-status="left_early"] .emp-reason { display: block; }
 
   .chart-toggle { display: flex; gap: 8px; margin-bottom: 16px; }
+
+  /* ---------- Fab Tab calendar ---------- */
+  .fc-head { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; flex-wrap: wrap; }
+  .fc-title { font-size: 17px; font-weight: 700; min-width: 150px; text-align: center; }
+  .fc-nav { min-width: 44px; min-height: 44px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); font-size: 18px; cursor: pointer; }
+  #fc-today { margin-left: auto; }
+  .fc-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: var(--line); gap: 1px; margin-bottom: 12px; }
+  .fc-dow { background: var(--page); font-size: 11px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .05em; padding: 8px 6px; text-align: center; }
+  .fc-day { background: var(--surface); min-height: 84px; padding: 6px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; border: 0; text-align: left; font-family: inherit; color: var(--ink); cursor: default; }
+  .fc-day.has { cursor: pointer; }
+  .fc-day.out { background: var(--page); color: var(--ink-soft); }
+  .fc-day.today .fc-num { background: var(--green); color: #1c1f1a; border-radius: 999px; padding: 1px 7px; }
+  .fc-day.sel { outline: 2px solid var(--green-dark); outline-offset: -2px; }
+  .fc-day:focus-visible { outline: 3px solid var(--green-dark); outline-offset: -3px; }
+  .fc-num { font-size: 13px; font-weight: 600; }
+  .fc-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green-dark); display: inline-block; }
+  .fc-meta { font-size: 11.5px; color: var(--ink-soft); line-height: 1.3; }
+  .fc-hol { font-size: 11px; color: var(--ink-soft); font-style: italic; }
+  @media (max-width: 640px) {
+    .fc-day { min-height: 56px; align-items: center; padding: 4px 2px; }
+    .fc-meta, .fc-hol { display: none; }
+    .fc-dow { padding: 6px 0; font-size: 10px; }
+    #fc-today { margin-left: 0; }
+  }
   .chart-toggle button.active { background: var(--green); border-color: var(--green-dark); color: #0f1a08; font-weight: 600; }
 
   .lead-status { font-size: 12px; padding: 4px 10px; border-radius: 999px; font-weight: 600; }
@@ -233,6 +257,7 @@
       <div class="lookup-tabs" id="dt-tabs" role="tablist">
         <div class="lookup-tab active" data-dt-tab="sheet" role="tab" tabindex="0" aria-selected="true">Fab Tab Sheet</div>
         <div class="lookup-tab" data-dt-tab="history" role="tab" tabindex="0" aria-selected="false">History</div>
+        <div class="lookup-tab" data-dt-tab="calendar" role="tab" tabindex="0" aria-selected="false">Calendar</div>
       </div>
 
       <div id="dt-sheet">
@@ -287,7 +312,7 @@
 
       <div id="dt-history" style="display:none;">
         <p class="section-heading">History</p>
-        <p class="section-sub">Every tab sheet on file (online form, paper sheets typed in, and older workbook uploads) plus the shop's Typeform logs.</p>
+        <p class="section-sub">Every tab sheet on file (online form, paper sheets typed in, and older workbook uploads), the shop's Typeform logs, and Daily Job Logs from the shop's welders (Jon, Alex, Jason).</p>
         <div class="fw-chips" id="dth-presets" role="group" aria-label="How far back">
           <button class="fw-chip active" type="button" data-dth-preset="7d">Last 7 days</button>
           <button class="fw-chip" type="button" data-dth-preset="3m">3 months</button>
@@ -301,6 +326,20 @@
         </div>
         <p class="log-date-showing" id="dth-showing" aria-live="polite">Showing the last 7 days</p>
         <div id="recent-entries-display"></div>
+      </div>
+
+      <div id="dt-calendar" style="display:none;">
+        <p class="section-heading">Calendar</p>
+        <p class="section-sub">Each dot is a Fab Tab Sheet on file. Tap a day to see it.</p>
+        <div class="fc-head">
+          <button class="fc-nav" id="fc-prev" type="button" aria-label="Previous month">‹</button>
+          <div class="fc-title" id="fc-title" aria-live="polite"></div>
+          <button class="fc-nav" id="fc-next" type="button" aria-label="Next month">›</button>
+          <button class="fw-chip" id="fc-today" type="button">This month</button>
+        </div>
+        <p class="log-date-showing" id="fc-status"></p>
+        <div class="fc-grid" id="fc-grid" role="grid" aria-label="Fab Tab Sheets by day"></div>
+        <div id="fc-panel"></div>
       </div>
     </div>
 
@@ -712,12 +751,111 @@ document.getElementById("submit-daily-tab-btn").addEventListener("click", async 
 function showDailyTabView(view) {
   document.getElementById("dt-sheet").style.display = view === "sheet" ? "block" : "none";
   document.getElementById("dt-history").style.display = view === "history" ? "block" : "none";
+  document.getElementById("dt-calendar").style.display = view === "calendar" ? "block" : "none";
   document.querySelectorAll("#dt-tabs .lookup-tab").forEach(t => {
     const on = t.dataset.dtTab === view;
     t.classList.toggle("active", on);
     t.setAttribute("aria-selected", on ? "true" : "false");
   });
   if (view === "history") loadRecentEntries();
+  if (view === "calendar") loadFabCalendar(fcMonth);
+}
+
+// ============== Daily Tab: Calendar (Fab Tab Sheets only, for now) ==============
+// Each day with a tab sheet gets a dot; tapping it shows that sheet. Day data comes from the
+// same feed as History (tabs_only=1), so it already carries billable / non-billable hours -
+// enough to color days by the 80% billable goal later.
+let fcMonth = localToday().slice(0, 7);
+let fcDays = {};
+let fcSelected = null;
+function fcShift(month, n) {
+  const [y, m] = month.split("-").map(Number);
+  const d = new Date(y, m - 1 + n, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+document.getElementById("fc-prev").addEventListener("click", () => loadFabCalendar(fcShift(fcMonth, -1)));
+document.getElementById("fc-next").addEventListener("click", () => loadFabCalendar(fcShift(fcMonth, 1)));
+document.getElementById("fc-today").addEventListener("click", () => loadFabCalendar(localToday().slice(0, 7)));
+
+function fcGridDates(month) {
+  const [y, m] = month.split("-").map(Number);
+  const first = new Date(y, m - 1, 1), last = new Date(y, m, 0);
+  const start = new Date(first); start.setDate(1 - ((first.getDay() + 6) % 7));          // Monday on/before the 1st
+  const end = new Date(last); end.setDate(last.getDate() + (7 - ((last.getDay() + 6) % 7)) - 1); // Sunday on/after the last
+  const out = [];
+  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) out.push(dthIso(d));
+  return out;
+}
+
+async function loadFabCalendar(month) {
+  fcMonth = month;
+  const [y, m] = month.split("-").map(Number);
+  document.getElementById("fc-title").textContent = new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const dates = fcGridDates(month);
+  const status = document.getElementById("fc-status");
+  status.textContent = "Loading…";
+  renderFabCalendar(dates, {});
+  try {
+    const res = await fetch(`/api/fabshop-portal/day-log?tabs_only=1&start=${dates[0]}&end=${dates[dates.length - 1]}`);
+    const data = await res.json();
+    if (!res.ok || data.status !== "ok") throw new Error(data.message || "Failed to load");
+    if (fcMonth !== month) return; // moved on to another month meanwhile
+    fcDays = {};
+    (data.days || []).forEach(d => { if (d.tab) fcDays[d.date] = d; });
+    const inMonth = Object.keys(fcDays).filter(k => k.startsWith(month)).length;
+    status.textContent = inMonth ? `${inMonth} Fab Tab Sheet${inMonth === 1 ? "" : "s"} this month` : "No Fab Tab Sheets on file this month";
+    renderFabCalendar(dates, fcDays);
+    if (fcSelected && fcDays[fcSelected]) fcOpen(fcSelected); else document.getElementById("fc-panel").innerHTML = "";
+  } catch (err) {
+    status.textContent = "Could not load the calendar: " + err.message;
+  }
+}
+
+function renderFabCalendar(dates, days) {
+  const today = localToday();
+  const grid = document.getElementById("fc-grid");
+  grid.innerHTML = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(d => `<div class="fc-dow" role="columnheader">${d}</div>`).join("")
+    + dates.map(date => {
+      const day = days[date];
+      const t = day && day.tab;
+      const cls = ["fc-day", date.slice(0, 7) !== fcMonth ? "out" : "", date === today ? "today" : "", t ? "has" : "", date === fcSelected ? "sel" : ""].filter(Boolean).join(" ");
+      const label = fwDay(date, true) + (t ? `, Fab Tab Sheet on file, ${t.total_hm} hours, value ${fwValueLabel(t)}` : ", no Fab Tab Sheet");
+      const body = t ? `<span class="fc-dot" aria-hidden="true"></span><span class="fc-meta">${fwEsc(fwValueLabel(t))}<br>${fwEsc(t.total_hm)} hrs</span>`
+        : (day && day.holiday ? `<span class="fc-hol">${fwEsc(day.holiday)}</span>` : "");
+      return `<button type="button" class="${cls}" data-date="${date}" ${t ? "" : 'tabindex="-1"'} aria-label="${fwEsc(label)}"><span class="fc-num">${+date.slice(8)}</span>${body}</button>`;
+    }).join("");
+  grid.querySelectorAll(".fc-day.has").forEach(b => b.addEventListener("click", () => fcOpen(b.dataset.date)));
+}
+
+function fcOpen(date) {
+  const day = fcDays[date];
+  if (!day) return;
+  fcSelected = date;
+  document.querySelectorAll("#fc-grid .fc-day.sel").forEach(x => x.classList.remove("sel"));
+  const btn = document.querySelector(`#fc-grid .fc-day[data-date="${date}"]`);
+  if (btn) btn.classList.add("sel");
+  const panel = document.getElementById("fc-panel");
+  panel.innerHTML = `<div class="cal-panel">
+    <button class="cal-close" type="button" aria-label="Close">✕</button>
+    <h3>${fwEsc(fwDay(date, true))}</h3>
+    <div class="cal-lbl" style="margin:8px 0 0;">Estimated value</div>
+    <div style="font-size:26px;font-weight:700;margin:2px 0 10px;">${fwEsc(fwValueLabel(day.tab))}</div>
+    <div id="fc-panel-cards"></div>
+    <div style="margin-top:10px;"><button class="fw-chip" type="button" id="fc-to-history">Open in History</button></div>
+  </div>`;
+  // Fab Tab Sheet only here; History has the Typeform and job logs for the day too
+  renderLogItems(document.getElementById("fc-panel-cards"), fsDayEntries(Object.assign({}, day, { logs: [] })), "Nothing on file.");
+  panel.querySelector(".cal-close").addEventListener("click", () => {
+    fcSelected = null; panel.innerHTML = "";
+    document.querySelectorAll("#fc-grid .fc-day.sel").forEach(x => x.classList.remove("sel"));
+  });
+  panel.querySelector("#fc-to-history").addEventListener("click", () => {
+    document.getElementById("dth-from").value = date;
+    document.getElementById("dth-to").value = date;
+    showDailyTabView("history");
+    document.getElementById("dth-apply").click();
+  });
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 document.querySelectorAll("#dt-tabs .lookup-tab").forEach(t => {
   t.addEventListener("click", () => showDailyTabView(t.dataset.dtTab));
@@ -768,8 +906,11 @@ document.getElementById("dth-apply").addEventListener("click", () => {
 }));
 
 // Everything Jerron's shop has on file, by day: online-form tab sheets, paper sheets
-// typed in, old workbook uploads, and the shop's Typeform logs (same data as Calvin's Daily Log).
+// typed in, old workbook uploads, the shop's Typeform logs and the welders' Daily Job Logs
+// (same data as Calvin's Daily Log).
+let dthRequest = 0;  // only the newest History request may draw (filters can change mid-load)
 async function loadRecentEntries() {
+  const req = ++dthRequest;
   const el = document.getElementById("recent-entries-display");
   const showing = document.getElementById("dth-showing");
   el.innerHTML = '<div class="empty">Loading…</div>';
@@ -778,10 +919,11 @@ async function loadRecentEntries() {
     const win = dthWindow();
     const res = await fetch(`/api/fabshop-portal/day-log?start=${win.start}&end=${win.end}`);
     const data = await res.json();
+    if (req !== dthRequest) return;
     if (!res.ok || data.status !== "ok") throw new Error(data.message || "Failed to load");
     const days = data.days || [];
     showing.textContent = `Showing ${dthLabel()} · ${data.tab_count} tab sheet${data.tab_count === 1 ? "" : "s"}, `
-      + `${data.log_count} Typeform log${data.log_count === 1 ? "" : "s"}` + (data.logs_error ? " · Typeform logs couldn't load" : "");
+      + `${data.log_count} log${data.log_count === 1 ? "" : "s"}` + (data.logs_error ? " · Logs couldn't load" : "");
     if (!days.length) { el.innerHTML = `<div class="empty">Nothing on file for ${dthLabel()}.</div>`; return; }
     el.innerHTML = days.map(d => `<div class="fs-day">
       <div class="fs-dayhead"><strong>${fwEsc(fwDay(d.date, true))}</strong><span>${fwEsc(fsDayHeadline(d))}</span></div>
