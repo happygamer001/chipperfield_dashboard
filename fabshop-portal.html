@@ -287,12 +287,17 @@
 
       <div id="dt-history" style="display:none;">
         <p class="section-heading">History</p>
-        <p class="section-sub">Every tab sheet on file (online form, paper sheets typed in, and older workbook uploads) plus the shop's Typeform logs. Up to 3 months at a time.</p>
+        <p class="section-sub">Every tab sheet on file (online form, paper sheets typed in, and older workbook uploads) plus the shop's Typeform logs.</p>
+        <div class="fw-chips" id="dth-presets" role="group" aria-label="How far back">
+          <button class="fw-chip active" type="button" data-dth-preset="7d">Last 7 days</button>
+          <button class="fw-chip" type="button" data-dth-preset="3m">3 months</button>
+          <button class="fw-chip" type="button" data-dth-preset="9m">9 months</button>
+          <button class="fw-chip" type="button" data-dth-preset="all">All time</button>
+        </div>
         <div class="log-date-filter">
           <label>From <input type="date" id="dth-from"></label>
           <label>To <input type="date" id="dth-to"></label>
           <button class="fw-chip primary" id="dth-apply" type="button">Show</button>
-          <button class="fw-chip" id="dth-reset" type="button">Last 7 days</button>
         </div>
         <p class="log-date-showing" id="dth-showing" aria-live="polite">Showing the last 7 days</p>
         <div id="recent-entries-display"></div>
@@ -691,38 +696,43 @@ document.querySelectorAll("#dt-tabs .lookup-tab").forEach(t => {
   t.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showDailyTabView(t.dataset.dtTab); } });
 });
 
-// History shows the last 7 days unless a date range is picked.
-let dthRange = null;   // { start, end } or null for the last 7 days
+// History shows the last 7 days unless a preset (3 months, 9 months, All time) or a date range is picked.
+const DTH_PRESETS = { "7d": "the last 7 days", "3m": "the last 3 months", "9m": "the last 9 months", "all": "all time" };
+let dthPreset = "7d";   // one of DTH_PRESETS, or null when a custom From/To range is used
+let dthRange = null;    // { start, end } for a custom range
 function dthIso(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 function dthWindow() {
-  if (dthRange) return dthRange;
+  if (!dthPreset && dthRange) return dthRange;
   const end = new Date(), start = new Date();
-  start.setDate(start.getDate() - 6);
+  if (dthPreset === "3m") start.setMonth(start.getMonth() - 3);
+  else if (dthPreset === "9m") start.setMonth(start.getMonth() - 9);
+  else if (dthPreset === "all") return { start: "2020-01-01", end: dthIso(end) };
+  else start.setDate(start.getDate() - 6);
   return { start: dthIso(start), end: dthIso(end) };
 }
 function dthLabel() {
-  if (!dthRange) return "the last 7 days";
+  if (dthPreset) return DTH_PRESETS[dthPreset];
   const f = d => fwDay(d, true);
   return dthRange.start === dthRange.end ? f(dthRange.start) : `${f(dthRange.start)} – ${f(dthRange.end)}`;
 }
+function dthSetPreset(preset) {
+  dthPreset = preset; dthRange = null;
+  document.querySelectorAll("#dth-presets .fw-chip").forEach(b => b.classList.toggle("active", b.dataset.dthPreset === preset));
+  if (preset) { document.getElementById("dth-from").value = ""; document.getElementById("dth-to").value = ""; }
+}
+document.querySelectorAll("#dth-presets .fw-chip").forEach(b => b.addEventListener("click", () => {
+  dthSetPreset(b.dataset.dthPreset);
+  loadRecentEntries();
+}));
 document.getElementById("dth-apply").addEventListener("click", () => {
   let start = document.getElementById("dth-from").value, end = document.getElementById("dth-to").value;
-  if (!start && !end) { dthRange = null; loadRecentEntries(); return; }
+  if (!start && !end) { dthSetPreset("7d"); loadRecentEntries(); return; }
   start = start || end; end = end || start;
   if (start > end) [start, end] = [end, start];
-  if ((new Date(end) - new Date(start)) / 86400000 > 92) {
-    document.getElementById("dth-showing").textContent = "Pick a range of 3 months or less.";
-    return;
-  }
   document.getElementById("dth-from").value = start;
   document.getElementById("dth-to").value = end;
+  dthSetPreset(null);
   dthRange = { start, end };
-  loadRecentEntries();
-});
-document.getElementById("dth-reset").addEventListener("click", () => {
-  document.getElementById("dth-from").value = "";
-  document.getElementById("dth-to").value = "";
-  dthRange = null;
   loadRecentEntries();
 });
 ["dth-from", "dth-to"].forEach(id => document.getElementById(id).addEventListener("keydown", e => {

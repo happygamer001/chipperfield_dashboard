@@ -270,10 +270,14 @@ def _parse_dropbox_filename(filename):
 MAX_RANGE_DAYS = 93  # longest date range one request may ask for (about 3 months)
 
 
-def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT, start=None, end=None):
+def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT, start=None, end=None, keep=None, max_days=None):
     """Logs from the last `days` days, or - when start/end (datetime.date) are
     given - from start through end inclusive. Calvin's date filter uses the
-    latter. A range longer than MAX_RANGE_DAYS is cut to the last MAX_RANGE_DAYS."""
+    latter. A range longer than MAX_RANGE_DAYS (or max_days) is cut to the
+    last that many days.
+    keep: optional test on each log ({"name", "job_or_wo", ...}); logs it
+    rejects are dropped BEFORE summaries are read, so a narrow filter (e.g.
+    only Fab Shop logs) stays fast over long ranges."""
     dbx = get_dropbox_client()
 
     today = datetime.date.today()
@@ -282,7 +286,7 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT, start=None, end=None):
         window_start = start or (end_date - datetime.timedelta(days=days - 1))
         if window_start > end_date:
             window_start, end_date = end_date, window_start
-        window_start = max(window_start, end_date - datetime.timedelta(days=MAX_RANGE_DAYS - 1))
+        window_start = max(window_start, end_date - datetime.timedelta(days=(max_days or MAX_RANGE_DAYS) - 1))
     else:
         end_date = today
         window_start = today - datetime.timedelta(days=days - 1)
@@ -425,6 +429,8 @@ def get_recent_daily_logs(days=DAYS_TO_SHOW_DEFAULT, start=None, end=None):
                 entries_by_key[key]["dropbox_txt_path"] = entry.path_display
 
     results = list(entries_by_key.values())
+    if keep:
+        results = [r for r in results if keep(r)]
     results.sort(key=lambda r: r["date"], reverse=True)
 
     # No Dropbox links are made here any more. PDFs and photos are opened on

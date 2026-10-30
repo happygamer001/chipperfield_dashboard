@@ -2538,7 +2538,8 @@ def fabshop_day_log():
       tab  - the Daily Tab from the online form (hours, value, notes), or older
              spreadsheet history, as one Weekly Breakdown day card
       logs - Typeform logs in Dropbox (Fab Shop Daily Log, Jerron's management log)
-    ?start=YYYY-MM-DD&end=YYYY-MM-DD (default: the last 7 days, max 93 days).
+    ?start=YYYY-MM-DD&end=YYYY-MM-DD (default: the last 7 days). Any length works
+    (Jerron's History has an "All time" view): only Fab Shop logs have their text read.
     """
     try:
         try:
@@ -2550,8 +2551,9 @@ def fabshop_day_log():
         start = start or (end - datetime.timedelta(days=6))
         if start > end:
             start, end = end, start
-        start = max(start, end - datetime.timedelta(days=MAX_RANGE_DAYS - 1))
+        start = max(start, datetime.date(2020, 1, 1))
         lo, hi = start.isoformat(), end.isoformat()
+        span = (end - start).days + 1
 
         dbx = get_dropbox_client()
         live = {e.get("date"): e for e in _read_json_from_dropbox(dbx, FABSHOP_DAILY_ENTRIES_PATH, []) if e.get("date")}
@@ -2562,7 +2564,8 @@ def fabshop_day_log():
 
         logs_error = None
         try:
-            logs = [l for l in _apply_log_corrections(dbx, get_recent_daily_logs(start=start, end=end))
+            logs = [l for l in _apply_log_corrections(
+                        dbx, get_recent_daily_logs(start=start, end=end, keep=_is_fabshop_log, max_days=span))
                     if _is_fabshop_log(l)]
         except Exception as err:          # the Daily Tabs still show if Dropbox logs can't be read
             logs, logs_error = [], str(err)
