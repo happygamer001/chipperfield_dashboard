@@ -2515,12 +2515,23 @@ def fabshop_impact():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+# The fab shop's dedicated welders. They also fill in Daily Job Logs for jobs, and
+# those logs show on the Fab Shop pages too (matched on the first name in the title).
+FABSHOP_WELDERS = {n.strip().lower() for n in os.environ.get("FABSHOP_WELDERS", "Jon,Alex,Jason").split(",") if n.strip()}
+
+
+def _is_welder(name):
+    first = (name or "").strip().split(" ")[0].lower()
+    return first in FABSHOP_WELDERS
+
+
 def _is_fabshop_log(log):
-    """Typeform logs that belong on the Fab Shop page: the shop's daily team log,
-    plus Jerron's Daily Management Log (same rule as the portal's 'My logs')."""
+    """Logs that belong on the Fab Shop pages: the shop's daily team log, Jerron's
+    Daily Management Log, and any Daily Job Log by one of the shop's welders."""
     kind = log.get("job_or_wo") or ""
+    name = log.get("name") or ""
     return kind == "Fab Shop Daily Log" or (
-        kind == "Daily Management Log" and "jerron" in (log.get("name") or "").lower())
+        kind == "Daily Management Log" and "jerron" in name.lower()) or _is_welder(name)
 
 
 def _date_arg(name):
@@ -2538,6 +2549,7 @@ def fabshop_day_log():
       tab  - the Daily Tab from the online form (hours, value, notes), or older
              spreadsheet history, as one Weekly Breakdown day card
       logs - Typeform logs in Dropbox (Fab Shop Daily Log, Jerron's management log)
+    ?tabs_only=1 skips the Dropbox logs (the portal calendar shows tab sheets only).
     ?start=YYYY-MM-DD&end=YYYY-MM-DD (default: the last 7 days). Any length works
     (Jerron's History has an "All time" view): only Fab Shop logs have their text read.
     """
@@ -2564,9 +2576,13 @@ def fabshop_day_log():
 
         logs_error = None
         try:
+            if request.args.get("tabs_only") == "1":
+                raise LookupError("skipped")
             logs = [l for l in _apply_log_corrections(
                         dbx, get_recent_daily_logs(start=start, end=end, keep=_is_fabshop_log, max_days=span))
                     if _is_fabshop_log(l)]
+        except LookupError:
+            logs = []
         except Exception as err:          # the Daily Tabs still show if Dropbox logs can't be read
             logs, logs_error = [], str(err)
         for l in logs:
@@ -2630,6 +2646,8 @@ def _is_fabshop_log_path(path):
         return False
     parts = [p.strip() for p in path.rsplit("/", 1)[-1].rsplit(".", 1)[0].split("|")]
     if "Fab Shop Daily Log" in parts:
+        return True
+    if len(parts) > 1 and _is_welder(parts[1]):
         return True
     return "Daily Management Log" in parts and len(parts) > 1 and "jerron" in parts[1].lower()
 
