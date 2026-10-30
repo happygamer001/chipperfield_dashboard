@@ -319,7 +319,7 @@
 
       <div id="dt-history" style="display:none;">
         <p class="section-heading">History</p>
-        <p class="section-sub">Every tab sheet on file (online form, paper sheets typed in, and older workbook uploads), the shop's Typeform logs, and Daily Job Logs from the shop's welders (Jon, Alex, Jason).</p>
+        <p class="section-sub">Every tab sheet on file (online form, paper sheets typed in, and older workbook uploads), the shop's Typeform logs, and Daily Job Logs from the shop's welders (Jon, Alex).</p>
         <p class="dth-lbl">How far back</p>
         <div class="fw-chips" id="dth-presets" role="group" aria-label="How far back">
           <button class="fw-chip active" type="button" data-dth-preset="7d">Last 7 days</button>
@@ -501,7 +501,10 @@ function addEmployeeRow(prefillName, prefill) {
   div.id = rowId;
   div.dataset.status = "present";
 
-  const optionsHtml = ROSTER.map(n => `<option value="${esc(n)}" ${n === prefillName ? "selected" : ""}>${esc(n)}</option>`).join("");
+  prefillName = NAME_ALIASES[prefillName] || prefillName;
+  // A name from an older sheet that's no longer on the roster still shows as itself (never silently another person)
+  const names = prefillName && !ROSTER.includes(prefillName) ? ROSTER.concat([prefillName]) : ROSTER;
+  const optionsHtml = names.map(n => `<option value="${esc(n)}" ${n === prefillName ? "selected" : ""}>${esc(n)}</option>`).join("");
   const reasonsHtml = ABSENCE_REASONS.map((r, i) =>
     `<label><input type="radio" name="rs-${rowId}" value="${r}"> ${r}</label>`).join("");
 
@@ -568,6 +571,7 @@ function addEmployeeRow(prefillName, prefill) {
 
 // Full Time / Part Time label beside each person's name (none for Jerron, the manager)
 let ROSTER_STATUS = {};
+let NAME_ALIASES = { Jason: "Alex" };  // old name -> preferred name (also sent by the server)
 let ROSTER_STATUS_CHOICES = ["Full Time", "Part Time"];
 function showEmpStatus(card) {
   const name = card.querySelector('[data-role="emp-name"]').value;
@@ -678,6 +682,7 @@ async function loadRoster() {
     ROSTER = data.employees || [];
     ROSTER_OPTIONAL = data.optional || [];
     ROSTER_STATUS = data.status || {};
+    NAME_ALIASES = data.aliases || NAME_ALIASES;
     ROSTER_STATUS_CHOICES = data.status_choices || ROSTER_STATUS_CHOICES;
     refreshEmpStatuses();
 

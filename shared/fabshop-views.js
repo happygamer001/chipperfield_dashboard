@@ -525,7 +525,7 @@ function fabshopViewsHtml(tabList) {
 
     <div id="fabshop-daily-display" style="display:none;">
       <p class="section-heading">Daily Log</p>
-      <p class="section-sub">The shop's Daily Tab (online form), its Typeform logs, and the welders' (Jon, Alex, Jason) Daily Job Logs, by day.</p>
+      <p class="section-sub">The shop's Daily Tab (online form), its Typeform logs, and the welders' (Jon, Alex) Daily Job Logs, by day.</p>
       <div class="log-date-filter">
         <label>From <input type="date" id="fs-date-from"></label>
         <label>To <input type="date" id="fs-date-to"></label>
