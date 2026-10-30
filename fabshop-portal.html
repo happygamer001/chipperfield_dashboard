@@ -14,6 +14,7 @@
   document.documentElement.setAttribute("data-theme", t);
 })();
 </script>
+<link rel="stylesheet" href="/shared/fabshop-views.css">
 <style>
   :root {
     --green: #97E45D;
@@ -284,6 +285,9 @@
     <!-- ---------- Evaluation ---------- -->
     <div class="page" id="page-evaluation">
       <p class="section-heading">Evaluation of the Fab Shop</p>
+      <!-- Same views as Calvin's Fab Shop page (shared/fabshop-views.js); the trend charts below become the Trends tab -->
+      <div id="fabshop-views"></div>
+      <div id="ev-trends">
       <p class="section-sub" id="eval-status">Loading…</p>
 
       <div class="ev-controls">
@@ -318,6 +322,7 @@
         <summary>View the numbers as a table</summary>
         <div style="overflow-x:auto;"><table class="ev-table" id="ev-table"></table></div>
       </details>
+      </div>
     </div>
 
     <!-- ---------- Sales Intake Tracker ---------- -->
@@ -350,6 +355,9 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script>window.LOG_LINKS_URL = "/api/fabshop-portal/log-links";  // Fab Shop log files only</script>
+<script src="/shared/log-cards.js"></script>
+<script src="/shared/fabshop-views.js"></script>
 <script>
 // ============== Slideshow ==============
 let slideIndex = 0;
@@ -376,7 +384,7 @@ function showPage(page) {
   document.getElementById("page-title").textContent = titles[page] || "Chipperfield Ag Fabrication";
 
   if (page === "daily-tab") { loadRoster(); loadRecentEntries(); }
-  else if (page === "evaluation") { loadEvaluationData(); }
+  else if (page === "evaluation") { mountPortalViews(); loadEvaluationData(); }
   else if (page === "sales") { loadLeads(); }
   else if (page === "jerron-logs") { loadJerronLogs(); }
 }
@@ -919,6 +927,23 @@ async function loadEvaluationData() {
   }
 }
 
+// The same Overview / Daily Log / Weekly Value / Absences & PTO tabs Calvin sees,
+// read from the portal's copies of his endpoints. Mounted the first time the page opens.
+let portalViewsMounted = false;
+function mountPortalViews() {
+  if (portalViewsMounted) return;
+  portalViewsMounted = true;
+  mountFabshopViews(document.getElementById("fabshop-views"), {
+    tabs: [{ key: "summary", label: "Overview" }, { key: "daily", label: "Daily Log" }, { key: "weekly", label: "Weekly Value" },
+           { key: "trends", label: "Trends" }, { key: "absences", label: "Absences & PTO" }],
+    panes: { trends: document.getElementById("ev-trends") },
+    api: { summary: "/api/fabshop-portal/summary", weekly: "/api/fabshop-portal/weekly", impact: "/api/fabshop-portal/impact",
+           dayLog: "/api/fabshop-portal/day-log", pto: "/api/fabshop-portal/pto" },
+    // Trend charts are drawn when their tab opens (a hidden chart has no size)
+    onShow: tab => { if (tab === "trends") renderEvaluationCharts(); },
+  });
+}
+
 // ============== Sales Intake Tracker ==============
 document.getElementById("add-lead-btn").addEventListener("click", async () => {
   const company = document.getElementById("lead-company").value.trim();
@@ -1037,6 +1062,7 @@ function applyPortalTheme(theme) {
     if (typeof Chart !== "undefined") Chart.defaults.color = EV_COLORS.ink;
     if (typeof renderEvaluationCharts === "function") renderEvaluationCharts();
   }
+  if (typeof fabshopRecolor === "function") fabshopRecolor();
 }
 document.querySelectorAll(".theme-toggle-btn").forEach(b => b.addEventListener("click", () => {
   const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";

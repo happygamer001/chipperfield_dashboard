@@ -2609,6 +2609,51 @@ def fabshop_pto():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+# ---------------------------------------------------------------------------
+# Jerron's portal: the same Fab Shop views as Calvin's page. The portal has no
+# login (leadership's call), so these are the Calvin endpoints without the role
+# check, and file links are limited to Fab Shop logs.
+# ---------------------------------------------------------------------------
+for _rule, _view in (("summary", fabshop_summary), ("weekly", fabshop_weekly), ("impact", fabshop_impact),
+                     ("day-log", fabshop_day_log), ("pto", fabshop_pto)):
+    app.add_url_rule(f"/api/fabshop-portal/{_rule}", f"fabshop_portal_{_rule.replace('-', '_')}",
+                     _view.__wrapped__, methods=["GET"])
+
+
+def _is_fabshop_log_path(path):
+    """True for a Fab Shop Daily Log file, or Jerron's Daily Management Log, in the job log folders."""
+    if not isinstance(path, str) or ".." in path or not path.startswith(DROPBOX_BASE_FOLDER + "/"):
+        return False
+    parts = [p.strip() for p in path.rsplit("/", 1)[-1].rsplit(".", 1)[0].split("|")]
+    if "Fab Shop Daily Log" in parts:
+        return True
+    return "Daily Management Log" in parts and len(parts) > 1 and "jerron" in parts[1].lower()
+
+
+@app.route("/api/fabshop-portal/log-links", methods=["POST"])
+def fabshop_portal_log_links():
+    """Same as /api/log-links, for Jerron's portal: Fab Shop logs only."""
+    try:
+        body = request.get_json(force=True) or {}
+        paths = body.get("paths") or []
+        mode = body.get("mode", "view")
+        if mode not in ("view", "download", "temp"):
+            return jsonify({"status": "error", "message": "Bad mode"}), 400
+        if not paths or len(paths) > 30:
+            return jsonify({"status": "error", "message": "Between 1 and 30 paths required"}), 400
+        if not all(_is_fabshop_log_path(p) for p in paths):
+            return jsonify({"status": "error", "message": "Only Fab Shop log files can be opened here"}), 403
+        return jsonify({"status": "ok", "links": get_file_links(get_dropbox_client(), paths, mode)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/shared/<path:name>")
+def shared_asset(name):
+    """Styles and scripts shared by Calvin's Fab Shop page and Jerron's portal."""
+    return send_from_directory(os.path.join(_REPO_ROOT, "shared"), name)
+
+
 @app.route("/api/fabshop-portal/jerron-logs", methods=["GET"])
 def fabshop_portal_jerron_logs():
     try:
